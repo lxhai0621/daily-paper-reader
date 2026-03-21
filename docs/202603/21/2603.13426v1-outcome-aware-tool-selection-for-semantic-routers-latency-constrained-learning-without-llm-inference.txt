@@ -1,0 +1,820 @@
+Title: Outcome-Aware Tool Selection for Semantic Routers: Latency-Constrained Learning Without LLM Inference
+
+URL Source: https://arxiv.org/pdf/2603.13426v1
+
+Published Time: Tue, 17 Mar 2026 00:23:07 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# Outcome-Aware Tool Selection for Semantic Routers: Latency-Constrained Learning Without LLM Inference 
+
+Huamin Chen 1 Xunzhuo Liu 1 Junchen Jiang 2 Bowei He 3 Xue Liu 31vLLM Semantic Router Project 2Tensormesh Inc / UChicago 3MBZUAI / McGill University 
+
+Abstract 
+
+Semantic routers in LLM inference gateways select tools in the critical request path, where every millisecond of added latency compounds across millions of requests. We propose 
+
+Outcome-Aware Tool Selection (OATS) , which interpolates tool embeddings toward the centroid of queries where they historically succeed—an offline process that adds no parameters, latency, or GPU cost at serving time. On MetaTool (199 tools, 4,287 queries), this improves NDCG@5 from 0.869 to 0.940; on ToolBench (2,413 APIs), from 0.834 to 0.848. We also evaluate two learned extensions: a 2,625-parameter MLP re-ranker and a 197K-parameter contrastive adapter. The MLP re-ranker hurts or matches baseline when outcome data is sparse relative to the tool set; the contrastive adapter provides comparable gains on MetaTool (NDCG@5: 0.931). All methods are evaluated on the same held-out 30% test split. The practical takeaway is to start with the zero-cost refinement and add learned components only when data density warrants it. All mechanisms run within single-digit millisecond CPU budgets. 
+
+# 1 Introduction 
+
+LLM serving infrastructure increasingly uses semantic routers —lightweight proxies that inspect requests and make routing decisions before forwarding them to backend model pools. These routers sit in the critical path: added latency compounds across millions of daily requests. Among their functions—model selection, prompt-length-based pool assignment, rate limiting— one of the most consequential for agentic applications is tool selection : choosing which tools to attach to a request before it reaches the LLM. 
+
+1.1 The Latency–Accuracy Tradeoff 
+
+Tool selection in a router must satisfy a hard constraint: 
+
+Complete within single-digit milliseconds, without GPU resources or LLM inference. 
+
+At 10,000 requests/second with a 5 ms budget, tool selection alone consumes 50 CPU-seconds per second. Any method requiring LLM inference—even on a small model—exceeds this budget by orders of magnitude. Table 1 shows that all OATS methods stay within this budget on CPU. Figure 1 illustrates the architecture difference. In the LLM-based approach, a dedicated orchestrator runs full inference on every request—requiring GPU resources and adding hundreds of milliseconds. In the semantic router approach, selection is a lightweight CPU operation, but it relies on static similarity with no learning. OATS preserves the fast path while incorporating outcome feedback through offline loops. 1
+
+> arXiv:2603.13426v1 [cs.LG] 13 Mar 2026
+
+Table 1: Cost of tool selection mechanisms. Latency is per-request p50 on 2,413 tools (Tool-Bench). All methods run on CPU. 
+
+Method Latency Parameters GPU Viable at (ms) Required 10K rps? 
+
+BM25 (lexical) ∼7 0 No ✓
+
+Static embedding ∼5 22M † No ∗ ✓
+
+OATS-S1 (offline) ∼4 22M † No ∗ ✓
+
+OATS-S2 (+ MLP) ∼5 22M + 2.6K No ∗ ✓
+
+OATS-S3 (+ adapter) ∼5 22M + 197K No ∗ ✓ 
+
+> †
+
+Embedding model (all-MiniLM-L6-v2); runs on CPU at batch throughput.  
+
+> ∗
+
+CPU inference; GPU optional for higher throughput but not required. 
+
+(a) LLM-based tool selection 
+
+User Router 
+
+> (proxy)
+
+LLM Orchestrator 
+
+> 8B–70B params
+
+LLM  
+
+> Serving
+
+Response  
+
+> + tools
+> 500–2000 ms, GPU 200–2000 ms
+> 700–10,000 ms
+
+(b) OATS semantic router (ours) 
+
+User Semantic Router (CPU) embed → sim → re-rank → top-K
+
+LLM  
+
+> Serving
+
+Response  
+
+> query + tools
+> 3–7 ms, CPU only 200–2000 ms
+
+Offline Learning 
+
+> Stages 1–3
+
+Outcome  
+
+> Logs
+> outcomes updates
+
+Figure 1: (a) LLM-based tool selection requires a GPU-bound orchestrator in the request path (500–2,000 ms). (b) OATS performs selection on CPU in the router (3–7 ms), with all learning offline. LLM serving latency is the same in both cases. 
+
+1.2 Limitations of Static Embedding Similarity 
+
+The standard approach in production routers is static embedding similarity : embed each tool’s description once, compute dot products against the query embedding at request time, and return the top-K. This satisfies the latency constraint but has clear accuracy limitations: 1. Description quality bottleneck. Tool descriptions are written by developers once and never updated. A poorly worded description permanently under-selects an otherwise useful tool. 2. No outcome feedback. The system cannot learn that Tool A consistently produces better outcomes than Tool B for a given query class, even after processing millions of requests. 3. Single-point representation. Each tool is a single embedding vector, which cannot capture tools that serve multiple distinct use cases in different regions of the embedding space. 4. Lexical bias. Embedding similarity rewards surface-level textual similarity between prompts 2and descriptions rather than functional relevance. Our experiments confirm this: on Tool-Bench, BM25 (pure lexical) achieves NDCG@5 of 0.853, exceeding dense embedding retrieval at 0.834. These limitations leave room to improve accuracy within the existing latency budget. RL-based tool orchestration [Jin et al., 2025, Li et al., 2025, Qian et al., 2025, Wang et al., 2025, Su et al., 2025] has shown that outcome-aware selection outperforms static methods—but it relies on LLM inference and multi-turn rollouts, which are incompatible with router-level latency constraints. 
+
+1.3 Our Approach 
+
+We propose Outcome-Aware Tool Selection (OATS) . The core idea is straightforward: 
+
+interpolate tool embeddings offline toward the centroid of queries where they succeed . This takes the same idea as RL-based orchestration—learning from outcomes—but implements it as an embedding transformation that adds no parameters, latency, or LLM inference at serving time. 
+
+Core mechanism: Embedding-Space Outcome Refinement. For each tool, OATS col-lects queries where it was selected and succeeded vs. failed, then moves the tool’s embedding toward the positive-outcome centroid and away from the negative-outcome centroid. The refined embeddings replace the originals in the tool database as a periodic batch job. At serving time, the path is unchanged: embed the query, compute similarities, return top-K. On MetaTool (199 tools), this improves NDCG@5 from 0.869 to 0.940 with no added serving cost. Appendix A walks through real examples where the refinement corrects specific selection errors. 
+
+Ablations: learned components. We also evaluate two extensions to understand when added complexity pays off: 1. Learned Re-Ranking (2,625 parameters). A small MLP re-scores candidates using outcome-derived features. Adds <0.5 ms. 2. Contrastive Embedding Adaptation (197K parameters). Reshapes the embedding space via hard-negative contrastive learning. Deployed as a drop-in model replacement. The MLP re-ranker can actually hurt performance when outcome data is sparse—a result that has direct implications for deployment (Section 6). 
+
+1.4 Contributions 
+
+• An outcome feedback mechanism (Section 4.1) that improves tool selection without adding parameters, latency, or GPU cost at serving time. 
+
+• A cost-aware framework (Section 3) that separates the learning and serving concerns, formal-izing the latency–accuracy tradeoff. 
+
+• Experiments on ToolBench (2,413 APIs) and MetaTool (Section 6) showing when refinement suffices and when learned components add value, including a data-to-tool ratio threshold below which learned re-ranking hurts. 
+
+# 2 Related Work 
+
+Tool-Use in LLMs. Tool learning has become a standard way to extend LLM capabilities. Toolformer [Schick et al., 2023] showed that models can learn tool use in a self-supervised manner. 3ToolLLM [Qin et al., 2024] scaled to 16,000+ real-world APIs and introduced the ToolBench benchmark. MetaTool [Huang et al., 2024] benchmarks the selection decision—whether to use tools and which to use—and finds that most LLMs still struggle with it. 
+
+Tool Retrieval and Reranking. As tool sets grow, retrieval becomes necessary before selec-tion. CRAFT [Yuan et al., 2024] creates task-specific code toolsets and retrieves from them at inference time. ToolRerank [Zheng et al., 2024] introduces hierarchy-aware reranking that dis-tinguishes between seen and unseen tools and adapts diversity for single- vs. multi-tool queries. Our work shares the retrieval perspective but focuses on refining the embedding space using outcome data rather than post-retrieval reranking. 
+
+RL for Tool Orchestration. Recent work frames tool use as sequential decision-making. Search-R1 [Jin et al., 2025] trains LLMs to reason over search results. ToRL [Li et al., 2025] scales tool-integrated RL; ToolRL [Qian et al., 2025] shows that reward shaping alone can drive tool learning. OTC [Wang et al., 2025] penalizes excessive tool calls while preserving accuracy, and several studies explore multi-objective rewards balancing correctness, cost, and user preference [Su et al., 2025, Qian et al., 2025]. 
+
+Contrastive Learning for Retrieval. The InfoNCE objective [van den Oord et al., 2018] is the basis for most contrastive representation learning. Dense Passage Retrieval [Karpukhin et al., 2020] applied contrastive training to retrieval, and Sentence-BERT [Reimers & Gurevych, 2019] enabled efficient semantic similarity via siamese BERT networks—the backbone we use. R3 [Zhou & Chen, 2025] applies reinforced contrastive learning to RAG retrieval, generating contrastive signals from environment interactions, which is closely related to our Stage 3. 
+
+Semantic Routing. Production LLM gateways use semantic routing for model selection, load balancing, and tool attachment. To our knowledge, no prior work has studied outcome-aware tool selection in the context of high-throughput routing proxies, where latency constraints rule out LLM inference for selection. Existing RL-based methods assume the selector and executor share a model or that the selector has its own GPU—neither holds in production routers, which are stateless CPU-bound proxies handling thousands of concurrent requests. 
+
+# 3 Framework: From Static Matching to Learned Orchestration 
+
+3.1 Problem Formulation 
+
+Let T = {t1, t 2, . . . , t n} be a set of available tools, each with a description di ∈ D . Given a user query q, the tool selection problem is to choose a subset S ⊆ T of size at most K that maximizes the expected quality of the downstream LLM response, subject to a latency budget Lmax and a 
+
+resource constraint R:
+
+max   
+
+> S⊆T ,|S|≤ K
+
+E[quality (q, S )] s.t. latency (S) ≤ Lmax , resources (S) ⊆ R (1) In production routers, Lmax is typically 5–10 ms and R excludes GPU allocation (which is reserved for model serving). These constraints eliminate any method requiring LLM inference for selection. 
+
+Definition 1 (Tool Selection as Retrieval) . Static tool selection computes: 
+
+Sstatic (q) = top -Kti∈T sim  e(q), e (di) (2) 
+
+where e(·) is an embedding function and sim (·, ·) is cosine similarity or dot product. 
+
+4Definition 2 (Tool Selection as Decision-Making) . RL-based approaches [Jin et al., 2025, Li et al., 2025, Su et al., 2025] formulate tool selection as an MDP M = ( U, S, A, O, T , Z, r, ρ, γ )
+
+where an orchestrator policy πθ(ak|hk) selects tools sequentially with a multi-objective reward: 
+
+R(τ ) = M τ 
+
+> normalized
+
+· P (3) 
+
+where M τ encodes tool usage counts, outcome, cost, and latency, and P is a user preference vector. 
+
+3.2 Bridging the Gap: Offline Learning, Online Retrieval 
+
+OATS approximates the outcome-aware behavior of Equation 3 within the constraints of Equa-tions 2 and 1. The design principle is to separate learning from serving: all outcome-aware optimization happens offline from logged data, while the serving path remains a fast embedding lookup. We write the resulting scoring function as: 
+
+SOATS (q) = top -Kti∈T fϕ
+
+ eψ(q), e ψ(di), m i, h i(q) (4) where fϕ is a learned scoring function, eψ are (potentially fine-tuned) embeddings, mi is tool metadata, and hi(q) encodes historical outcome statistics for tool ti on queries similar to q. The three OATS stages correspond to optimizing different components of Equation 4: 
+
+• Stage 1 replaces e(di) (the stored tool embeddings) via offline centroid interpolation, keeping 
+
+f and h fixed. 
+
+• Stage 2 learns fϕ while keeping e and di fixed. 
+
+• Stage 3 jointly optimizes eψ via contrastive learning. 
+
+3.3 Connection to RL Reward Normalization 
+
+Policy-gradient methods such as GRPO [Shao et al., 2024] compute a normalized advantage over a batch of rollouts: 
+
+A(τ ) = R(τ ) − mean τ ∈T R(τ )
+
+std τ ∈T R(τ ) (5) This creates a contrastive signal: trajectories with better tool selections receive positive advan-tage relative to the batch. Our Stage 3 contrastive loss implements the same idea in embedding space: 
+
+Lcontrastive = − log exp( sim (e(q), e (d+)) /τ )
+
+P  
+
+> d−∈N (q)
+
+exp( sim (e(q), e (d−)) /τ ) (6) where d+ is a tool description that led to a positive outcome for query q, and N (q) contains descriptions of tools that led to negative outcomes. This mirrors policy-gradient advantage computation but operates in embedding space rather than over policy parameters, without the cost of trajectory rollouts. 
+
+# 4 Method 
+
+We first describe the core OATS mechanism—embedding-space outcome refinement—and then two learned extensions (re-ranking and contrastive adaptation) evaluated as ablations. Figure 2 gives an overview. 
+
+4.1 Core Mechanism: Outcome-Guided Embedding Refinement 
+
+Resource profile. No inference cost, no additional parameters at serving time. The only requirement is a periodic offline batch job (hourly or daily). 5Online Serving Path (per request, CPU, 3–7 ms)             
+
+> Query qEmbed Tool DB Similarity Re-Rank Top-K
+> Outcome Logs
+> (q, t, o )triples
+> Offline Learning
+> (periodic batch) Stage 1
+> Description Refinement
+> 0 params, 0 ms
+> Stage 2
+> Learned Re-Ranker
+> 2.6K params →Re-Rank
+> Stage 3
+> Contrastive Adapter
+> 197K params →Embed
+> refine embs
+> outcomes
+
+Figure 2: The OATS pipeline. Top: the online serving path runs on CPU in 3–7 ms. Bottom: 
+
+offline learning from outcome logs. The core mechanism (Stage 1, dashed arrow) refines tool embeddings in the Tool DB at zero serving cost. Stages 2 and 3 are ablation mechanisms that optionally update the Re-Rank and Embed components respectively. 
+
+What it does and does not change. OATS-S1 does not rewrite or modify tool descriptions. The text stays the same. What changes is the embedding vector stored in the tool database: the original vector e(di)—computed from the description—is replaced by a refined vector that better reflects the tool’s actual usage, as learned from outcome data. At serving time, the selection path is identical to the static baseline (embed query, compute similarities, return top-K); only the stored tool vectors differ. 
+
+Motivating example. Consider a tool called buildbetter whose description reads: “Chat with the knowledge of all your calls in BuildBetter (Zoom, GMeet, Webex). Start for free @ BuildBetter.ai.” This is a meeting-transcript tool, but the description is a marketing tagline. When a user asks “ provide the complete transcript of the strategy call with the executives ,” a static embedding model ranks the financial-data tool QuiverQuantitative first (cosine simi-larity 0.337) and the correct tool second (0.276), because “strategy. . . executives” is closer to “congressional. . . lobbying. . . legislation” in embedding space than to “BuildBetter.ai.” After S1 refinement, the buildbetter embedding has been pulled toward the centroid of queries like “ retrieve the transcript of the customer support call ” and “ what were the key points from last week’s meeting ”—queries where it was the correct tool in the training set. Its similarity to the test query jumps from 0.276 to 0.440, while QuiverQuantitative barely moves (0.337 
+
+→ 0.343). The description text is unchanged; only the vector in the database differs. Figure 3 illustrates the geometry; Appendix A gives the full walkthrough. 
+
+Algorithm. The procedure is in Algorithm 1. We explain each step below. 
+
+Step 1–2: Outcome collection and partitioning. From production logs (or ground-truth labels in benchmarks), we collect tuples (qj , t i, o j ) where qj is a query, ti a retrieved tool, and 
+
+oj ∈ { 0, 1} indicates whether ti was relevant. For each tool ti, this gives a positive set Q+ 
+
+> i
+
+(queries where ti was correct) and a negative set Q− 
+
+> i
+
+(queries where ti was retrieved but wrong—hard negatives). Because Q− 
+
+> i
+
+contains only high-similarity negatives rather than random ones, the repulsion signal is targeted: the tool is pushed away specifically from the queries that currently cause false matches. 6SaaS / productivity            
+
+> meeting transcripts / calls
+> call management (CLINQ)
+> “transcript of call”
+> “key points from meeting”
+> ¯e+
+> “create call reminder on CLINQ”
+> ¯e−
+> buildbetter
+> original e(di)
+> buildbetter
+> refined ˆei
+> test query
+> QuiverQuant.
+> +α·¯e+
+> −β · ¯e−
+> Q+queries Q−queries test query
+> pos. centroid neg. centroid /orig. / refined
+
+Figure 3: Geometry of OATS-S1 for the buildbetter example. The original embedding (blue circle) sits in a generic “SaaS” region, far from the test query (star). Positive training queries Q+
+
+(teal dots) cluster around “meeting transcripts”; negative queries Q− (red dots) cluster around “call management.” The refinement pulls the tool embedding toward ¯e+ and away from ¯e−,placing the refined embedding (teal circle) closer to the test query. The description text never changes. 
+
+Step 3: Centroid interpolation. Each tool embedding is moved toward its positive centroid and away from its negative centroid: 
+
+ˆei = (1 − α) · e(di) + α · ¯e(Q+ 
+
+> i
+
+) − β · ¯e(Q− 
+
+> i
+
+) (7) where ¯e(Q+ 
+
+> i
+
+) = 1 
+
+> |Q+
+> i|
+
+P
+
+> q∈Q+
+> i
+
+e(q) is the positive centroid, ¯e(Q− 
+
+> i
+
+) is the negative centroid, α = 0 .3
+
+controls the attraction strength, and β = 0 .1 controls the repulsion strength ( β < α because false negatives in Q− 
+
+> i
+
+are more common than false positives in Q+ 
+
+> i
+
+). The result is re-normalized to unit length. 
+
+Step 4: Iterative refinement with momentum. A single pass may not fully correct em-beddings, because the outcome logs depend on the current rankings. After iteration 1, the top-K
+
+retrievals change, exposing new hard negatives. We iterate N = 3 times, re-computing outcomes against updated embeddings at each step. To prevent oscillation, each iteration blends with the previous estimate via momentum μ = 0 .5: e(n) = μ · e(n−1) + (1 − μ) · ˆe.
+
+Step 5: Validation gate. The refined embeddings are accepted only if they improve Recall@ K
+
+on a held-out validation set. This prevents drift from noisy outcomes—the system cannot de-grade below the static baseline. In our experiments (Section 6), the gate always accepts. 
+
+Why it works. Appendix A gives four worked examples with real similarity scores. The refinement helps with three failure modes of static embeddings: (1) semantic decoys—tools with superficially similar descriptions but different functions; (2) opaque descriptions—branded or generic names that do not embed well; and (3) low-similarity regimes—when candidates score similarly and small interpolations flip rankings. 74.2 Ablation Mechanism A: Learned Re-Ranking 
+
+We next ask whether a learned component on top of refined embeddings improves selection, evaluating a lightweight MLP re-ranker as the simplest learned intervention. 
+
+Resource profile. 2,625 trainable parameters (architecture: [7 , 64 , 32 , 1] ). Adds <0.5 ms p50 latency. Runs entirely on CPU. The model binary is ∼11 KB. 
+
+Architecture. We train a lightweight MLP fϕ : Rdfeat → [0 , 1] on features derived from the candidate set: features (q, t i) = sim (e(q), e (di)) , ∆sim , cat (ti), sr i(q), freq i, len (q) (8) where ∆sim is the similarity gap to the next candidate, cat (ti) is a category indicator, sr i(q)
+
+is the historical success rate of tool ti on queries in the same cluster as q, freq i is tool usage frequency, and len (q) is the query length. The re-ranker is trained with binary cross-entropy: 
+
+Lrerank = − 1
+
+N
+
+> N
+
+X
+
+> j=1
+
+oj log fϕ(features (qj , t j )) + (1 − oj ) log(1 − fϕ(features (qj , t j )))  (9) At inference time, we retrieve C = αK candidates via static similarity ( α = 5 ), then re-rank with fϕ and return the top-K. The re-ranker needs enough training data per tool to be useful—roughly 10 outcome examples per tool as a minimum (Section 6). 
+
+4.3 Ablation Mechanism B: Contrastive Embedding Adaptation 
+
+The second ablation reshapes the embedding space directly via contrastive learning, rather than adding a post-hoc re-ranker. This may scale better to large tool sets where per-tool feature learning is data-starved. 
+
+Resource profile. 197K adapter parameters (two-layer projection head). At serving time, the adapter runs a single matrix multiply on the 384-dimensional embedding, adding <0.1 ms. The adapter can be fused into the embedding model weights for zero overhead. Total model size increase: <1 MB. 
+
+Triplet mining. From outcome logs, we mine triplets (q, d +, d −) where d+ is the description of a tool that produced a positive outcome for q, and d− is a hard negative —a tool with high embedding similarity to q but poor outcomes. Hard negatives are critical for learning the functional boundaries that static embeddings miss. 
+
+Training objective. We train the adapter with InfoNCE loss [van den Oord et al., 2018] (Equation 6), combining in-batch negatives with mined hard negatives. We use a small learning rate ( 10 −5) and early stopping on validation NDCG to avoid degrading general embedding quality. We train an adapter head rather than fine-tuning the full model, which reduces training cost, preserves base model quality, and allows instant rollback by disabling the adapter. 
+
+Deployment. The adapter is placed alongside the embedding model at the router level. Since the output dimension is unchanged, it is a drop-in replacement— ToolsDatabase , similarity computation, and FilterAndRankTools all remain the same. Tool embeddings are recomputed once after deployment ( <2 seconds for 2,413 tools). 85 Experimental Setup 
+
+5.1 Datasets 
+
+ToolBench [Qin et al., 2024]. We use the benchmark split from the ToolBench dataset, ex-tracting 2,413 unique APIs across 46 categories and 600 queries across three evaluation settings of increasing difficulty: G1-Instruction (single-tool, 200 queries), G1-Category (intra-category, 200 queries), and G2-Instruction (multi-tool, 200 queries). We treat the annotated relevant_apis 
+
+as ground truth for tool selection evaluation. 
+
+MetaTool [Huang et al., 2024]. We use the Task 2 (tool selection) data from the official MetaTool repository, which contains 4,287 queries across 199 tools with four subtask types: similar choices (995 queries), specific scenarios (1,800 queries), reliability issues (995 queries), and multi-tool selection (497 queries). Each query includes ∼10 candidate tools and human-annotated ground-truth tool(s). 
+
+5.2 Evaluation Metrics 
+
+We report standard retrieval metrics: 
+
+• Recall@ K: Fraction of ground-truth tools present in the top-K selected tools. 
+
+• Precision@ K: Fraction of selected tools that are ground-truth relevant. 
+
+• NDCG@ K: Normalized Discounted Cumulative Gain measuring ranking quality. 
+
+• MRR : Mean Reciprocal Rank of the first relevant tool. We report results for K ∈ { 1, 3, 5} to capture different operational settings. 
+
+5.3 Baselines 
+
+1. BM25 : Sparse lexical retrieval over tool descriptions. 2. Static Embedding (SE) : Dense retrieval using sentence-transformers with original tool descriptions (analogous to the current semantic router). 3. SE + Lexical : Static embedding with the lexical/tag/name/category weighted combination from the semantic router’s FilterAndRankTools .4. Random : Random tool selection (lower bound). 
+
+5.4 OATS Configurations 
+
+1. OATS-S1 : Core mechanism only (embedding refinement via outcome-guided centroid inter-polation). 2. OATS-S2 : Core + ablation A (embedding refinement + MLP re-ranker). 3. OATS-S3 : Core + ablation A + ablation B (embedding refinement + MLP re-ranker + contrastive adapter). 
+
+5.5 Implementation Details 
+
+The base embedding model is all-MiniLM-L6-v2 [Reimers & Gurevych, 2019] (22M parameters, 384 dimensions), representative of models deployed in production routers. The re-ranker MLP is [7 , 64 , 32 , 1] (2,625 parameters, ReLU, dropout 0.1). The contrastive adapter is [384 , 256 , 384] 
+
+(197K parameters), trained with learning rate 10 −5, temperature τ = 0 .07 , up to 5 epochs with early stopping. All experiments use α = 5 for the re-ranking candidate pool. 9Outcome labels. Both benchmarks provide human-annotated tool relevance per query. We use these as outcome labels: oj = 1 if tool tj is in the annotated relevant set for qj , and 
+
+oj = 0 otherwise. In production, oj would come from downstream signals (task completion, user satisfaction); the framework is agnostic to the source. 
+
+Train/test protocol. All methods are evaluated on the same held-out 30% test split (fixed 70/30 split, deterministic seed). OATS stages use the 70% training portion for learning; Stage 2 further sub-splits training into 85/15 train/validation. 
+
+Latency measurement. All latencies are measured on a single CPU core (no GPU), covering embedding computation, similarity search, and any re-ranking overhead. We report p50 and p99. 
+
+# 6 Results 
+
+We evaluate each method on selection accuracy and serving cost. 
+
+6.1 Core Result: Zero-Cost Refinement 
+
+MetaTool (199 tools, 1,287 test queries). This benchmark covers four subtask types in-cluding adversarially similar tool choices and multi-tool selection. Static embedding achieves Recall@1 = 0.716 and NDCG@5 = 0.869. OATS embedding refinement improves this to Re-call@1 = 0.830 and NDCG@5 = 0.940, with no added serving cost (p50: 3.53 ms vs. 3.66 ms). Appendix A shows concrete before/after examples. 
+
+ToolBench (2,413 tools, 180 test queries). With a larger tool set, all methods are stressed. BM25 (pure lexical) achieves NDCG@5 of 0.853, exceeding static embedding at 0.834—suggesting that ToolBench queries have enough lexical overlap with API descriptions for sparse retrieval to work well. OATS embedding refinement reaches NDCG@5 of 0.848 (+1.7% over dense em-bedding) at slightly lower latency (p50: 4.42 ms vs. 4.59 ms). The more modest gain compared to MetaTool is expected: with 2,413 tools, the embedding space is densely packed and centroid interpolation has less room to separate tools without affecting neighbors. 
+
+6.2 Ablation: Do Learned Components Help Further? 
+
+Table 5 summarizes the incremental contribution and cost of each learned component on top of refined embeddings. 
+
+MLP re-ranker (2.6K parameters). The re-ranker hurts on ToolBench (NDCG@5: 0.823 vs. 0.834 baseline) and is flat on MetaTool (0.869 vs. 0.869). On ToolBench, 357 training queries spread across 2,413 tools gives < 0.15 positive examples per tool. Even on MetaTool (∼13 examples/tool), the MLP adds nothing. Either the feature set (similarity gap, category indicator, etc.) lacks discriminative power for this task, or the MLP cannot generalize from sparse per-tool statistics. In short, a learned re-ranker is not guaranteed to help and should be validated before deployment. 
+
+Contrastive adapter (197K parameters). The adapter reaches NDCG@5 of 0.842 on Tool-Bench (+0.008 over baseline) and 0.931 on MetaTool (+0.062). On MetaTool the adapter per-forms comparably to embedding refinement (0.931 vs. 0.940), suggesting both capture similar outcome signals at this scale. Unlike the MLP, the adapter reshapes the full embedding space via hard-negative contrastive learning rather than learning per-tool features. 10 6.3 Latency and Resource Analysis 
+
+Table 6 shows that all OATS stages stay within single-digit millisecond p50 latency on both benchmarks; Stage 1 is comparable to or faster than the baseline. 
+
+Cost-efficiency metric. We define accuracy gain per millisecond (AG/ms) as ∆NDCG@5 /∆latency. When accuracy improves with no latency increase, we assign ∞. Table 2 summarizes. Table 2: Cost efficiency: NDCG@5 gain per additional millisecond of p50 latency vs. SE baseline. 
+
+∞ means accuracy improved with no latency increase. 
+
+MetaTool ToolBench Method ∆NDCG@5 AG/ms ∆NDCG@5 AG/ms SE (baseline) — — — —Emb. refinement (core) +0.071 ∞ +0.014 ∞
+
++ Contrastive (ablation B) +0.062 ∞ +0.008 ∞
+
+SE + Lexical -0.053 — +0.020 ∞
+
+Embedding refinement improves accuracy at no latency cost on both benchmarks. On Tool-Bench, SE + Lexical achieves the best accuracy (0.854), but OATS refinement is close (0.848) without lexical features. 
+
+6.4 Key Findings 
+
+Four findings for practitioners: 1. Start with embedding refinement. It is free at inference time, needs no code changes, and gives the largest gains on MetaTool (NDCG@5 0.869 → 0.940) with meaningful improvement on ToolBench (0.834 → 0.848). 2. An MLP re-ranker does not reliably help. It fails to improve on either benchmark and hurts on ToolBench. Do not assume a learned re-ranker will help without validation on your data. 3. Contrastive adaptation is an alternative. On MetaTool it reaches NDCG@5 0.931 vs. 0.940 for refinement. Useful for teams that cannot modify embedding tables but can swap models. 4. Lexical features remain strong on ToolBench. BM25 beats dense embeddings, and SE + Lexical gets the best NDCG@5 (0.854). Refinement should be evaluated on top of lexical features in production. 
+
+6.5 Comparison with LLM-Based Tool Selection 
+
+Table 3 compiles published LLM-based results on MetaTool [Huang et al., 2024] alongside OATS. On the “similar choices” subtask—the hardest split where tools share overlapping functionality— OATS-S1 reaches 83.4%, roughly 10 points above Vicuna-7b (73.5%) and 14 points above Chat-GPT (69.1%), while running ∼1,000 × faster on CPU without any language-model inference. Caveats apply: (1) MetaTool reports CSR (correct selection rate) while we report Recall@1— these coincide for single-tool queries but may differ for multi-tool ones; (2) LLM-based selection uses full query text with in-context descriptions, while retrieval compresses tools into fixed embeddings; (3) LLMs can handle novel tools zero-shot, whereas OATS needs outcome data to improve past the static baseline. 11 Table 3: Comparison with LLM-based tool selection on the MetaTool “similar choices” subtask (295 test queries). LLM results report Correct Selection Rate (CSR) from Huang et al. [2024]; retrieval-based results report Recall@1 on the same subtask and split. Both metrics measure whether the top-selected tool is correct. 
+
+Method Accuracy Latency Hardware 
+
+LLM-based (from published benchmarks) 
+
+ChatGPT (GPT-3.5) † 69.1% ∼1–3 s API / GPU Vicuna-7b † 73.5% ∼2–5 s GPU Vicuna-13b † 58.2% ∼3–8 s GPU LLaMA2-13b † 44.1% ∼2–5 s GPU Average (9 LLMs) † ∼57% — GPU 
+
+Retrieval-based (ours, same subtask, CPU-only) 
+
+BM25 42.7% 0.4 ms CPU Static Embedding (SE) 66.4% 3.7 ms CPU 
+
+OATS-S1 (emb. refine) 83.4% 3.5 ms CPU  
+
+> †CSR on “tool selection with similar choices” subtask [Huang et al., 2024]. LLM latencies are approximate wall-clock times for full inference.
+
+Other benchmarks tell a similar story: AppSelectBench [Chen et al., 2025] reports GPT-5 at 63.3% on 100+ desktop tools, and GTA [Wang et al., 2024] found GPT-4 completing fewer than 50% of real-world tool-use tasks. LLM-based tool selection is both slow and unreliable; lightweight retrieval with outcome refinement offers a better cost–accuracy tradeoff for routing. Table 4: Selection performance on ToolBench (2,413 tools, 180 test queries) and MetaTool (199 tools, 1,287 test queries). Same 30% test split for all methods. Best in bold , second underlined. 
+
+ToolBench MetaTool Method R@1 R@3 R@5 NDCG@5 R@1 R@3 R@5 NDCG@5 Random 0.238 0.656 0.829 0.692 0.096 0.308 0.492 0.298 BM25 0.392 0.772 0.921 0.853 0.397 0.617 0.753 0.595 SE 0.382 0.765 0.897 0.834 0.716 0.904 0.958 0.869 SE + Lexical 0.388 0.783 0.919 0.854 0.640 0.860 0.927 0.816 OATS-S1 0.381 0.793 0.915 0.848 0.830 0.964 0.986 0.940 
+
+OATS-S2 0.372 0.774 0.896 0.823 0.716 0.909 0.954 0.869 OATS-S3 0.387 0.778 0.906 0.841 0.810 0.956 0.988 0.931 
+
+# 7 Discussion 
+
+7.1 Why Not Use an LLM for Selection? 
+
+One might ask whether the LLM itself could select its own tools. There are three problems with this: 1. Circular dependency. Tools must be attached before inference begins, so the LLM would need a separate pre-flight call, doubling latency and cost. 2. Resource contention. GPU capacity is the bottleneck in LLM serving. At 10K rps, an 8B selection model would consume 5–10 GPUs just for routing. 12 Table 5: Ablation: incremental cost and contribution of each OATS component. Same 30% test split. Embedding refinement adds zero cost; the MLP re-ranker degrades ToolBench due to data sparsity ( <0.15 examples/tool). 
+
+Serving Added ToolBench MetaTool params latency NDCG@5 ∆ NDCG@5 ∆
+
+SE (baseline) 0 — 0.834 – 0.869 –+ Emb. refinement (core) 0 0 ms 0.848 +0.014 0.940 +0.071 + MLP re-ranker (ablation A) 2.6K <0.5 ms 0.823 -0.011 0.869 +0.000 + Contrastive (ablation B) 197K <0.1 ms 0.841 +0.007 0.931 +0.062 Table 6: Inference latency per request (CPU-only). All methods stay within single-digit mil-lisecond p50. 
+
+MetaTool ToolBench Method p50 (ms) p99 (ms) p50 (ms) p99 (ms) GPU 
+
+SE (baseline) 3.66 6.47 4.59 9.83 No OATS-S1 3.53 5.99 4.42 6.19 No OATS-S2 3.92 6.91 5.04 16.38 No OATS-S3 3.87 7.25 4.95 11.11 No 3. Latency. Tool selection happens before the request reaches any model pool. Adding 500 ms of LLM inference on top of 200–2,000 ms model inference increases total latency by 25–250%, directly degrading time-to-first-token. OATS avoids all three by learning offline and deploying only a refined embedding table on CPU. 
+
+7.2 Deployment Architecture 
+
+OATS integrates into existing router infrastructure with minimal changes: 
+
+• Embedding refinement runs as a cron job: read outcome logs, compute centroid updates, validate, and swap the embedding table. No code changes to the serving path. 
+
+• MLP re-ranker (optional) adds a re-scoring call after FindSimilarTools . Gate behind a data-density check ( ≥ 10 examples/tool). 
+
+• Contrastive adapter (optional) replaces the embedding model in ToolsDatabase . Output dimension is unchanged, so no downstream changes. Rollback is instantaneous. 
+
+7.3 When to Add Complexity Beyond Refinement 
+
+Based on our results: 
+
+• |T | < 200 : Embedding refinement alone. Our MetaTool results (199 tools, +8.3% NDCG) confirm this. 
+
+• |T | = 50–500, >5K logs: Refinement + MLP re-ranker, but only if the data-to-tool ratio exceeds ∼10:1. Below that, it hurts. 
+
+• |T | > 500 , >10K logs: Refinement + contrastive adapter. Contrastive learning scales better than pointwise re-ranking for large tool sets. Skip the MLP unless data is abundant ( > 50 
+
+examples/tool). 13 Figure 4: Stage 1 convergence over iterations. Left: MetaTool. Right: ToolBench. 
+
+Figure 5: Selection performance across all methods. Left: MetaTool. Right: ToolBench. 
+
+7.4 Limitations 
+
+Outcome signal quality. Our experiments use a binary proxy (match/no-match with ground truth). Production outcomes are richer—a tool might be selected but unused, used but erroring, or used but suboptimal. The framework accepts any scalar signal; richer signals should yield stronger improvements. 
+
+Cold start. New tools have no outcome history and fall back to static similarity. They warm up as data accumulates. 
+
+Embedding model ceiling. All stages are bounded by the base model’s capacity. If all-MiniLM-L6-v2 
+
+cannot distinguish two tools’ semantic domains, refinement will not help. A larger base model would provide orthogonal gains. 
+
+Evaluation scope. We measure selection quality, not end-to-end task completion. Good selection does not guarantee the LLM uses tools correctly, but it is a prerequisite: the right tool must be in the context window. 
+
+# 8 Conclusion 
+
+We presented OATS, which incorporates outcome feedback into tool selection by interpolating tool embeddings offline toward the centroid of queries where they succeed. This adds no pa-rameters, latency, or GPU cost at serving time, yet improves NDCG@5 from 0.869 to 0.940 on MetaTool and from 0.834 to 0.848 on ToolBench, within single-digit millisecond CPU budgets. The ablation study shows that learned components do not always help. The MLP re-ranker degrades accuracy when outcome data is sparse (below a ∼10:1 data-to-tool ratio), while the contrastive adapter provides modest but consistent gains for larger tool sets. For production LLM routing, tool selection should be treated as a learned retrieval problem, but the first step should be the simplest one. A zero-cost embedding refinement, informed 14 by production outcomes, captures most of the available gains. More complex components or LLM-based selection rarely justify their cost at the routing layer. 
+
+# References 
+
+Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, et al. Toolformer: Language models can teach themselves to use tools. In NeurIPS , 2023. Yujia Qin, Shihao Liang, Yining Ye, et al. ToolLLM: Facilitating large language models to master 16000+ real-world APIs. In ICLR , 2024. Yue Huang, Jiawen Shi, Yuan Li, et al. MetaTool benchmark for large language models: Deciding whether to use tools and which to use. In ICLR , 2024. Vladimir Karpukhin, Barlas Oguz, Sewon Min, et al. Dense passage retrieval for open-domain question answering. In EMNLP , 2020. Bowen Jin, Hansi Zeng, Zhenrui Yue, et al. Search-R1: Training LLMs to reason and leverage search engines with reinforcement learning. arXiv preprint arXiv:2503.09516 , 2025. Xuefeng Li, Haoyang Zou, and Pengfei Liu. ToRL: Scaling tool-integrated RL. arXiv preprint arXiv:2503.23383 , 2025. Cheng Qian, Emre Can Acikgoz, Qi He, et al. ToolRL: Reward is all tool learning needs. arXiv preprint arXiv:2504.13958 , 2025. Hongru Wang, Cheng Qian, Wanjun Zhong, et al. Acting less is reasoning more! Teaching model to act efficiently. arXiv preprint arXiv:2504.14870 , 2025. Hongjin Su, Shizhe Diao, Ximing Lu, et al. ToolOrchestra: Elevating intelligence via efficient model and tool orchestration. arXiv preprint arXiv:2511.21689 , 2025. Zhihong Shao, Peiyi Wang, Qihao Zhu, et al. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 , 2024. Jiawei Zhou and Lei Chen. Optimizing retrieval for RAG via reinforced contrastive learning. 
+
+arXiv preprint arXiv:2510.24652 , 2025. Tianyi Chen, Michael Solodko, Sen Wang, et al. AppSelectBench: Application-level tool selection benchmark. arXiv preprint arXiv:2511.19957 , 2025. Jize Wang, Zerun Ma, Yining Li, et al. GTA: A benchmark for general tool agents. In NeurIPS Datasets and Benchmarks Track , 2024. Nils Reimers and Iryna Gurevych. Sentence-BERT: Sentence embeddings using Siamese BERT-networks. In EMNLP , 2019. Aaron van den Oord, Yazhe Li, and Oriol Vinyals. Representation learning with contrastive predictive coding. arXiv preprint arXiv:1807.03748 , 2018. Lifan Yuan, Yangyi Chen, Xingyao Wang, et al. CRAFT: Customizing LLMs by creating and retrieving from specialized toolsets. In ICLR , 2024. Yuanhang Zheng, Peng Li, Wei Liu, et al. ToolRerank: Adaptive and hierarchy-aware reranking for tool retrieval. In LREC-COLING , 2024. 15 A OATS-S1: Step-by-Step Walkthrough 
+
+We trace Algorithm 1 on a real MetaTool test query. All numbers are from the 70/30 train/test split with all-MiniLM-L6-v2 embeddings. 
+
+A.1 Setup: The Query and Candidate Tools 
+
+Test query: “Could you please search for and provide the complete and verbatim transcript of the strategy call that took place last week between ourselves and the executives?” The MetaTool benchmark provides 11 candidate tools for this query. The ground-truth answer is buildbetter , a meeting-transcript tool. Table 7 lists all candidates with their descriptions. Table 7: Candidate tools for the example query, with original descriptions from MetaTool. 
+
+Tool Description 
+
+buildbetter ⋆ Chat with the knowledge of all your calls in BuildBetter (Zoom, GMeet, Webex). Start for free @ BuildBetter.ai 
+
+QuiverQuantitative Access data on congressional stock trading, lobbying, insider trading, and proposed legislation. 
+
+MixerBox_WebSearch Search and summarize the web with our customized search engine powered by Google Search API! 
+
+brandfetch Retrieve company and brand data including logos, col-ors, fonts, and other brand information. 
+
+C3_Glide Get live aviation data for pilots. Ask questions about METARs, TAFs, NOTAMs. . . 
+
+locator Displaying the current coordinates of the ISS and the names of the current crew. 
+
+speechki_tts The easiest way to convert texts to ready-to-use audio. 
+
+MemoryTool A learning application with spaced repetition function-ality. 
+
+CTCP Analyze eligibility criteria in ClinicalTrials.gov. 
+
+StrologyTool Provides astrology services for you. 
+
+ExchangeTool Seamlessly convert currencies with our integrated cur-rency conversion tool.  
+
+> ⋆Ground-truth tool.
+
+The correct tool’s description says “BuildBetter.ai”—a branded name that tells an embedding model nothing about meeting transcripts. The query mentions “executives” and “strategy call,” which have lexical affinity to business/finance tools. 
+
+A.2 Step 1: Static Retrieval (Before Refinement) 
+
+We encode the query and all 11 candidate descriptions with the base embedding model, then rank by cosine similarity: 
+
+Rank Tool Cosine sim 
+
+1 QuiverQuantitative 0.337 2 buildbetter ⋆ 0.276 3 MixerBox_WebSearch 0.254 4 brandfetch 0.228 5 C3_Glide 0.200 
+
+> (6 more candidates below 0.18)
+
+16 Static embedding puts the correct tool at rank 2. QuiverQuantitative wins because “congres-sional. . . lobbying. . . legislation” sits in a similar embedding region as “strategy call. . . executives.” The margin is 0.337 − 0.276 = 0 .061 .
+
+A.3 Step 2: Collecting Outcome Data (Algorithm 1, Steps 1–2) 
+
+From the 70% training split, we collect the queries where buildbetter appears in the ground-truth relevant tools ( Q+) and queries where it was retrieved in the top-K but was not relevant (Q−): 
+
+Positive queries Q+ (4 unique training queries): 
+
++1. “Retrieve the complete and unedited transcript of the customer support call I had with John Doe. . . ” 
+
++2. “I am unable to locate the complete and accurate transcript of yesterday’s standup meet-ing. . . ” 
+
++3. “Can you find the complete and accurate transcript of the last sales call I had, specifically with Acme Corp. . . ” 
+
++4. “I had a strategy meeting last week, what were the key points we discussed?” 
+
+Hard-negative queries Q− (7 training queries where buildbetter was retrieved but wrong): 
+
+−1. “Can the CLINQ plugin display the detailed information of the total duration for all your calls. . . ” 
+
+−2. “Can you help me add a new page to my Notion workspace?” 
+
+−3. “Can you create a recurring call reminder for my weekly team meetings on CLINQ?” The positive queries cluster around “retrieving transcripts from meetings and calls.” The nega-tives mention “calls” but are about call management (CLINQ) or unrelated tools—cases where 
+
+buildbetter was a false positive. 
+
+A.4 Step 3: Computing the Refined Embedding (Algorithm 1, Step 3) 
+
+We encode all Q+ queries, compute their centroid ¯e+, and do the same for Q−. Then we apply the update rule from Equation 7: 
+
+ˆebuildbetter = 0 .7 · e(buildbetter )
+
+| {z }
+
+> retain original
+
++ 0.3 · ¯e(Q+)
+
+| {z }
+
+> attract toward transcripts
+
+− 0.1 · ¯e(Q−)
+
+| {z }
+
+> repel from call-management
+
+Geometric interpretation. The original embedding sits in a generic “productivity SaaS” region. The positive centroid ¯e(Q+) sits in a “meeting transcripts” region. The interpolation pulls the tool toward transcripts and pushes it away from call management. After re-normalization, the tool lives where transcript-retrieval queries concentrate. 
+
+A.5 Step 4: Re-Ranking After Refinement 
+
+With the refined buildbetter embedding (and refined embeddings for all other tools that had training data), we re-rank the same 11 candidates: 17 Rank Tool New sim ∆               
+
+> 1buildbetter ⋆0.440 +0.164
+> 2QuiverQuantitative 0.343 +0.005 3MixerBox_WebSearch 0.283 +0.029 4brandfetch 0.253 +0.026 5C3_Glide 0.243 +0.043
+> (6 more candidates below 0.16)
+
+The correct tool moves from rank 2 to rank 1, gaining +0 .164 in similarity. QuiverQuantitative 
+
+barely moves ( +0 .005 ) because its training signal (congressional trading queries) is unrelated to transcripts. The margin reverses from −0.061 to +0 .097 .
+
+Why the correction is large. buildbetter had only 4 positive and 7 negative training queries. But the positives cluster tightly around “call transcript retrieval,” giving a directional centroid. The original embedding was far from this cluster because the description (“BuildBet-ter.ai”) is opaque. This is where refinement helps most: when the description fails to communi-cate function, outcome data fills the gap. 
+
+A.6 Additional Examples 
+
+Table 8 summarizes three additional cases where OATS-S1 corrects a static embedding failure, spanning different MetaTool subtask types. Table 8: Additional OATS-S1 corrections on MetaTool test queries. “SE sim” and “S1 sim” are cosine similarities to the correct tool before and after refinement. “SE top-1” is the wrong tool selected by static embedding.                    
+
+> Query (truncated) Correct SE top-1 SE S1
+> “Show me diverse and amusing memes. . . ”
+> lsongai PolishTool 0.287 0.450
+> “Discount codes for booking hotels or flights?”
+> Discount TripTool 0.585 0.691
+> “Meaning of arigatou in Japanese?”
+> speak ResearchFinder 0.077 0.149
+
+Memes query. PolishTool (“creative inspiration”) outscores lsongai (“AI-powered content. . . memes”) by +0 .066 under SE. After refinement, lsongai gains +0 .163 from entertainment-related train-ing queries. Failure mode: semantic decoy—similar descriptions, different function. 
+
+Discount codes query. TripTool mentions “discounted hotel,” creating lexical overlap ( +0 .057 
+
+margin). Outcome data pulls Discount toward coupon/promo queries, flipping the margin to 
+
++0 .015 . Failure mode: lexical overlap masking functional intent. 
+
+Japanese translation query. All candidates score below 0.15 —near random. “speak” does not embed well for translation queries. Training queries about language learning nearly double its similarity ( +0 .072 ). Failure mode: opaque name in a low-similarity regime. 
+
+A.7 Summary of Failure Patterns 
+
+Three recurring patterns emerge: 18 1. Semantic decoys : Similar descriptions, different function. The positive centroid separates them by pulling each tool toward its actual use cases. 2. Opaque descriptions : Generic or branded names (“BuildBetter.ai,” “Speak”) that embed-dings cannot interpret. Outcome data compensates. 3. Low-similarity regimes : When all candidates score similarly, small centroid interpolations flip rankings. 19 Algorithm 1 OATS-S1: Iterative Outcome-Guided Embedding Refinement 
+
+Require: Tool set T with embeddings {e(di)}, training queries with ground-truth labels, iter-ations N , step sizes α, β, momentum μ = 0 .5
+
+Ensure: Refined embeddings {e′(di)} for each tool  
+
+> 1:
+
+Initialize e(0) (di) ← e(di) for all ti ∈ T  
+
+> 2:
+
+for n = 1 to N do  
+
+> 3:
+
+// Step 1: Build outcome logs using current embeddings  
+
+> 4:
+
+for each training query qj do  
+
+> 5:
+
+Retrieve top-K tools by sim (e(qj ), e (n−1) (di))  
+
+> 6:
+
+Label each retrieved tool: o = 1 if ti ∈ ground_truth (qj ), else o = 0  
+
+> 7:
+
+end for  
+
+> 8:
+
+// Step 2: Partition queries by tool and outcome  
+
+> 9:
+
+for each tool ti do  
+
+> 10:
+
+Q+ 
+
+> i
+
+← { qj : ti retrieved for qj and oj = 1 } 
+
+> 11:
+
+Q− 
+
+> i
+
+← { qj : ti retrieved for qj and oj = 0 } 
+
+> 12:
+
+end for  
+
+> 13:
+
+// Step 3: Compute refined embedding per tool  
+
+> 14:
+
+for each tool ti with |Q+ 
+
+> i
+
+| ≥ 1 do  
+
+> 15:
+
+¯e+ ← 1 
+
+> |Q+
+> i|
+
+P
+
+> q∈Q+
+> i
+
+e(q) (positive centroid)  
+
+> 16:
+
+ˆei ← (1 − α) e(n−1) (di) + α ¯e+ 
+
+> 17:
+
+if |Q− 
+
+> i
+
+| ≥ 1 then  
+
+> 18:
+
+¯e− ← 1 
+
+> |Q−
+> i|
+
+P
+
+> q∈Q−
+> i
+
+e(q) (negative centroid)  
+
+> 19:
+
+ˆei ← ˆei − β ¯e− (repel from failures)  
+
+> 20:
+
+end if  
+
+> 21:
+
+ˆei ← ˆei / ∥ˆei∥ (re-normalize)  
+
+> 22:
+
+// Step 4: Momentum blend with previous iteration  
+
+> 23:
+
+if n > 1 then  
+
+> 24:
+
+e(n)(di) ← μ e (n−1) (di) + (1 − μ) ˆ ei 
+
+> 25:
+
+e(n)(di) ← e(n)(di) / ∥e(n)(di)∥ 
+
+> 26:
+
+else  
+
+> 27:
+
+e(n)(di) ← ˆei 
+
+> 28:
+
+end if  
+
+> 29:
+
+end for  
+
+> 30:
+
+end for  
+
+> 31:
+
+// Step 5: Validation gate  
+
+> 32:
+
+Evaluate {e(N )(di)} on held-out validation set  
+
+> 33:
+
+Accept e′(di) ← e(N )(di) only if Recall@ K improves over e(di)
+
+20
