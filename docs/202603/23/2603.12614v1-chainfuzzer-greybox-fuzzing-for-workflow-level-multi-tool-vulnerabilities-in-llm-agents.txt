@@ -1,0 +1,372 @@
+Title: ChainFuzzer: Greybox Fuzzing for Workflow-Level Multi-Tool Vulnerabilities in LLM Agents
+
+URL Source: https://arxiv.org/pdf/2603.12614v1
+
+Published Time: Mon, 16 Mar 2026 00:34:29 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# ChainFuzzer: Greybox Fuzzing for Workflow-Level Multi-Tool Vulnerabilities in LLM Agents 
+
+# Jiangrong Wu 
+
+wujr28@mail2.sysu.edu.cn Sun Yat-sen University Zhuhai, Guangdong, China 
+
+# Zitong Yao 
+
+yaozt@mail2.sysu.edu.cn Sun Yat-sen University Zhuhai, Guangdong, China 
+
+# Yuhong Nan ∗
+
+Sun Yat-sen University Zhuhai, Guangdong, China nanyh@mail.sysu.edu.cn 
+
+# Zibin Zheng 
+
+Sun Yat-sen University Zhuhai, Guangdong, China zhzibin@mail.sysu.edu.cn 
+
+## Abstract 
+
+Tool-augmented LLM agents increasingly rely on multi-step, multi-tool to complete real tasks. This design expands the attack sur-face, because data produced by one tool can be persisted and later reused as input to another tool, enabling exploitable source-to-sink dataflows that only emerge through tool composition. We study this risk as multi-tool vulnerabilities in LLM agents, and show that existing discovery efforts that focus on single-tool or single-hop testing can miss these long-horizon behaviors and provide limited debugging value. We present ChainFuzzer, a greybox framework for discovering and reproducing multi-tool vulnerabilities with auditable evidence. ChainFuzzer (i) identifies high-impact operations with strict source-to-sink dataflow evidence and extracts plausible upstream candidate tool chains based on cross-tool dependencies, (ii) uses Trace-guided Prompt Solving (TPS) to synthesize stable prompts that reliably drive the agent to execute target chains, and (iii) performs guardrail-aware fuzzing to reproduce vulnerabilities under LLM guardrails via payload mutation and sink-specific oracles. We evaluate ChainFuzzer on 20 popular open-source LLM agent apps (998 tools). ChainFuzzer extracts 2,388 candidate tool chains and synthesizes 2,213 stable prompts, and confirms 365 unique, reproducible vulnerabilities across 19/20 apps, where 302 require multi-tool execution. In component evaluation, tool-chain extrac-tion achieves 96.49% edge precision and 91.50% strict chain preci-sion; TPS increases chain reachability from 27.05% to 95.45%; and guardrail-aware fuzzing increases the payload-level trigger rate from 18.20% to 88.60%. Overall, ChainFuzzer achieves an efficiency of 3.02 vulnerabilities per 1M tokens, providing a practical founda-tion for testing and hardening real-world multi-tool agent systems. 
+
+## CCS Concepts 
+
+• Security and privacy → Domain-specific security and pri-vacy architectures .
+
+## Keywords 
+
+LLM agent security, multi-tool vulnerability, Cross-tool dependence, Fuzzing 
+
+> ∗Corresponding author.
+
+## 1 Introduction 
+
+Large language models (LLMs) are increasingly used as tool-augmented agents that can autonomously execute tasks rather than only answer questions [ 30 , 33 ]. By integrating with external tool ecosystems (e.g., web search, file systems, databases, and code runners), an agent can interpret a user request, plan sub-tasks, and coordinate data flow across multiple components in a closed loop. This capabil-ity enables complex automation, such as searching for a repository, downloading a file, extracting key information, and applying a patch by chaining tool invocations (e.g., web_search → download 
+
+→ write_file → run ). However, the same multi-stage dataflow also expands the attack surface: information produced by one tool can become the input of another tool in later steps, and the agent may unintentionally propagate attacker-influenced content into high-impact operations. In this paper, we study this security risk as multi-tool vul-nerabilities in LLM agents, which arise when tool composition creates an exploitable source-to-sink dataflow across multiple steps. Currently, LLM agents increasingly rely on multi-tool workflows to complete real tasks, which makes vulnerability logic more complex and often hidden behind intermediate steps and artifacts. In prac-tice, an unsafe behavior may only emerge after several tool calls and state transitions (e.g., a value fetched from the web is written to a file and later reused as an input to an execution tool), so assessing each tool in isolation does not capture the security boundary of the agent as a whole. However, existing vulnerability discovery efforts [ 17 , 26 , 28 , 60 ]for LLM agents focus on single-tool or single-hop testing, where the goal is to directly trigger one unsafe tool call with an obvi-ously malicious input. This is insufficient in real ecosystems for two reasons. First, it leads to substantial false negatives: multi-step chains can bypass this testing model even when every step looks benign in isolation, and the sink effect is only reachable through composition. Second, single-tool testing provides limited debugging value for developers: it cannot explain how attacker-influenced con-tent traverses across tools and carriers, and therefore cannot guide mitigation at the right boundary (e.g., the first untrusted ingress point or the downstream sink parameter). As a result, there is a need of a workflow-level testing approach that can model, execute, and validate multi-tool chains, and provide auditable evidence to improve the security of deployed agent systems. 
+
+> arXiv:2603.12614v1 [cs.SE] 13 Mar 2026 Wu et al.
+
+Our Work. In this paper, we propose ChainFuzzer , a greybox automated and generic framework for discovering multi-tool vul-nerabilities in LLM agents. Given an agent app (its tool set, tool schemas/descriptions, and optionally tool source code), ChainFuzzer 
+
+aims to produce auditable and reproducible vulnerability that can be verified by developers. To achieve this goal, we must overcome three practical chal-lenges: (1) Finding risky tool chains; (2) Driving the agent to execute a target chain; (3) Validating sink effects under guardrails . First, risky behaviors are embedded in a large space of possible tool combina-tions, and naive exploration wastes budget on semantically invalid or irrelevant sequences. We need to efficiently recover realistic upstream chains that can deliver attacker-influenced content to high-impact operation. Second, even when a candidate chain is known, an LLM agent is not a deterministic executor: small prompt changes can lead to different plans, tool choices, and argument bindings, or fail due to missing preconditions, making it difficult to reliably reproduce a specific workflow. Third, validation must work under model guardrails that often refuse or weaken obvi-ously malicious payloads; this can hide compositional weaknesses of the agent unless we can test in a guardrail-aware way and still reproduce the vulnerability. 
+
+ChainFuzzer addresses these challenges in three steps. First, it identifies high-impact sink_tools with strict source-to-sink dataflow evidence and extracts plausible upstream candidate_chains 
+
+based on cross-tool dependencies. Second, it uses Trace-guided Prompt Solving (TPS) to synthesize a stable valid_prompt for each chain by comparing runtime traces against the target chain and it-eratively repairing the prompt until the agent can execute the chain reliably. Third, it performs guardrail-aware fuzzing to reproduce vulnerabilities under LLM guardrail by mutating the payloads and validating exploitation with sink-specific oracles. We evaluate ChainFuzzer on a dataset of 20 popular LLM agents, which together expose 998 tools. From these tool ecosystems, Chain-Fuzzer extracts 2.388 candidate tool chains and synthesizes 2.213 sta-ble prompts, enabling systematic end-to-end testing of long-horizon multi-tool chains. Our findings show that multi-tool vulnerabilities are common in real agent deployments: ChainFuzzer confirms 365 
+
+unique, reproducible vulnerabilities across 19 /20 apps, and 302 of them are multi-tool vulnerabilities, indicating that most real risks require cross-tool composition rather than a single unsafe tool invocation. From a technical perspective, our component results validate that guided reachability and guardrail-aware reproduc-tion are necessary for reliable discovery. On a manually validated sample of extracted tool-chain graphs, ChainFuzzer achieves high precision at both the edge level ( 96 .49 %) and the strict chain level (91 .50 %), indicating that the extracted chains largely correspond to real, semantically meaningful dependencies. TPS substantially im-proves executability: reachability increases from 27 .05 % to 95 .45 %. Finally, guardrail-aware fuzzing is essential for reproduction under safety filters: the overall payload-level trigger rate increases from 
+
+18 .20 % to 88 .60 % with mutation. 
+
+ChainFuzzer provides practical security benefits for agent devel-opers and platform operators. For developers, ChainFuzzer produces actionable and reproducible vulnerabilities/PoCs that improve the security boundary and robustness of the LLM agent. To faciliate future research, we have released the corresponding artifact: xxx. 
+
+Contribution. In summary, this paper makes the following con-tributions: 
+
+• We identify and characterize multi-tool vulnerabilities in LLM agents, where attacker-influenced content propagates across tool boundaries and reaches high-impact operations. 
+
+• We develop ChainFuzzer , a greybox testing framework that combines sink-related tool-chain extraction, Trace-guided Prompt Solving (TPS), and guardrail-aware fuzzing to produce auditable and reproducible PoCs (prompt, tool-call trace, and evidence). 
+
+• We conduct an extensive evaluation on 20 popular agents and show that multi-tool vulnerabilities are common and practi-cally discoverable: ChainFuzzer finds 365 unique vulnerabilities across 19/20 apps, where 82.74% require multi-tool execution, and achieves an efficiency of 3.02 vulnerabilities per 1M tokens. 
+
+## 2 Background and Problem Statement 2.1 LLM Agent Background 
+
+A typical LLM-based agent integrates a backbone LLM with a set of external tools, such as file system operations, database queries, web APIs, and code execution environments. Given a user request, the agent executes an iterative loop: the LLM interprets the request, decides the next action, invokes a tool with concrete arguments, and then uses the tool output to continue the task. The key dif-ference from a traditional scripted workflow is that tool selection and argument construction are decided at runtime by the LLM, so the exact sequence of tool calls can vary across runs, even under similar inputs. 
+
+Execution LLM. In practice, the LLM plays the role of a controller that coordinates multi-step execution. Concretely, it first decom-poses a high-level request into tool-level subgoals, then the LLM selects tools based on their descriptions and current context, and finally binds tool arguments using intermediate results produced during execution. The whole process can be represented as an exe-cution trace , i.e., an ordered sequence of tool invocations with their arguments and outputs. This trace view is important because many real tasks require more than one tool call, and small deviations in one step (e.g., choosing a different tool or using a different field from a prior output) can change what happens in later steps. 
+
+Tool interfaces. From a software engineering perspective, each tool can be modeled by its interfaces and its interaction with the external environment. A tool typically exposes (1) an input schema (Function signature or JSON schema) that defines required fields and formats; (2) an output object that may contain structured fields rather than plain text; and (3) possible side effects on the environ-ment. Side effects are common in agent deployments because tools are often used to perform real actions, not only to compute values. For example, a file tool may create or overwrite a file, a database tool may update a record, and a network tool may send an HTTP request to a remote endpoint. These interface and effect properties are the basis for reasoning about how tool calls can be composed into larger workflows. 
+
+Multi-tool dependencies. Multi-tool workflows are character-ized by dependencies where intermediate artifacts produced by one tool are consumed by later tools. There are two common de-pendency patterns. First, direct output-to-input dependencies occur when a later tool directly takes a field from a previous tool’s output ChainFuzzer: Greybox Fuzzing for Workflow-Level Multi-Tool Vulnerabilities in LLM Agents 
+
+as its argument, possibly after lightweight transformation by the LLM. For example, a web search tool may return a URL field, and a download tool may use that URL as its input argument (e.g., search 
+
+returns url , then download(url) ). Second, indirect dependencies 
+
+occur when an intermediate artifact is persisted in a shared carrier and later retrieved or referenced by another tool. Common carriers include files, database records, retrieval indexes, and caches. For ex-ample, the agent may download content, write it to a local file, and later invoke a code execution tool that reads and runs that file (e.g., 
+
+download returns content , write_file(path, content) persists it, then run(path) consumes path ). These multi-tool dependencies are essential for functionality and expand the reachable execution space of an agent; however, they also create long, cross-step exe-cution paths where untrusted or user-influenced artifacts can be transformed and reused before reaching downstream actions, which makes workflow-level security failures possible. 
+
+## 2.2 Problem Statement 
+
+Figure 1: Motivating example of a multi-tool workflow that turns untrusted web content into executable code via 
+
+web_search → download → write_file → execute .Motivating example. Figure 1 shows a common multi-tool work-flow in modern agents. A user asks the agent to “find a patch to fix a bug.” The agent first uses a web search tool to obtain candidate re-sults, then downloads one result, writes the downloaded content to a local file, and finally executes the file using a code execution tool. Each step is individually reasonable for the stated task: searching for a patch, downloading it, saving it as a script, and running it to apply the fix. The security risk comes from the composition : if the downloaded content is untrusted, the workflow can promote that content into executable code and trigger unintended command or code execution (e.g., the search result points to a script that contains a hidden payload, and the agent runs it as a “quick fix”). We study workflow-level vulnerabilities in tool-augmented LLM agents. In these cases, the unsafe behavior is not caused by a single tool call in isolation, but by a multi-step tool chain where inter-mediate artifacts (e.g., URLs, code snippets, downloaded files) are created and reused across tools. Beyond untrusted web content, multi-tool ecosystems enable many other vulnerability patterns that only emerge at the workflow level. For example, a malicious local user can steer a remote, cloud-hosted agent (e.g., Chatgpt, Gemini, Doubao) service to combine tools in an unsafe way, where each individual step looks benign but the overall chain becomes dangerous. These examples show that multi-tool ecosystems in-crease agent capability, but they also expand the attack surface through longer dependency chains and artifact reuse. However, the existing agent vulnerability discovery techniques [ 26 ,28 ] remain centered on single-tool or single-hop testing, where one prompt is evaluated against one tool call invocation, even though real-world agent applications most commonly rely on collaborative multi-tool workflows to complete tasks. Such approaches under-explore multi-step tool dependencies and therefore miss risks that only materialize after cross-tool dataflow and state changes, leaving workflow-level vulnerabilities largely untested in practice. 
+
+Research goal. In this paper, our goal is to help developers uncover deep vulnerabilities in LLM agents with multi-tool operation. We build an automated, greybox testing framework that (i) models multi-tool workflows so that tool dependencies and intermediate artifact propagation can be analyzed at the workflow level, and (ii) reproduces workflow-level vulnerabilities by generating test inputs that drive the agent to execute specific tool chains with malicious payload. Finally, we generate minimal, auditable PoCs with tool-call traces and effect evidence. By achieving this framework, we aim to improve the security and robustness of real-world multi-tool agent systems. 
+
+Scope and assumptions. We focus on vulnerabilities that arise from tool compositions in deployed agent settings, where tools can ingest untrusted content from external sources or shared carriers (e.g., web pages, downloaded files, database records), and where a malicious user can also directly steer a remote agent through natural-language interactions to execute unsafe multi-tool work-flows. Our framework uses gerybox testing to simulate such un-trusted inputs and to make executions reproducible; we do not assume an attacker can modify the agent code or tool implementa-tions in deployment. We do not consider threats that require access to model weights, developer secrets, or system privileges beyond the permissions already granted to the agent tools. 
+
+## 3 System Overview 3.1 Challenges and Key Ideas 
+
+Challenges. To achieve workflow-level vulnerability discovery in multi-tool LLM agents faces three practical challenges: 
+
+• Challenge-1: Finding risky tool chains. In multi-tool agents, risky behaviors are often embedded in a large space of possible tool combinations. With a large and heterogeneous tool set, it is difficult to efficiently narrow down to realistic upstream chains that can lead to high-impact actions, rather than spending budget on semantically invalid or irrelevant sequences. This requires capturing accurate data dependence between tools and find the potential vulnerable tool chains. 
+
+• Challenge-2: Driving the agent to execute the tool chain. 
+
+Even when a candidate chain is known, reliably reproducing Wu et al. 
+
+it is difficult because an LLM agent is not a deterministic ex-ecutor. Small changes in prompts can lead to different plans, different tool choices, different argument bindings, or runtime failures, which makes it hard to force the agent to follow a spe-cific sequence. Common issues include missing preconditions, path/name mismatches for intermediate artifacts, and format or parameter mismatches across steps. This situation requires generating a valid prompt that can drive the agent to execute the specific tool chain during the vulnerability verification. 
+
+• Challenge-3: Reproducing vulnerability under guardrails. 
+
+During reproduction, intrinsic LLM guardrails can refuse or san-itize explicit malicious payloads, reducing the effectiveness of straightforward testing and potentially hiding agent tool-level design weaknesses. While this can provide partial protection in deployed agents, it may also encourage over-reliance on the LLM as a primary defense. For vulnerability validation, we need to reproduce unsafe tool effects in a way that bypass the LLM native guardrails, so that tool-level design weaknesses can be exposed. 
+
+## 3.2 ChainFuzzer Workflow 
+
+ChainFuzzer is a greybox testing framework for discovering and re-producing workflow-level vulnerabilities in multi-tool LLM agents. Given an agent’s tool set (tool interfaces, description and source code), ChainFuzzer outputs reproducible vulnerability proof-of-concepts (PoCs) with the triggering prompt, malicious payload, and tool-call traces. ChainFuzzer first identifies candidate risky workflows from tool dependencies, then drives the agent to execute those workflows reliably, and finally validates high-impact unsafe effects under realistic guardrail settings. As shown in Figure 2, 
+
+ChainFuzzer consists of three modules: Sink-related tool-chain ex-traction , Tool-chain prompt generation , and Feedback-driven fuzzing & vulnerability validation .
+
+Sink-related tool-chain extraction. To overcome challenge-1, 
+
+ChainFuzzer first reduces the search space by focusing on high-impact endpoints. It scans tool code to identify sink_tool s using a strict source-to-sink reachability rule: a tool is marked as a sink only if tool inputs can influence the arguments of a high-risk API call (e.g., exec, eval). Starting from each sink_tool , ChainFuzzer 
+
+then performs backward chain extraction to identify upstream tools that can plausibly feed data or artifacts into the sink_tool .The extraction captures both direct output-to-input dependencies and indirect dependencies through shared carriers such as files or database records. The output of this module is a set of potential vulnerable chains, each annotated with a dependency rationale and the key artifact/field that propagates to the sink argument. 
+
+Tool-chain prompt generation. For each candidate chain, Chain-Fuzzer must reliably drive the agent to execute the intended tool sequence before any vulnerability can be validated. To do so, Chain-Fuzzer uses Trace-guided Prompt Solving (TPS) to synthesize an executable prompt conditioned on the chain. It starts from a seed prompt derived from the chain and runs the agent to collect a tool-call trace. If the execution diverges, ChainFuzzer analyzes the trace to determine where and why the chain was not followed (e.g., missing preconditions, incorrect bindings, or runtime failures), and uses this constraint to revise the prompt. This trace-guided repair iterates until the chain becomes reachable and stable. The output is a valid_prompt that consistently reproduce the target chain to address challenge-2. 
+
+Feedback-driven fuzzing & vulnerability validation. Once a chain is executable, ChainFuzzer validates whether it can trigger a security-relevant effect at the sink under realistic guardrail settings. This module generates attack payloads based on the sink type (e.g., command execution, SSRF, SQL, template execution) and selects a payload injection point based on the dependency annotation from Module (a), so that the payload is placed on the tool chain path that reaches the sink argument. ChainFuzzer supports two injection channels: user-driven injection, where the payload is introduced via natural-language inputs, and environment-driven injection, where the payload is introduced via untrusted external content or shared carriers that the agent consumes. When direct payloads are blocked or degraded by intrinsic LLM guardrails (challenge-3), ChainFuzzer 
+
+applies feedback-driven mutation to bypass the guardrails through adjusting the payload form while keeping the overall workflow execution. Finally, ChainFuzzer applies sink-specific oracles based on observable tool effects and trace evidence, producing a minimal PoC trace for reporting. 
+
+## 4 Design Details of ChainFuzzer 
+
+## 4.1 Sink-Related Tool-Chain Extraction 
+
+This module extracts candidate risk chains by working backward from high-impact tool capabilities. The input is an agent tool set T ,where each tool provides an interface (name, parameters, return fields), description, and source code. The output consists of (1) a set of sink_tools whose implementations contain high-impact sink APIs with input-reachable sink arguments, and (2) a set of 
+
+candidate_chains that end at each sink_tool and satisfy multi-tool dependency constraints. Each extracted chain is annotated with its dependency type (direct or indirect) and an optional key dependency site that indicates which upstream artifact is most likely to influence a sink argument. 
+
+Table 1: Candidate sink APIs used to label sink_tool types in LLM Agent tools.                                                                     
+
+> Package Class Methods Type
+> subprocess /run ,call ,check_call ,Popen ,getoutput CMDi os /system ,popen ,exec* ,spawn* CMDi builtins /eval ,exec CODEi urllib /request.urlopen SSRF requests /get ,post ,request SSRF requests Session get ,post ,request SSRF httpx AsyncClient get ,post ,request SSRF aiohttp ClientSession get ,post ,request SSRF urllib3 PoolManager urlopen ,request SSRF urllib3 /request SSRF jinja2 Environment from_string SSTI flask Function render_template_string SSTI sqlite3 Cursor execute SQLi sqlalchemy Session execute SQLi sqlalchemy Connection execute SQLi django /cursor.execute SQLi ChainFuzzer: Greybox Fuzzing for Workflow-Level Multi-Tool Vulnerabilities in LLM Agents
+
+Figure 2: Workflow of ChainFuzzer .
+
+4.1.1 Sink tool identification. We identify sink_tools by combin-ing a sink API catalog with strict intra-tool source-to-sink dataflow analysis. We first match each tool’s source code against the sink API catalog in Table 1 to find sink callsites and their corresponding sink types (CMDi, CODEi, SSRF, SSTI, SQLi). We then apply a strict reachability rule: a tool is labeled as a sink_tool only if at least one sink callsite receives an argument that can be influenced by the tool’s entry inputs. In practice, we implement this check using backward data flow over the tool code, starting from the sink ar-gument expression and tracing through common code structures (e.g., assignment chains, intermediate variables and so on). This rule intentionally excludes tools that merely contain sink calls with fixed constants, which reduces false positives and keeps later vali-dation focused on tools where tool inputs or environment-derived artifacts can actually reach high-impact actions. 
+
+4.1.2 Backward chain extraction. Starting from each identified 
+
+sink_tool , we recover upstream tool chains using static depen-dency analysis followed by LLM-based semantic filtering .We construct dependency edges with two static rules: 
+
+• Direct dependencies. We connect two tools when an upstream tool’s return field can be consumed by a downstream tool’s pa-rameter under an interface-level equivalence or containment re-lation. Equivalence covers compatible fields such as url or path ;containment covers consuming a sub-field from a structured output (e.g., a returned object containing a url field). 
+
+• Indirect dependencies. We connect two tools when the up-stream tool can persist content (e.g., via file/DB write APIs) and the downstream tool can later read or execute persisted content (e.g., via file/DB read APIs or execution APIs that load a file). These rules intentionally over-approximate the tool-chain space and may produce interface-compatible but semantically implausible chains. We therefore use an LLM as a semantic filter: given a can-didate chain, the LLM judges whether the chain forms a coherent workflow that an agent would plausibly execute to complete a realis-tic task, and discards chains that lack logical linkage between steps. For example, a chain that connects a tool that summarizes a docu-ment to a tool that creates a database index may be type-compatible (both manipulate strings) but is not a reasonable sequence for a user task. After filtering, we retain a set of sink-related potential vulnerable chains for next modules. 
+
+## 4.2 Tool-Chain Prompt Generation 
+
+Given a candidate tool chain 𝐶 = ⟨𝑡 1, . . . , 𝑡 𝑘 ⟩ extracted in Section 4.1, this module generates an executable prompt that reliably drives the agent to follow 𝐶 . The module takes as input the chain 𝐶 to-gether with tool interfaces and descriptions, and outputs a valid prompt and its corresponding trace. The key difficulty is that tool-using agents are non-deterministic planners: small prompt changes can lead to different tool choices, different argument bindings, and different runtime outcomes. In our setting, divergences between the observed trace and the target chain are most often caused by 
+
+semantic-level mismatches in the prompt , such as incorrect bindings, missing preconditions, or ambiguous step requirements. Chain-Fuzzer therefore uses an LLM, which provides strong semantic understanding and controllable text generation, to construct trace-derived constraints and to solve for prompt revisions. 
+
+Seed prompt generation. ChainFuzzer leverages LLM to generate an initial seed prompt 𝑃 0 conditioned on the target chain 𝐶 and tool metadata (tool descriptions and interface information). The seed Wu et al. 
+
+prompt is a step-by-step user request that instructs the agent to invoke the tools in the order of 𝐶 to complete a plausible task. 
+
+4.2.1 Constraint generation from traces. ChainFuzzer executes the agent with the current prompt 𝑃 𝑖 and records a trace 𝜏 𝑖 via instru-mentation that summarizes the tuple ⟨𝑚, 𝑡, 𝑎, 𝑟, 𝑒 ⟩, where 𝑚 is the thinking of the LLM of the agent, 𝑡 is the invoked tool, 𝑎 is the argument of the tool, 𝑟 is the return value, and 𝑒 is the execution status (e.g., success, exception type, or timeout). ChainFuzzer then uses an LLM-based constraint generator to compare 𝜏 𝑖 with the target chain 𝐶 and produce a compact set of semantic constraints Δ𝑖 
+
+that explain why the execution failed to follow 𝐶 . The constraints focus on actionable, prompt-level causes, including (i) missing preconditions (e.g., a required file, credential, or record was never created), (ii) incorrect or incomplete argument bindings (e.g., a later step did not use the artifact produced earlier), (iii) format or parameter mismatches (e.g., a tool expects a file path but received a string of the path), (iv) permission or confirmation gates (e.g., the agent requests user approval before invoking a tool), and (v) planner detours (e.g., the agent chose a different tool or skipped a required step). 
+
+4.2.2 Prompt solver. Given (𝑃 𝑖 , Δ𝑖 ), ChainFuzzer uses an LLM-based solver to produce a revised prompt 𝑃 𝑖 +1 that satisfies Δ𝑖 
+
+while preserving as much of the already-correct prefix as possible. Formally, the solver searches for a feasible update within a con-strained local-edit space: 𝑃 𝑖 +1 ∈ Edit (𝑃 𝑖 , Δ𝑖 ) s.t. 𝑃 𝑖 +1 |= Δ𝑖 , where 
+
+𝑃 |= Δ𝑖 means the prompt explicitly encodes the semantic con-straints extracted from the trace (e.g., required steps, bindings, and preconditions), and Edit (𝑃 𝑖 , Δ𝑖 ) denotes a restricted set of local prompt edits around the failure point (e.g., inserting a missing step, strengthening one instruction, or rewriting an ambiguous binding), rather than a full prompt rewrite. The solver applies local edits that directly address the reported failure modes. Typical edits include adding a missing step, strength-ening an instruction that the agent previously ignored, clarifying an ambiguous reference or binding, and repairing missing precon-ditions by revising the prompt to explicitly invoke the tool step(s) that create the required resource (e.g., if a later step expects a local file path, the prompt is revised to require calling the file-writing tool to create that file before the execution step). ChainFuzzer iter-ates this repair loop until either the agent reaches and executes the full chain 𝐶 consistently, or a fixed budget is exhausted (maximum iterations, tool calls, or runtime). For the cost consideration and stability trade-off, if the agent executes the full chain 𝐶 successfully for five consecutive runs, ChainFuzzer treats the prompt as stable and accepts it as a valid prompt. 
+
+## 4.3 Fuzzing-Driven Vulnerability Validation 
+
+This module validates whether a reachable tool chain can be af-fected by the vulnerability. The input is a valid prompt produced in Section 4.2, and the malicious payload. The output is an auditable PoC: a triggering prompt, the resulting tool-call trace, and evidence that a sink-level unsafe effect occurred. The main challenge is make the malicious payload bypass the native guardrails of LLM and validate the vulnerability to expose the risk of the multi-tool level design. 
+
+4.3.1 Injection point selection. Given a reachable tool chain 𝐶 =
+
+⟨𝑡 1, . . . , 𝑡 𝑘 ⟩ and its valid prompt, ChainFuzzer determines where 
+
+to place a malicious payload so that the chain can trigger a high-impact unsafe effect at the ending sink_tool . This step follows the same real-world scope described in Section 2.2: in deployed agent settings, risk-driving inputs typically come from (i) untrusted external content ingested by tools (e.g., web pages, downloaded files, database records, indexed documents), or (ii) a malicious user 
+
+who steers a remote agent through natural-language interactions to execute an unsafe multi-tool workflow. Accordingly, ChainFuzzer 
+
+treats injection point selection as deciding whether the payload should be introduced through the user dialogue or through external content that a tool ingests, and mapping that choice to a concrete boundary on the chain (i.e., the earliest step where untrusted data can enter and later propagate to the sink). More specifically, for each reachable tool chain, ChainFuzzer de-termines the appropriate injection position based on the type of the first tool in the chain and the nature of untrusted data ingress. If the first tool directly receives user-provided content (e.g., write_file ,user-controlled fields), ChainFuzzer tests user-source injection ,where the malicious payload is embedded in the user prompt and later passed into the tool’s arguments or produced artifacts. On the other hand, if the chain involves external content (e.g., web_search ,
+
+download , reading files or database records), ChainFuzzer tests 
+
+environment-source injection . Here, the payload is either in-jected into the tool’s return field or embedded into external re-sources (e.g., files or database entries) that the tool later reads. 
+
+ChainFuzzer does not prioritize one position over the other; if both injection positions are plausible, both are tested to ensure compre-hensive coverage. 
+
+4.3.2 Guardrail-aware fuzzing. In this step, ChainFuzzer executes the agent under instrumentation and injects the malicious payload at the planned injection point. For each reachable chain, Chain-Fuzzer first instantiates the malicious payload according to the sink type of the ending sink_tool . Concretely, CMDi payloads are command strings that can be executed by a shell (e.g., rm -rf <TARGET_PATH> ); CODEi payloads are executable code snippets (e.g., Python code that invokes os.system(...) ); SSRF payloads are URLs that target internal hosts or sensitive endpoints (e.g., 
+
+http://<INTERNAL_HOST>/<PATH> ); SQLi payloads are query frag-ments that can alter query logic (e.g., tautology-style conditions); and SSTI payloads are template expressions that trigger evalua-tion in the template engine (e.g., {{ <TEMPLATE_EXPR> }} ). The exact payload string is parameterized to match the expected sink argument format (command, code, URL, query, or template). Next, ChainFuzzer executes the agent under instrumentation and injects the malicious payload at the planned injection point. Chain-Fuzzer applies oracles below to decide whether the vulnerability is reproduced: 
+
+• CMDi oracle. The command-execution sink API is reached with payload-influenced arguments. 
+
+• CODEi oracle. The code-execution sink API is reached with payload-influenced code and the CODE probe effect is observed. 
+
+• SSRF oracle. The network-request sink API is reached with a payload-influenced destination and the request is resolved to an ChainFuzzer: Greybox Fuzzing for Workflow-Level Multi-Tool Vulnerabilities in LLM Agents 
+
+SSRF probe target class (e.g., internal/loopback/link-local) or a designated internal endpoint. 
+
+• SQLi oracle. The database-execution API is reached with a payload-influenced query and the SQLi probe effect is observed (e.g., unexpected acceptance/row expansion/error signature). 
+
+• SSTI oracle. The template-rendering API is reached with a payload-influenced template and the SSTI probe effect is ob-served in the rendered output. If malicious payload is block by the guardrail of the LLM, Chain-Fuzzer mutates the payload while keeping the prompt unchanged. The mutation space uses several transformations, including (i) 
+
+shard the payload into multiple benign-looking fragments that are reassembled later in the chain, (ii) encode the payload (e.g., base64 or escaping) and rely on downstream interpretation to re-cover it, and (iii) perturb format while preserving tool-required syntax (e.g., quotation, separators, and argument layout). Chain-Fuzzer then retry to run the agent with the mutated payload and repeats the mutation until either the vulnerability is reproduced or a fixed fuzzing budget is reached. 
+
+## 5 Evaluation 
+
+Table 2: LLM agents in the dataset, ranked by GitHub stars.                                  
+
+> Agent GitHub Stars Agent GitHub Stars
+> openclaw [51] 198k superagi [49] 17.2k autogpt [14] 182k agentscope [35] 16.4k langflow [23] 145k agentzero [1] 14.7k langchain [4] 127k bisheng [11] 11.1k ragflow [20] 73.3k xagent [39] 8.5k metagpt [18] 64.2k taskweaver [34] 6.1k llama_index [29] 47k taskingai [50] 5.4k chatchat [8] 37.3k langroid [24] 3.9k vanna [5] 22.7k griptape [3] 2.5k dbgpt [13] 18.1k lagent [21] 2.2k
+
+Dataset. Our dataset consists of 20 open-source, multi-tool LLM agent applications (Table 2) . We manually curated this set by searching popular GitHub repositories with agent-related keywords (e.g., “LLM agent”, “AI agent”) and reviewing the top results ranked by GitHub stars. We then applied two inclusion criteria: (i) each application must have at least 2,000 GitHub stars to ensure it is widely used and maintained, and (ii) the agent must support multi-tool workflows (i.e., it can invoke multiple distinct tools to solve different tasks). This process yields a representative set of widely adopted multi-tool agents spanning different frameworks and deployments. 
+
+Environment setting. For all evaluated agent apps, we use GPT-5.1 [ 37 ] as the target LLM embedded in the agent runtime, which is one of the flagship model for agentic tasks. the LLM-related part of ChainFuzzer is driven by GPT-4o [ 38 ]. All experiments are conducted on a single local machine equipped with an Apple M4 Max CPU and 36 GB RAM (Mac Pro). 
+
+Research Questions. We evaluate ChainFuzzer by answering the following three research questions: 
+
+• RQ1: Overall result and effectiveness. How many multi-tool vulnerabilities does ChainFuzzer uncover, and what is the overall cost? 
+
+• RQ2: Effectiveness of individual components. How effective are the key modules in enabling vulnerability discovery and reproduction? 
+
+• RQ3: Ablation study. How much does each module contribute to end-to-end vulnerability yield and coverage? 
+
+## 5.1 RQ1: Overall Result and Overhead 
+
+Multi-tool vulnerability discovery. Table 3 summarizes the end-to-end results of ChainFuzzer on our dataset. Across 20 agents and 
+
+998 tools, ChainFuzzer identifies 199 sink tools and constructs 2.388 
+
+candidate tool chains. Then ChainFuzzer synthesizes 2.213 prompts that can execute their target chains successfully for 5/5 repeated runs, and ultimately confirm 365 unique vulnerabilities affecting 
+
+19 /20 apps. A key observation is that workflow-level, multi-tool vulnerabilities dominate the discovered issues: 302 /365 (82 .74 %) vulnerabilities require multi-tool execution, while only 63 are single-tool issues. In other words, multi-tool vulnerabilities are 4.79 ×
+
+more common than single-tool vulnerabilities, suggesting that a single-tool-only testing method [ 26 , 28 ] would miss the majority of security-relevant behaviors in deployed agents. Table 4 further shows that vulnerabilities arise from both user-driven interactions and untrusted environment data. Overall, 225 
+
+(61 .64 %) vulnerabilities are triggered via user-source injection (i.e., malicious user), while 140 (38 .36 %) are triggered via env-source injection (e.g., tool-returned web content or retrieved artifacts). The distribution also varies by sink type: SSRF is more frequently induced by env-source inputs ( 53 vs. 44 ), which is consistent with network destinations being derived from external content (e.g., URLs embedded in retrieved pages), whereas CMDi/CODEi are more often user-source ( 82 vs. 39 and 53 vs. 26 ), reflecting that interactive instructions more directly steer execution parameters. 
+
+Cost and overhead. Table 5 reports the end-to-end overhead. In total, analyzing 20 apps takes 68 .00 hours, 236 .000 tool calls, and 
+
+120 .80 M tokens. On average, this corresponds to 3.40 hours, 11 .800 
+
+tool calls, and 6.04 M tokens per app. We also report time-to-first-vulnerability (TTV), which is 0.32 hours per app on average. At last, ChainFuzzer achieves an efficiency of 3.02 vulnerabilities per 1M tokens. 
+
+Takeaway for RQ1. Multi-tool workflow vulnerabilities are common in today’s agent ecosystems: ChainFuzzer discovers 
+
+365 unique vulnerabilities across 19 /20 agents, with 82 .74 %requiring multi-tool execution. Overall, ChainFuzzer achieves an efficiency of 3.02 vulnerabilities per 1M tokens. 
+
+## 5.2 RQ2: Individual Module Effectiveness 
+
+Tool-chain extraction accuracy. We evaluate Module A by mea-suring the extracted tool-chain graphs correspond to real inter-tool dependencies in the target agents. We use the same pool of candi-date tool chains produced in RQ1 ( 2.388 chains across 20 apps) and construct a validation set by uniformly sampling 10 chains per app (20 ×10= 200 chains in total). For each sampled chain, we manually check every predicted edge using tool interfaces and code-level Wu et al. 
+
+Table 3: Overall result of analyzed apps, tools, candidate chains, and discovered vulnerabilities.                        
+
+> # Total App # App affected by vulnerability # Tools # Sink tools # Candidate tool chains # Valid prompt # Vulnerability single-tool multi-tool Total
+> 20 19 998 199 2388 2213 63 302 365
+> Average number per app –49.9 9.95 119.4 110.65 3.15 15.1 18.25
+
+Table 4: Breakdown of discovered vulnerabilities by injection source and sink type.                     
+
+> Injection type CMDi CODEi SSRF SSTI SQLi Total
+> User-source 82 53 44 17 29 225 (61.64%)
+> Env-source 39 26 53 616 140 (38.36%) Total 121 (33.15%) 79 (21.26%) 97 (26.57%) 23 (6.30%) 45 (12.33%) 365
+
+Table 5: Runtime and token-cost statistics of ChainFuzzer 
+
+over all dataset (20 agent apps).               
+
+> Scope Wall time Tool calls Tokens TTV Efficiency (vulns/1M tokens)
+> Total 68.00 h 236,000 120.80 M 6.40 h 3.02 Average 3.40 h 11,800 6.04 M 0.32 h
+
+Table 6: Precision of extracted tool-chain graphs.    
+
+> # Sampled chains Edge Precision (%) Chain Precision (strict) (%)
+> 200 96.49% (714/740 edges) 91.50% (183/200 chains)
+
+evidence of data flow (e.g., a returned field or persisted artifact that is subsequently consumed by the next tool). Table 6 reports two precision metrics: edge precision is 96 .49 % ( 714 /740 edges), and strict chain precision (a chain is correct only if all edges are correct) is 91 .50 % ( 183 /200 chains). This indicates that the extracted chains used downstream are largely valid multi-tool workflows, rather than spurious tool combinations. 
+
+Table 7: Effectiveness of TPS on improving prompt validity metrics.          
+
+> Metric Seed prompt Valid prompt (After TPS) Improvement
+> Reach (R=10) 27.05% 95.45% +68.40%
+> Stable prompt rate (5/5) 9.50% 92.50% +83.00%
+
+TPS for reachability and stability. We then evaluate TPS (Mod-ule B) on a separate prompt-focused sample derived from the same extracted chains (200 chains in previous step). For each chain, we generate a seed prompt 𝑃 0 without TPS, and measure reachability 
+
+as the success rate of executing the target chain by the agent under 
+
+𝑅 =10 repeated runs. We report reachability over 𝑅 =10 independent runs to quantify nondeterminism, and separately report a stricter stability criterion (5/5 consecutive successes) to decide whether a prompt qualifies as a valid prompt. Next, we run TPS to obtain a valid_prompt and re-measure reachability and stability, where stability is defined as success in 5/5 consecutive runs (the same crite-rion used to count 2.213 valid_prompt s in Table 3). Table 7 shows that TPS improves reachability from 27 .05 % to 95 .45 % (+ 68 .40 %) and increases the stable prompt rate from 9.50 % to 92 .50 % (+ 83 .00 %). These gains indicate that prompt-level repair is necessary in prac-tice even when the underlying tool chain is correct, because agents frequently fail due to missing preconditions, incorrect parameter bindings, or planner detours. 
+
+Table 8: Trigger rate improvement from one-shot to mutation across sink tool types. 
+
+Sink tool type TriggerRate (Initial payload) TriggerRate (Mutation) Improvement CMDi 10.00% (10/100) 86.00% (86/100) 76% 
+
+CODEi 7.00% (7/100) 82.00% (82/100) 75% 
+
+SSRF 29.00% (29/100) 91.00% (91/100) 62% 
+
+SSTI 24.00% (24/100) 94.00% (94/100) 70% 
+
+SQLi 21.00% (21/100) 90.00% (90/100) 69% 
+
+Total 18.20% (91/500) 88.60% (443/500) 70.4% 
+
+Guardrail-aware fuzzing. Finally, we evaluate the guardrail-aware fuzzing component in Module C using a vulnerability con-firmed sample. We draw 20 verified vulnerabilities per sink type from the 365 unique vulnerabilities discovered in RQ1 (5 types 
+
+× 20 = 100 vulnerabilities). For each vulnerability, we fix its cor-responding valid_prompt (5/5) and compare two vulnerability reproduction strategies: (i) initial payload injection (without muta-tion), and (ii) mutation using the strategies described in Section 4.3.1 (shard/encode/format). We report payload-level trigger rates: each run with a concrete payload counts as one trial, and a trial is success-ful only when the sink-specific oracle is observed. For a matched ChainFuzzer: Greybox Fuzzing for Workflow-Level Multi-Tool Vulnerabilities in LLM Agents 
+
+budget, we perform five trials per malicious payload for both strate-gies. Concretely, the initial payload strategy repeats the same pay-load five times, while the mutation strategy uses five mutated pay-load variants (one run per variant). This yields 100 payload trials per sink type and 500 trials in total. Table 8 reports the resulting trigger rates, showing that muta-tion substantially improves reproduction, especially for guardrail-sensitive sinks such as CMDi and CODEi. As shown, initial payload injection triggers only 18 .20 % ( 91 /500 ) of trials overall, whereas mutation achieves 88 .60 % ( 443 /500 ), a 70 .4% improvement. The lift is especially pronounced for guardrail-sensitive sinks such as CMDi ( 10 .00 %→86 .00 %, + 76 %) and CODEi ( 7.00 %→82 .00 %, + 75 %), confirming that mutation is essential for reliable vulnerability re-production under guardrails. 
+
+Takeaway for RQ2. The experiment result confirms that each module is effective in its intended role: Module A extracts accurate tool chains, Module B (TPS) turns them into valid and stable prompts, and Module C (mutation) makes vulnerability reproduction reliable under guardrails. 
+
+## 5.3 RQ3: Ablation Study 
+
+Table 9: Ablation study of ChainFuzzer : unique vulns and sink-type coverage.                
+
+> Variant Unique vulns ΔVulns vs. Full # Sink types covered
+> ChainFuzzer 365 05
+> w/o ChainExtraction 63 −302 3w/o TPS 96 −269 4w/o Mutation 132 −233 5
+
+We perform an ablation study to quantify how each component contributes to the final number of confirmed vulnerabilities, and to verify that the improvement of ChainFuzzer is not driven by a single step. Table 9 reports the result in three column: (i) the number of unique vulnerabilities, (ii) the difference to the full system, and (iii) the number of sink types covered. Overall, the largest drop comes from removing ChainExtraction: the results decrease from 365 to 63 ( −302 ), and the covered sink types drop from 5 to 3. This indicates that most findings require multi-tool composition rather than a single tool in isolation, because ChainExtraction is the step that exposes tool-to-tool dataflow edges needed to reach sink tools. Removing TPS reduces the findings from 365 to 96 ( −269 ) and reduces sink type coverage from 5 to 4, showing that many extracted chains are not directly reproducible without prompt stabilization; TPS increases the fraction of valid prompts that can consistently drive the agent along the intended chain. At last, removing Mutation yields 132 vulnerabilities ( −233 )while keeping all 5 sink types covered, which suggests Mutation mainly increases the number of confirmed instances within already reachable sink types rather than enabling new categories. Taken together, the ablation results support the following inter-pretation: ChainExtraction primarily determines whether multi-tool sink reachability exists, TPS primarily determines whether the chain is executable and reproducible, and Mutation primarily deter-mines how many vulnerabilities can be confirmed after reachability and validity are established. 
+
+Takeaway for RQ3. RQ3 confirms that the performance of 
+
+ChainFuzzer is not attributable to any single component: re-moving ChainExtraction, TPS, or Mutation causes a substantial drop in confirmed vulnerabilities, showing the three modules are all necessary and complementary. 
+
+## 6 Discussion 
+
+Limitations. There are two limitations that affect the results in this paper. (1) Vulnerability reproducibility depends on the runtime environment (e.g., network egress policy, sandbox permissions, and availability of credentials), which can change whether certain chains are executable and whether a sink effect is observable; e.g., an SSRF chain may not trigger if outbound requests are blocked or if the target endpoint requires a token authentication that is not present. (2) ChainFuzzer uses an LLM in multiple modules (e.g., tool-chain extraction, TPS, and mutation), so errors from model hallucination or limited capability can prevent any module from reaching 100% accuracy; although newer LLMs with stronger reasoning and lower hallucination rates are available, we use GPT-4o in our experiments to provide a conservative lower bound on performance. If a stronger model improves planning stability and reduces hallucinations, the end-to-end effectiveness of ChainFuzzer is expected to be detect more vulnerabilities. 
+
+Mitigation strategy. Our results suggest that defenses should be enforced at tool boundaries and sink invocations, because prompt wording alone is not a reliable control when multi-tool dataflow ex-ists. In practice, developers can reduce risk with three engineering measures: (1) add sink-side input constraints so that dangerous tools do not accept free-form strings; e.g., for CMDi, replace run(cmd) 
+
+with a fixed command template and validated arguments, and for SSRF, only allow requests to an allowlisted set of hostnames and URL schemes. (2) make cross-tool state explicit and mediated rather than implicit and ambient, so that values can flow across tools only through typed artifacts with provenance; e.g., instead of letting a later tool read arbitrary workspace files or caches, require upstream tools to export outputs as structured objects (or signed/typed file handles) with metadata such as producer tool, schema type, and origin (user vs. external), and require downstream tools to consume only the declared fields/handles needed for the task. This preserves normal multi-tool workflows (e.g., retrieval → summarization →
+
+report generation) while preventing unintended data reuse (e.g., a web-fetched string being implicitly reused as a shell command). (3) implement lightweight dataflow-aware checks before calling sinks to block attacker-controlled content from reaching sink parame-ters; e.g., tag values derived from user input or untrusted external content and reject a call when such a value is used as a SQL query string in execute or as a template string in from_string , forcing parameterization or escaping instead. 
+
+## 7 Related Work 
+
+Vulnerabilities in LLM-based Systems. The integration of Large Language Models (LLMs) into autonomous agents has expanded the Wu et al. 
+
+attack surface for security vulnerabilities [ 10 , 43 , 46 ]. Early research focused on model-centric issues such as training data extraction and unintended capability misuse [ 7 , 62 ], as well as inference-time attacks including membership inference and model inversion [ 16 ,31 , 44 ]. As agent frameworks began to call external tools, research shifted toward execution-time vulnerabilities [ 15 , 40 , 42 , 53 , 57 ], including jailbreaks and prompt injection (both direct and indi-rect) [ 15 , 42 ], malicious tool/plugin exploitation [ 53 , 57 ], and down-stream effects such as command execution, SSRF, and unintended data access triggered through tool calls. In addition to integrity and control-flow risks, privacy leakage is also commonly studied in LLM-based systems, especially when agents have access to files, memory, or retrieval corpora. However, most existing works evaluate iso-lated attack scenarios or single-step behaviors, and do not provide a systematic workflow to discover and confirm vulnerabilities that are induced by multi-tool composition at scale. Recent work [ 59 ]has further shown that external MCP tool ecosystems can induce unintended privacy disclosure by composing content-ingestion, privacy-access, and outbound communication tools, whereas our work instead focuses on vulnerabilities inherently introduced by the agent’s own multi-tool task-execution workflow. 
+
+Vulnerability Discovery in Traditional Software. Vulnerability discovery has a long history in software security, spanning Web applications, system software, mobile apps, and IoT platforms [ 6,12 , 19 , 25 , 41 , 47 , 52 , 58 , 61 ]. A large body of work studies com-mon vulnerability classes and their detection, such as injection vulnerabilities (e.g., command/SQL/template injection), SSRF, and insecure deserialization, using static and dynamic program anal-ysis [ 9, 22 , 32 , 45 ]. Fuzzing is another dominant approach, includ-ing coverage-guided fuzzing, grammar-based fuzzing, and hybrid fuzzing with symbolic or concolic execution [ 36 , 48 , 55 , 56 ], where mutation and feedback signals are used to scale exploration and trigger deep bugs. Practical confirmation and triage often relies on oracles and reproducibility criteria (e.g., observable side effects, crash signatures, or controlled outputs), and many systems combine analysis with runtime monitoring such as taint tracking to vali-date that attacker-controlled data reaches sensitive sinks [ 2 , 27 , 54 ]. Our work draws on these classic ideas and adapts them to tool-augmented agent workflows, where vulnerabilities often emerge from composed tool interactions rather than a single API invoca-tion. 
+
+## 8 Conclusion 
+
+This paper studies systemic workflow-level vulnerabilities in mod-ern multi-tool LLM agents. We propose ChainFuzzer , a grey-box testing framework that uncovers and reproduces long-horizon vul-nerabilities that emerge when multiple tools interact through inter-mediate artifacts (e.g., URLs, files, database records, and retrieved documents). In our evaluation on 20 popular open-source agent apps, ChainFuzzer discovers 365 unique vulnerabilities across 19 apps, where 82.74% of the findings require multi-tool execution, highlighting that single-tool testing misses most workflow risks in practice. Overall, ChainFuzzer achieves an efficiency of 3.02 vul-nerabilities per 1M tokens under practical end-to-end overhead, providing developers with actionable evidence to diagnose and mitigate compositional vulnerabilities in tool-augmented agent systems. 
+
+## References 
+
+[1] agent0ai. 2023. AgentZero. https://github.com/agent0ai/agent-zero. [2] Khaled Ahmed, Yingying Wang, Mieszko Lis, and Julia Rubin. 2023. ViaLin: Path-Aware Dynamic Taint Analysis for Android. In Proceedings of the 31st ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering (San Francisco, CA, USA) (ESEC/FSE 2023) . Association for Computing Machinery, New York, NY, USA, 1598–1610. doi:10.1145/3611643. 3616330 [3] Griptape AI. 2023. Griptape. https://github.com/griptape-ai/griptape. [4] LangChain AI. 2022. LangChain. https://github.com/langchain-ai/langchain. [5] Vanna AI. 2023. Vanna. https://github.com/vanna-ai/vanna. [6] Bakheet Aljedaani. 2026. Beyond Permissions: An Empirical Static Analysis of Privacy and Security Risks in Children-Oriented and General-Audience Mobile Apps for Gaming. arXiv:2602.10877 [cs.CR] https://arxiv.org/abs/2602.10877 [7] Nicholas Carlini, Florian Tramer, Eric Wallace, Matthew Jagielski, Ariel Herbert-Voss, Katherine Lee, Adam Roberts, Tom Brown, Dawn Song, Ulfar Erlingsson, Alina Oprea, and Colin Raffel. 2021. Extracting Training Data from Large Lan-guage Models. arXiv:2012.07805 [cs.CR] https://arxiv.org/abs/2012.07805 [8] chatchat space. 2023. ChatChat. https://github.com/chatchat-space/Langchain-Chatchat. [9] Kai Cheng, Yaowen Zheng, Tao Liu, Le Guan, Peng Liu, Hong Li, Hongsong Zhu, Kejiang Ye, and Limin Sun. 2023. Detecting Vulnerabilities in Linux-Based Embedded Firmware with SSE-Based On-Demand Alias Analysis. In Proceedings of the 32nd ACM SIGSOFT International Symposium on Software Testing and Analysis (Seattle, WA, USA) (ISSTA 2023) . Association for Computing Machinery, New York, NY, USA, 360–372. doi:10.1145/3597926.3598062 [10] Anshuman Chhabra, Shrestha Datta, Shahriar Kabir Nahin, and Prasant Mo-hapatra. 2026. Agentic AI Security: Threats, Defenses, Evaluation, and Open Challenges. arXiv:2510.23883 [cs.AI] https://arxiv.org/abs/2510.23883 [11] DataElement. 2023. Bisheng. https://github.com/dataelement/bisheng. [12] Chenghao Du, Quanfeng Huang, Tingxuan Tang, Zihao Wang, Adwait Nadkarni, and Yue Xiao. 2025. Measuring the Security of Mobile LLM Agents under Adver-sarial Prompts from Untrusted Third-Party Channels. arXiv:2510.27140 [cs.CR] https://arxiv.org/abs/2510.27140 [13] eosphoros ai. 2023. DB-GPT. https://github.com/eosphoros-ai/DB-GPT. [14] Significant Gravitas. 2023. AutoGPT. https://github.com/Significant-Gravitas/ AutoGPT. [15] Kai Greshake, Sahar Abdelnabi, Shailesh Mishra, Christoph Endres, Thorsten Holz, and Mario Fritz. 2023. Not what you’ve signed up for: Compromis-ing Real-World LLM-Integrated Applications with Indirect Prompt Injection. arXiv:2302.12173 [cs.CR] https://arxiv.org/abs/2302.12173 [16] Jiajie He, Min-Chun Chen, Xintong Chen, Xinyang Fang, Yuechun Gu, and Keke Chen. 2026. Membership Inference Attacks on LLM-based Recommender Systems. arXiv:2508.18665 [cs.IR] https://arxiv.org/abs/2508.18665 [17] Junjie He, Shenao Wang, Yanjie Zhao, Xinyi Hou, Zhao Liu, Quanchen Zou, and Haoyu Wang. 2026. TaintP2X: Detecting Taint-Style Prompt-to-Anything Injection Vulnerabilities in LLM-Integrated Applications. In Proceedings of the 48th International Conference on Software Engineering .[18] Sirui Hong, Mingchen Zhuge, Jiaqi Chen, Xiawu Zheng, Yuheng Cheng, Ceyao Zhang, Jinlin Wang, Zili Wang, Steven Ka Shing Yau, Zijuan Lin, Liyang Zhou, Chenyu Ran, Lingfeng Xiao, Chenglin Wu, and Jürgen Schmidhuber. 2024. MetaGPT: Meta Programming for A Multi-Agent Collaborative Framework. arXiv:2308.00352 [cs.AI] https://arxiv.org/abs/2308.00352 [19] Bing Huang, Chen Chen, Kwok-Yan Lam, and Fuqun Huang. 2024. Proactive Detection of Physical Inter-rule Vulnerabilities in IoT Services Using a Deep Learning Approach. arXiv:2406.03836 [cs.CR] https://arxiv.org/abs/2406.03836 [20] Infiniflow. 2023. RAGFlow. https://github.com/infiniflow/ragflow. [21] InternLM. 2023. Lagent. https://github.com/InternLM/lagent. [22] Yahe Kuang, Xianzhe Meng, Weiyi Han, Xiao Wang, and Cheng Jiang. 2020. A Vulnerability Mining Model of Java Json Deserialization Based on AST. In 
+
+2020 International Conferences on Internet of Things (iThings) and IEEE Green Computing and Communications (GreenCom) and IEEE Cyber, Physical and Social Computing (CPSCom) and IEEE Smart Data (SmartData) and IEEE Congress on Cybermatics (Cybermatics) . 623–627. doi:10.1109/iThings-GreenCom-CPSCom-SmartData-Cybermatics50389.2020.00109 [23] LangFlow. 2023. LangFlow. https://github.com/langflow-ai/langflow. [24] Langroid. 2023. Langroid. https://github.com/langroid/langroid. [25] Bin Liu, Yanjie Zhao, Guoai Xu, and Haoyu Wang. 2025. LLM Agents for Automated Web Vulnerability Reproduction: Are We There Yet? arXiv:2510.14700 [cs.SE] https://arxiv.org/abs/2510.14700 [26] Fengyu Liu, Yuan Zhang, Jiaqi Luo, Jiarun Dai, Tian Chen, Letian Yuan, Zhengmin Yu, Youkun Shi, Ke Li, Chengyuan Zhou, Hao Chen, and Min Yang. 2025. Make ChainFuzzer: Greybox Fuzzing for Workflow-Level Multi-Tool Vulnerabilities in LLM Agents 
+
+agent defeat agent: automatic detection of taint-style vulnerabilities in LLM-based agents. In Proceedings of the 34th USENIX Conference on Security Symposium 
+
+(Seattle, WA, USA) (SEC ’25) . USENIX Association, USA, Article 194, 19 pages. [27] Puzhuo Liu, Chengnian Sun, Yaowen Zheng, Xuan Feng, Chuan Qin, Yuncheng Wang, Zhenyang Xu, Zhi Li, Peng Di, Yu Jiang, and Limin Sun. 2025. LLM-Powered Static Binary Taint Analysis. ACM Trans. Softw. Eng. Methodol. 34, 3, Article 83 (Feb. 2025), 36 pages. doi:10.1145/3711816 [28] Tong Liu, Zizhuang Deng, Guozhu Meng, Yuekang Li, and Kai Chen. 2024. De-mystifying RCE Vulnerabilities in LLM-Integrated Apps. In Proceedings of the 2024 on ACM SIGSAC Conference on Computer and Communications Security (CCS ’24) . ACM, 1716–1730. doi:10.1145/3658644.3690338 [29] LlamaIndex. 2022. LlamaIndex. https://github.com/run-llama/llama_index. [30] Zhiyuan Ma, Jiayu Liu, Xianzhen Luo, Zhenya Huang, Qingfu Zhu, and Wanxi-ang Che. 2025. Advancing Tool-Augmented Large Language Models via Meta-Verification and Reflection Learning. In Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V.2 (Toronto ON, Canada) 
+
+(KDD ’25) . Association for Computing Machinery, New York, NY, USA, 2078–2089. doi:10.1145/3711896.3736835 [31] Pratyush Maini, Hengrui Jia, Nicolas Papernot, and Adam Dziedzic. 2024. LLM Dataset Inference: Did you train on my dataset? arXiv:2406.06443 [cs.LG] https: //arxiv.org/abs/2406.06443 [32] Zain Marashdeh, Khaled Suwais, and Mohammad Alia. 2021. A Survey on SQL Injection Attack: Detection and Challenges. In 2021 International Conference on Information Technology (ICIT) . 957–962. doi:10.1109/ICIT52682.2021.9491117 [33] Grégoire Mialon, Roberto Dessì, Maria Lomeli, Christoforos Nalmpantis, Ram Pasunuru, Roberta Raileanu, Baptiste Rozière, Timo Schick, Jane Dwivedi-Yu, Asli Celikyilmaz, Edouard Grave, Yann LeCun, and Thomas Scialom. 2023. Augmented Language Models: a Survey. arXiv:2302.07842 [cs.CL] https://arxiv.org/abs/2302. 07842 [34] Microsoft. 2023. TaskWeaver. https://github.com/microsoft/TaskWeaver. [35] ModelScope. 2023. AgentScope. https://github.com/modelscope/agentscope. [36] Augustus Odena, Catherine Olsson, David Andersen, and Ian Goodfellow. 2019. TensorFuzz: Debugging Neural Networks with Coverage-Guided Fuzzing. In Pro-ceedings of the 36th International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 97) , Kamalika Chaudhuri and Ruslan Salakhutdi-nov (Eds.). PMLR, 4901–4911. https://proceedings.mlr.press/v97/odena19a.html [37] OpenAI. [n. d.]. Models: GPT-5.1. https://developers.openai.com/api/docs/ models/gpt-5.1. Accessed: 2026-02-19. [38] OpenAI, :, Aaron Hurst, Adam Lerer, Adam P. Goucher, Adam Perelman, Aditya Ramesh, and so on. 2024. GPT-4o System Card. arXiv:2410.21276 [cs.CL] https: //arxiv.org/abs/2410.21276 [39] OpenBMB. 2023. XAgent. https://github.com/OpenBMB/XAgent. [40] John Page, Arkady Zaslavsky, and Maria Indrawan. 2004. Countering Security Vulnerabilities in Agent Execution Using a Self Executing Security Examination. In Proceedings of the Third International Joint Conference on Autonomous Agents and Multiagent Systems - Volume 3 (New York, New York) (AAMAS ’04) . IEEE Computer Society, USA, 1486–1487. [41] Rodrigo Pedro, Daniel Castro, Paulo Carreira, and Nuno Santos. 2025. From Prompt Injections to SQL Injection Attacks: How Protected is Your LLM-Integrated Web Application? arXiv:2308.01990 [cs.CR] https://arxiv.org/abs/ 2308.01990 [42] Benji Peng, Keyu Chen, Qian Niu, Ziqian Bi, Ming Liu, Pohsun Feng, Tianyang Wang, Lawrence K. Q. Yan, Yizhu Wen, Yichao Zhang, Caitlyn Heqi Yin, and Xinyuan Song. 2025. Jailbreaking and Mitigation of Vulnerabilities in Large Language Models. arXiv:2410.15236 [cs.CR] https://arxiv.org/abs/2410.15236 [43] Sai Puppala, Ismail Hossain, Md Jahangir Alam, Yoonpyo Lee, Jay Yoo, Tanzim Ahad, Syed Bahauddin Alam, and Sajedul Talukder. 2026. Agent-Fence: Mapping Security Vulnerabilities Across Deep Research Agents. arXiv:2602.07652 [cs.CR] https://arxiv.org/abs/2602.07652 [44] Wenjie Qu, Yuguang Zhou, Yongji Wu, Tingsong Xiao, Binhang Yuan, Yiming Li, and Jiaheng Zhang. 2025. Prompt Inversion Attack Against Collaborative Inference of Large Language Models. In 2025 IEEE Symposium on Security and Privacy (SP) . 1695–1712. doi:10.1109/SP61157.2025.00160 [45] Felix Schuckert, Basel Katt, and Hanno Langweg. 2017. Source Code Patterns of SQL Injection Vulnerabilities. In Proceedings of the 12th International Confer-ence on Availability, Reliability and Security (Reggio Calabria, Italy) (ARES ’17) .Association for Computing Machinery, New York, NY, USA, Article 72, 7 pages. doi:10.1145/3098954.3103173 [46] Asif Shahriar, Md Nafiu Rahman, Sadif Ahmed, Farig Sadeque, and Md Rizwan Parvez. 2025. A Survey on Agentic Security: Applications, Threats and Defenses. arXiv:2510.06445 [cs.CL] https://arxiv.org/abs/2510.06445 [47] Lwin Khin Shar, Lionel C. Briand, and Hee Beng Kuan Tan. 2015. Web Application Vulnerability Prediction Using Hybrid Program Analysis and Machine Learning. 
+
+IEEE Transactions on Dependable and Secure Computing 12, 6 (2015), 688–707. doi:10.1109/TDSC.2014.2373377 [48] Prashast Srivastava and Mathias Payer. 2021. Gramatron: effective grammar-aware fuzzing. In Proceedings of the 30th ACM SIGSOFT International Symposium on Software Testing and Analysis (Virtual, Denmark) (ISSTA 2021) . Association for Computing Machinery, New York, NY, USA, 244–256. doi:10.1145/3460319. 3464814 [49] SuperAGI. 2023. SuperAGI. https://github.com/TransformerOptimus/SuperAGI. [50] TaskingAI. 2024. TaskingAI. https://github.com/TaskingAI/TaskingAI. [51] OpenClaw Development Team. 2026. openclaw. https://github.com/openclaw. [52] Bhaskar Tejaswi, Mohammad Mannan, and Amr Youssef. 2023. Security Weaknesses in IoT Management Platforms. arXiv:2307.13952 [cs.CR] https: //arxiv.org/abs/2307.13952 [53] Zhiqiang Wang, Yichao Gao, Yanting Wang, Suyuan Liu, Haifeng Sun, Hao-ran Cheng, Guanquan Shi, Haohua Du, and Xiangyang Li. 2025. MCP-Tox: A Benchmark for Tool Poisoning Attack on Real-World MCP Servers. arXiv:2508.14925 [cs.CR] https://arxiv.org/abs/2508.14925 [54] Yufei Wu and Alexandre Bartel. 2025. CONFUSETAINT: Exploiting Vulnera-bilities to Bypass Dynamic Taint Analysis. In Proceedings of the 40th IEEE/ACM International Conference on Automated Software Engineering . Seoul, South Korea. https://hal.science/hal-05222498 [55] Xiaofei Xie, Lei Ma, Felix Juefei-Xu, Minhui Xue, Hongxu Chen, Yang Liu, Jianjun Zhao, Bo Li, Jianxiong Yin, and Simon See. 2019. DeepHunter: a coverage-guided fuzz testing framework for deep neural networks (ISSTA 2019) . Association for Computing Machinery, New York, NY, USA, 146–157. doi:10.1145/3293882. 3330579 [56] Insu Yun, Sangho Lee, Meng Xu, Yeongjin Jang, and Taesoo Kim. 2018. QSYM : A Practical Concolic Execution Engine Tailored for Hybrid Fuzzing. In 27th USENIX Security Symposium (USENIX Security 18) . USENIX Association, Baltimore, MD, 745–761. https://www.usenix.org/conference/usenixsecurity18/presentation/ yun [57] Hanrong Zhang, Jingyuan Huang, Kai Mei, Yifei Yao, Zhenting Wang, Chenlu Zhan, Hongwei Wang, and Yongfeng Zhang. 2025. Agent Security Bench (ASB): Formalizing and Benchmarking Attacks and Defenses in LLM-based Agents. arXiv:2410.02644 [cs.CR] https://arxiv.org/abs/2410.02644 [58] Miao Zhang, Shenao Wang, Guilin Zheng, Yanjie Zhao, and Haoyu Wang. 2025. Demystifying Cookie Sharing Risks in WebView-based Mobile App-in-app Ecosystems. arXiv:2510.24141 [cs.CR] https://arxiv.org/abs/2510.24141 [59] Shuli Zhao, Qinsheng Hou, Zihan Zhan, Yanhao Wang, Yuchong Xie, Yu Guo, Libo Chen, Shenghong Li, and Zhi Xue. 2025. Mind Your Server: A Systematic Study of Parasitic Toolchain Attacks on the MCP Ecosystem. arXiv:2509.06572 [cs.CR] https://arxiv.org/abs/2509.06572 [60] Weixiong Zheng, Peijian Zeng, YiWei Li, Hongyan Wu, Nankai Lin, Junhao Chen, Aimin Yang, and Yongmei Zhou. 2025. Jailbreaking? One Step Is Enough!. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar (Eds.). Association for Computational Linguistics, Vienna, Austria, 11623–11642. doi:10.18653/v1/2025.acl-long.570 [61] Wen Zhou. 2022. DCDetector: An IoT terminal vulnerability mining system based on distributed deep ensemble learning under source code representation. arXiv:2211.16235 [cs.CR] https://arxiv.org/abs/2211.16235 [62] Aneta Zugecova, Dominik Macko, Ivan Srba, Robert Moro, Jakub Kopál, Katarína Marcinčinová, and Matúš Mesarčík. 2025. Evaluation of LLM Vulnerabilities to Being Misused for Personalized Disinformation Generation. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Moham-mad Taher Pilehvar (Eds.). Association for Computational Linguistics, Vienna, Austria, 780–797. doi:10.18653/v1/2025.acl-long.38
