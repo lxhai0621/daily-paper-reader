@@ -1,0 +1,1243 @@
+Title: Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach
+
+URL Source: https://arxiv.org/pdf/2603.20286v1
+
+Published Time: Tue, 24 Mar 2026 00:03:47 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+Jiarui Guo * 1 2 Yuemeng Xu * 1 Zongwei Lv * 1 2 Yangyujia Wang 1
+
+Xiaolin Wang 1 Kan Liu 2 Tao Lan 2 Lin Qu 2 Tong Yang 1
+
+## Abstract 
+
+Retrieval-Augmented Generation (RAG) enables Large Language Models (LLMs) to extend their existing knowledge by dynamically incorporating external information. However, practical deploy-ment is fundamentally constrained by the LLM’s finite context window, forcing a trade-off between information sufficiency and token consumption. Standard pipelines address this via a retrieve-then-select strategy, typically retaining only the top-k
+
+chunks based on relevance. Nevertheless, this ap-proach is suboptimal: it inherently truncates crit-ical bridging evidence located in the long tail of the relevance distribution, while simultaneously wasting the token budget on semantically redun-dant high-ranking chunks. In this paper, we rethink retrieval-augmentation as a dynamic optimization problem aimed at max-imizing information density. We propose Merg-eRAG , a novel framework that shifts the paradigm from static filtering to query-aware synthesis. MergeRAG employs a scoring agent to restruc-ture retrieved contexts through a dual-pathway mechanism: 1) Symmetric Merging , which con-solidates weak signals to recover lost bridging evidence; 2) Asymmetric Merging , which uti-lizes entropy-guided anchoring to eliminate redun-dancy without sacrificing semantic integrity. We further introduce a Hierarchical Parallel Merg-ing strategy that mitigates information loss while maximizing computational parallelism. Extensive experiments on standard benchmarks demonstrate that MergeRAG significantly outperforms state-of-the-art RAG baselines, achieving up to 13.7 points improvement in F1 score and 11.5 points in Exact Match (EM), respectively. 
+
+> *
+
+Co-first authors with equal contribution. Listing order is random. 1Peking University 2Alibaba Group. Correspondence to: Kan Liu <liukan.lk@alibaba-inc.com >, Tong Yang <yang-tong@pku.edu.cn >.
+
+Preprint. March 24, 2026. 
+
+## 1. Introduction 
+
+Large Language Models (LLMs) (Achiam et al., 2023; Liu et al., 2024; Touvron et al., 2023) have fundamentally trans-formed the landscape of artificial intelligence, demonstrat-ing unprecedented capabilities in language understanding, generation and context reasoning. However, despite ex-pensive pre-training on vast corpora, LLMs operating in a closed-book setting are susceptible to knowledge obso-lescence and hallucinations (Ji et al., 2023; Mousavi et al., 2025), as they rely solely on static internal parameters. To mitigate these limitations, Retrieval-Augmented Generation (RAG) has been proposed to complement the model’s frozen weights with external memory (Gao et al., 2023; Guu et al., 2020; Lewis et al., 2020). By augmenting the input with relevant retrieved contexts, RAG allows LLMs to access up-to-date domain knowledge without retraining. Conse-quently, RAG has emerged as the prevalent paradigm for enhancing the factual integrity of LLMs in open-domain scenarios (Amirshahi et al., 2025; Siriwardhana et al., 2023). Nevertheless, the practical application of RAG is con-strained by the inherent limitations of the LLM’s context window (Gao et al., 2025; Li et al., 2025a). To operate within these constraints, the standard practice adopts a 
+
+retrieve-then-select paradigm, typically retaining only the top-k chunks based on semantic similarity scores (Izacard et al., 2023; Karpukhin et al., 2020). While efficient in many cases, this approach inherently suffers from information loss by truncating bridging evidence in low-scoring chunks, and results in a fragmented context by ignoring inter-chunk relationships. Furthermore, this greedy selection often in-troduces significant semantic redundancy, as multiple high-ranking chunks may convey repetitive information. This redundancy wastefully consumes the limited token budget, displacing unique details that are essential for comprehen-sive reasoning. Alternatively, some approaches attempt to improve context organization via offline pre-processing ( e.g. 
+
+static clustering or summarization) (Fatehkia et al., 2024; Sarthi et al., 2024; Tao et al., 2025). However, since these structures are built prior to receiving the user’s input, these query-agnostic methods lack the flexibility to align with the specific semantic nuances of the dynamic query, leading to 1
+
+> arXiv:2603.20286v1 [cs.IR] 18 Mar 2026 Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach
+
+Standard RAG   
+
+> Redundancy
+> Cut -off @k
+> Weak Signals, Deleted!
+> Ranked List
+> Information Loss
+> Fragmented Context
+
+MergeRAG -Asym 
+
+> Redundancy
+> Elimination
+> Dense Context
+> Entropy -based Pairing & Merging
+
+MergeRAG -Sym      
+
+> Enriched Context
+> Signal Recovery
+> merge
+> merge
+> Score -based Pairing & Merging
+> chunk 1
+> chunk 2
+> chunk 3
+> chunk 4
+> chunk 5
+> chunk 6
+> chunk 7
+> chunk 8
+> chunk 1
+> chunk 2
+> chunk 3
+> chunk 4
+> chunk 5
+> chunk 6
+> chunk 7
+> chunk 8
+> new chun k
+> new chun k
+> c1
+> c2
+> c7
+> c3
+> c8
+> c4
+> c5
+> c7
+> Figure 1. Comparison between standard RAG solutions and MergeRAG.
+
+suboptimal relevance. To bridge this gap, we propose a paradigm shift from simply 
+
+filtering existing chunks to dynamically synthesizing them in a query-aware manner. Our core insight is that the opti-mal information organization is not static but intrinsically tied to the specific user intent: the ideal context for a com-plex query is rarely a single perfect document, but rather a composite of multiple, often fragmentary clues, that must be pieced together at runtime (Xiong et al., 2020; Yang et al., 2018). Therefore, instead of discarding lower-rank chunks, the system should allow these fragments to merge into co-herent units based on their actual relevance to the query. By iteratively fusing related segments, we can construct a con-text that maximizes information density while maintaining narrative coherence. This approach ensures that the LLM receives a structured reasoning path tailored to the specific query, rather than a disjointed bag of retrieval results, effec-tively overcoming the limitations of static selection (Wei et al., 2022; Zhang et al., 2022). To materialize this insight, we propose MergeRAG , a novel framework to achieve the optimal trade-off between max-imizing context relevance and minimizing context length. As shown in Figure 1, MergeRAG employs a scoring agent to dynamically restructure the retrieved chunks via two com-plementary strategies: 1) Symmetric Merging , which tar-gets the long-tail of the retrieved chunks by consolidating weak signals to recover critical evidence rather than directly discarding them; 2) Asymmetric Merging , which maxi-mizes information density via entropy-guided anchoring, fusing predictable fragments onto host chunks to eliminate redundancy. We further introduce a Hierarchical Parallel Merging algorithm that restructures context construction into a logarithmic-depth tree, minimizing recursive gener-ation errors while maximizing inference parallelism. Our experiments demonstrate that MergeRAG achieves a re-trieval improvement of up to 1.51 × on multi-hop reasoning benchmarks compared to existing RAG solutions. In general, the contributions of this paper are summarized as follows: • Theory: We conceptualize RAG context construction as a dual-objective optimization problem. We argue that an ef-fective system must jointly maximize semantic relevance and minimize token usage, rather than treating them as independent constraints or relying on static selection. • Algorithm: To address this, we propose the Merg-eRAG framework. This query-aware algorithm shifts the paradigm from filtering to dynamic synthesis, and implements Symmetric Merging for signal boosting and Asymmetric Merging for redundancy reduction. • Experiment: We conduct extensive experiments across diverse benchmarks. The results demonstrate that Merg-eRAG significantly outperforms state-of-the-art baselines, achieving substantial improvements in both retrieval fi-delity and generation quality. 
+
+## 2. Related Work 
+
+The advancement of retrieval-augmented generation (RAG) has fundamentally shifted the landscape of LLMs from static parametric knowledge bases to dynamic, open-book reason-ing engines. Since the efficacy of a RAG system depends critically on the quality, density, and structural organization 2Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+of the retrieved context, we review the literature regarding these three dimensions. 
+
+2.1. Context Selection 
+
+Context selection is the foundational layer of RAG, which aims to filter out chunks irrelevant to the user query and retain only the most significant ones (Lewis et al., 2020). Traditionally, RAG pipelines quantify relevance using bi-encoders or sparse retrievers (Karpukhin et al., 2020; Reimers & Gurevych, 2019; Robertson & Zaragoza, 2009). Then, a fixed top-k truncation is applied to select the highest-scoring chunks as the input context. More recently, LLMs have been deployed as effective reranking agents, leveraging their superior reasoning capability to refine chunk ordering and outperform supervised baselines (Ma et al., 2024; Sun et al., 2023; Zhang et al., 2023). To enhance flexibility, recent research has shifted from fixed top-k truncation to adaptive mechanisms that adjust the re-trieval scope according to query complexity. For example, Dynamic Passage Selection (DPS) (Meng et al., 2025) de-termines the optimal set of passages in a query-dependent manner, rather than adhering to a pre-defined k. Further-more, active strategies have also emerged: FLARE (Jiang et al., 2023) iteratively decides when to retrieve based on generation confidence, while Self-RAG (Asai et al., 2023) trains a model to generate reflection tokens to autonomously critique whether more information is needed. Despite the advancements, these approaches primarily po-sition context construction as a selection problem. They focus on which or how many chunks to retain, but treat the retrieved segments as atomic, immutable units. Therefore, they do not alter the internal structure of the chunks or syn-thesize information across them. This leads to a dual failure: significant redundancy remains within the selected subset, while critical bridging evidence located in the long tail is inevitably discarded due to rigid truncation. 
+
+2.2. Context Compression 
+
+To mitigate window constraints, research has pivoted toward compressing retrieved information. Token-level approaches like Selective Context (Li et al., 2023) and LongLLMLin-gua (Jiang et al., 2024) utilize perplexity-based metrics to prune tokens with low semantic value, and RECOMP (Xu et al., 2023) trains neural models to generate abstractive summaries. Recent works like xRAG (Cheng et al., 2024) and COCOM (Rau et al., 2025) project documents into dense vectors to bypass the verbosity of natural language. In addition, SARA (Jin et al., 2025) adopts a hybrid strategy to selectively preserve critical evidence in natural language while compressing supplementary context into vectors. Despite the efficiency of compression, these solutions pri-marily position context optimization as a subtractive task. They focus on how to condense textual elements to meet token constraints, yet inherently function as lossy operators. Consequently, by aggressively pruning tokens or abstracting content, they risk discarding critical fine-grained entities, sacrificing semantic fidelity for the sake of brevity. 
+
+2.3. Knowledge Aggregation 
+
+Beyond linear selection and compression, a distinct line of research focuses on pre-organizing retrieved informa-tion to capture inter-chunk relationships through offline pre-processing. Approaches like RAPTOR (Sarthi et al., 2024) employ recursive clustering to construct hierarchical trees, allowing for retrieval at different levels of abstraction. Simi-larly, TreeRAG (Fatehkia et al., 2024; Li et al., 2025b; Tao et al., 2025) introduces a tree-chunking mechanism to map long documents into hierarchical structures to preserve se-mantic integrity and inter-chunk dependencies. GraphRAG (Edge et al., 2024) converts corpora into knowledge graphs to model entity dependencies and generate community sum-maries. However, these structural aggregations are generally static and query-agnostic, as these structures are solidified during the offline indexing phase and do not adapt to the specific user query. As a result, this rigid pre-organization lacks the flexibility to dynamically synthesize evidence for ad-hoc lines of reasoning, often retrieving entire pre-built branches that may contain irrelevant noise relative to the user’s imme-diate intent. 
+
+## 3. Methods 
+
+3.1. Overview and Problem Formulation 
+
+The core challenge in Retrieval-Augmented Generation (RAG) lies in resolving the intrinsic tension between infor-mational sufficiency and representation complexity. While expanding the context window increases the likelihood of encompassing the correct answer (sufficiency), it simul-taneously incurs significant computational overhead and introduces semantic noise that dilutes the model’s attention (complexity). We frame this tension as a rate-distortion opti-mization problem, rigorously grounded in the Information Bottleneck (IB) principle (Tishby et al., 2000). Formally, consider a RAG scenario where a user query q
+
+is answered utilizing a set of retrieved document chunks. Let C = {c1, c 2, . . . , c N } denote the set of retrieved chunks. Each chunk ci is associated with a query-relevance score 
+
+si = S(ci; q) and a token length li = l(ci). Our objective is to construct a compressed context S that maximizes the task-relevant information regarding q while minimizing its token 3Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+length. This is formalized as the Lagrangian relaxation: 
+
+max  
+
+> S
+
+L = I(S; q)
+
+| {z } 
+
+> Relevance (Accuracy)
+
+−β · X
+
+> c∈S
+
+l(c)
+
+| {z }
+
+> Compression (Cost)
+
+, (1) where I(·; ·) denotes mutual information, and β > 0 is a Lagrange multiplier controlling the trade-off. However, di-rectly optimizing Equation 1 is computationally intractable due to the combinatorial nature of the discrete text space and the lack of explicit probability distributions for I(S; q).
+
+Standard RAG Approximation: Traditional RAG solu-tions employ a static selection strategy, identifying the top-k
+
+chunks S based on their relevance scores: 
+
+S = top-k
+
+> c∈C
+
+S(c; q).
+
+Since existing pipelines typically pre-segment documents into chunks of relatively fixed size, this greedy selection process is mathematically equivalent to maximizing total relevance under a context window constraint L:
+
+S = arg max 
+
+> S′⊆C
+
+X
+
+> c∈S ′
+
+S(c; q) s.t. X
+
+> c∈S ′
+
+l(c) ≤ L. 
+
+However, while computationally efficient, this truncation leads to significant information loss and context fragmen-tation, as it strictly discards lower-ranked chunks that may contain essential bridging information. 
+
+Our Dynamic Approximation: To better approximate the objective, MergeRAG introduces a dynamic merging frame-work that addresses Equation 1 through two distinct strate-gies: Symmetric Merging focuses on the first term (rele-vance) by consolidating weak signals to recover lost infor-mation, whereas Asymmetric Merging targets the second term (cost) by leveraging conditional entropy to compress redundant context. 
+
+3.2. Symmetric Merging: Consolidating Weak Signals 
+
+The first objective in Equation 1 is to maximize the mu-tual information I(S; q). Standard selection assumes that chunks with low scores have negligible mutual information, 
+
+i.e. , I(c; q) ≈ 0 when its score S(c; q) is low. However, for complex queries, the answer often relies on the aggregation of weak signals located in the long tail of the relevance dis-tribution. To address this, Symmetric Merging strategy tar-gets the weakest signals: by consolidating these low-scoring chunks, we aim to recover the latent mutual information that would otherwise be lost via truncation. 
+
+Iterative Merging Process: We implement this strategy as an iterative reduction process. Let C(t) denote the set of chunks at iteration t, and C(0) = C. The process repeats the following steps until the set size reaches a target budget L,
+
+i.e. , P 
+
+> c∈C (t)
+
+l(c) ≤ L.Similarity (Cosine) 
+
+> Low
+> High
+
+(a) Cosine similarity Similarity (NLL)  
+
+> Low
+> High
+
+(b) NLL similarity 
+
+Figure 2. Similarity examples of chunks. The chunks are sorted by relevance score, with chunks to the top-left corner having high relevance scores. The cell at position (i, j ) denotes the similarity between chunks ci and cj .
+
+1) Selection. In each step, we identify the pair (c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+) with minimum cumulative relevance score, i.e. ,
+
+(c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+) ← arg min  
+
+> ci,c j∈C (t),i ̸=j
+
+{S(ci; q) + S(cj ; q)} .
+
+This greedy strategy acts as a bottom-up denoising process, preserving high-confidence anchors while attempting to con-solidate the tail of the distribution into detectable signals. 
+
+2) Fusion. The selected pair is processed by a fusion oper-ator M, which is not merely a concatenation function but a semantic compressor. Guided by the user query q, we instruct the LLM to synthesize the disparate facts from c∗
+
+> i
+
+and c∗ 
+
+> j
+
+into a coherent unit c∗, selectively preserving only the information necessary for answering q, i.e. ,
+
+c∗ ← M (c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+; q).
+
+3) Update. Once c∗ is generated, we remove the original pair from C and replace them with c∗, i.e. ,
+
+C(t+1) ←
+
+
+
+C(t) \ { c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+}
+
+
+
+∪ { c∗}.
+
+We then calculate its length l(c∗) and relevance score 
+
+s(c∗; q) for later iteration. 
+
+3.3. Asymmetric Merging: Entropy-Guided Anchoring 
+
+While symmetric merging effectively recovers lost signals, high-recall retrieval inevitably introduces semantic redun-dancy, where multiple chunks convey overlapping informa-tion. To investigate the distribution of this redundancy, we visualize the pairwise chunk correlations of a representative example from the MuSiQue dataset (Trivedi et al., 2022). As shown in Figure 2, high-similarity clusters are often scat-tered rather than concentrated at the bottom. Consequently, simply merging the two lowest-scoring chunks is sometimes suboptimal, as a low-scoring chunk is often redundant to a high-scoring ‘anchor’ rather than its low-scoring neighbor. 4Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach maximize 
+
+𝑰 𝒄 𝒔𝒓𝒄 ; 𝒄 𝒂𝒏𝒄 
+
+𝑯 𝒄 𝒔𝒓𝒄 |𝒄 𝒂𝒏𝒄 denotes 
+
+extra information 
+
+minimize 
+
+𝑯 𝒄 𝒔𝒓𝒄 |𝒄 𝒂𝒏𝒄 
+
+𝑰 𝒄 𝒔𝒓𝒄 ; 𝒄 𝒂𝒏𝒄 = 𝑯 𝒄 𝒔𝒓𝒄 
+
+−𝑯 𝒄 𝒔𝒓𝒄 |𝒄 𝒂𝒏𝒄 
+
+minimize 
+
+𝓛 𝐍𝐋𝐋 (𝒄 𝒔𝒓𝒄 |𝒄 𝒂𝒏𝒄 )
+
+approximated as NLL 
+
+Figure 3. The information-theoretic formulation of Asymmetric Merging. We formulate redundancy elimination as maximizing the mutual information I(csrc ; canc ). Leveraging the entropy identity, it is equivalent to minimizing the conditional entropy 
+
+H(csrc |canc ), which represents the extra description length of 
+
+csrc given canc . The conditional entropy is further approximated by minimizing the Negative Log-Likelihood LNLL (csrc |canc ).
+
+To address this, we aim to minimize token length by eliminating such repetition (Equation 1). We formalize this by maximizing the mutual information I(csrc ; canc )
+
+to capture the semantic overlap between a source chunk 
+
+csrc and an anchor chunk canc . Leveraging the identity 
+
+I(csrc ; canc ) = H(csrc ) − H(csrc |canc ), maximizing mu-tual information for a fixed source is equivalent to min-imizing the conditional entropy H(csrc |canc ). Crucially, Shannon’s Source Coding Theorem (Shannon, 1948) also establishes this conditional entropy as the lower bound for the code length required to represent csrc given canc . Trans-lating this to the language modeling context, we introduce 
+
+Asymmetric Merging , which utilizes the conditional Nega-tive Log-Likelihood (NLL) as an empirical estimator of the conditional entropy. By minimizing the NLL, we mathemat-ically minimize the lower bound of the effective description length, thereby identifying the semantic anchor that most efficiently subsumes the source chunk for lossless compres-sion. The theoretical motivation of Asymmetric Merging is shown in Figure 3. 
+
+Iterative Merging Process: Similar to the symmetric strat-egy, this process iteratively reduces the context size until it fits the target budget. In each iteration t:
+
+1) Selection. Instead of selecting two low-scoring chunks directly in Symmetric Merging, the asymmetric variant se-lects only one chunk with minimum score. Subsequently, to identify the optimal host for this fragment, we em-ploy an entropy-based metric by computing the Nega-tive Log-Likelihood (NLL) of the selected chunk c∗ 
+
+> i
+
+=(x1, x 2, · · · , x l(c∗ 
+
+> i)
+
+) conditioned on each candidate anchor 
+
+cj , i.e. ,
+
+LNLL (c∗ 
+
+> i
+
+|cj ) = − 1
+
+l(c∗ 
+
+> i
+
+) 
+
+> l(c∗
+> i)
+
+X
+
+> t=1
+
+log Pθ (xt|cj , x <t ),
+
+where Pθ is the probability distribution of the underlying lan-guage model, and x<t denotes the preceding tokens within 
+
+c∗ 
+
+> i
+
+. A lower LNLL value indicates that cj provides strong contextual support for c∗ 
+
+> i
+
+, making it an ideal anchor for assimilation. Therefore, we select the anchor c∗ 
+
+> j
+
+that mini-mizes this value, i.e. ,
+
+c∗ 
+
+> j
+
+← arg min   
+
+> cj∈C (t),j ̸=i
+
+LNLL (c∗ 
+
+> i
+
+|cj ),
+
+and pass (c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+) to the LLM for subsequent fusion. 
+
+2) Fusion: Unlike the egalitarian synthesis employed in Symmetric Merging, the fusion process here is strictly direc-tional. We designate the identified anchor c∗ 
+
+> j
+
+as the primary host, and the low-scoring chunk c∗ 
+
+> i
+
+as an auxiliary source. The fusion operator M then performs a query-guided aug-mentation: the LLM is instructed to preserve the structural integrity of the host c∗ 
+
+> j
+
+, while selectively extracting and injecting query-relevant details from c∗ 
+
+> i
+
+. Effectively, c∗
+
+> j
+
+assimilates salient signals from c∗ 
+
+> i
+
+while filtering out the remaining noise. This ensures that the high-quality context of the anchor is enriched rather than diluted in the resulting merged chunk c∗.
+
+3) Update: c∗ 
+
+> i
+
+is explicitly removed to achieve compression, while the anchor c∗ 
+
+> j
+
+is updated with the fused content: 
+
+C(t+1) ← (C(t) \ { c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+}) ∪ { c∗}.
+
+3.4. Hierarchical Parallel Merging 
+
+While the proposed Symmetric and Asymmetric Merging methods define which chunks to merge, a naive sequential implementation incurs two major drawbacks. First, reducing the chunk set from size N to M sequentially necessitates 
+
+N − M consecutive inference steps, introducing significant latency in real-time scenarios. Second, sequential merging forces early-merged chunks to undergo repeated rounds of LLM regeneration, where a single source chunk may be recursively processed up to N − M times in the worst-case scenario. Since each fusion step introduces a non-zero probability of hallucination or information loss, this deep recursive processing progressively dilutes the original semantic signal, leading to context degradation. To address these issues, we introduce a Hierarchical Paral-lel Merging strategy. Instead of processing a pair of chunks in each iteration, we view the context construction as a tree-structured reduction process, where disjoint pairs are fused concurrently to progressively condense the information. 5Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+Rationale: In iteration t, we treat the current chunk set 
+
+C(t) as a pool of candidates. We maximize parallelism by identifying and merging all valid pairs simultaneously in a single layer, rather than individually merging one pair. This effectively constructs a ‘merging tree’ topology, where the fusion process propagates bottom-up and terminates once the budget constraint is satisfied. The pair formation logic for each layer adapts to the merging strategy: • For Symmetric Merging, we target the weakest signals collectively. The system sorts the chunks by relevance score, and partitions them into 
+
+ |C(t)|
+
+> 2
+
+
+
+disjoint pairs in a bottom-up manner: the bottom two are paired, followed by the next two, etc. This strategy ensures maximum consolidation of weak signals, leaving the single highest-scoring chunk unmerged if the set size is odd. • For Asymmetric Merging, we perform a greedy match-ing pass over the candidate pool: in each step, we pick the lowest-scoring available chunk, match it with its best semantic anchor with minimum NLL, and reserve this pair from the pool. This select-and-remove mechanism repeats until no valid source-anchor pairs remain, ensur-ing that each low-scoring chunk finds its most specific anchor without conflict. 
+
+Analysis: Let N denote the initial number of chunks, M
+
+denote the final count, and B denote the maximum concur-rency limit ( i.e. , GPU batch size). • Latency Efficiency: The sequential approach is strictly bound by N − M serial operations. In contrast, since the number of chunks approximately halves in each iteration, the hierarchical strategy exploits GPU parallelism to ob-tain only log NM
+
+ sequential steps when N ≤ 2B. Even for N > 2B when the initial dense layers necessitate multiple batches, the total number of sequential inference rounds is bounded by 
+
+X 
+
+> N
+> 2k>M
+
+max 
+
+ N/ 2k
+
+B
+
+
+
+, 1
+
+
+
+≤
+
+ NB + log NM
+
+
+
+,
+
+which offers a significant acceleration compared to the linear N − M cost of sequential merging once B ≥ 2.• Error Mitigation: Sequential merging suffers from deep iterative dependency, where early-processed chunks may undergo up to N − M rounds of regeneration, accumu-lating hallucinations and semantic drift. Hierarchical merging effectively flattens this dependency structure, capping the maximum generation depth at log NM
+
+. The reduction from linear to logarithmic significantly limits generation errors to preserve higher semantic fidelity. 
+
+## 4. Experiments 
+
+4.1. Experimental Setup Datasets: We evaluate MergeRAG on five representative benchmarks. Specifically, 2WikiMQA (Ho et al., 2020), HotpotQA (Yang et al., 2018), and MuSiQue (Trivedi et al., 2022) are selected to evaluate the system’s ability to re-trieve and synthesize fragment evidence required for com-plex multi-hop reasoning. TriviaQA (Joshi et al., 2017) is used to challenge the ability to identify relevant signals in long-context scenarios. Finally, we include QASPER (Dasigi et al., 2021) to assess the performance in finding answers within research papers. 
+
+Baselines: To demonstrate the effectiveness of MergeRAG, we consider three major categories of RAG baselines. For selection-based solutions, we employ standard RAG with both sparse retriever BM25 (Robertson & Zaragoza, 2009) and dense retriever BGE-reranker-v2-M3 (Chen et al., 2024) to provide a comprehensive comparison. We also evaluate context compression techniques, specifically RECOMP (Xu et al., 2023), to examine performance in token-constrained scenarios. Finally, we compare our method with RAPTOR (Sarthi et al., 2024) and Tree-RAG (Tao et al., 2025), which represent the knowledge aggregation paradigm by building query-agnostic hierarchical structures for comprehensive information synthesis. Notably, we exclude iterative or adaptive frameworks such as Self-RAG (Asai et al., 2023) and ChunkRAG (Singh et al., 2024) from our direct base-lines. These methods rely on multiple retrieval-generation cycles to enhance answer quality. In contrast, MergeRAG operates within a single-retrieval paradigm and is orthogo-nal to such approaches. While iterative methods focus on the dynamic expansion of the search space, our work targets the optimization of context utilization — specifically, how to structure and compress information in a given window without multi-step retrieval. 
+
+Implementation: All experiments were conducted on a high-performance computing cluster equipped with 96 NVIDIA H20 Tensor Core GPUs, each featuring 141 GB of HBM3 memory. To ensure a fair comparison, we em-ploy BGE-reranker-v2-M3 (Chen et al., 2024) as the de-fault retriever for MergeRAG, reranking methods, and other embedding-based baselines; it is also used to compute the query-relevance scores S(ci; q) that guide Symmetric and Asymmetric Merging processes. We use Qwen3-30B-A3B-Instruct-2507 (Yang et al., 2025) as the unified generator across all experiments to eliminate the influence of differ-ent language models. 1 For top-k selection solutions, we report results for k = 5 , and we constrain the maximum token length L to 5 times the average chunk length for 
+
+> 1We also run experiments with different generation models. See Appendix E for more experimental results.
+
+6Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach                                                                                                                                
+
+> Table 1. Experimental results of different methods across multiple datasets. The best and second-best results are highlighted in bold and underlined respectively.
+> Methods 2WikiMQA HotpotQA MuSiQue TriviaQA QASPER EM F1 Acc EM F1 Acc EM F1 Acc EM F1 Acc EM F1 Acc BM25 27.5 35.1 34.5 35.5 46.7 42.5 9.5 16.5 15.0 23.5 44.9 31.0 9.5 23.0 10.5 BGE-reranker 32.5 42.3 43.5 42.0 55.0 51.0 15.5 23.8 21.0 23.0 45.6 31.0 10.0 31.0 13.0 RECOMP 27.0 34.3 38.0 31.0 44.4 40.0 14.5 21.6 18.0 23.5 45.5 31.5 11.5 26.3 14.0 RAPTOR 36.2 45.2 45.2 34.5 48.9 44.0 14.0 20.2 19.0 24.2 45.4 31.8 11.5 30.9 13.5 Tree-RAG 22.5 31.8 32.5 27.5 36.2 30.8 5.0 14.9 15.0 25.0 48.1 31.0 7.5 17.5 8.1
+> Ours-Sym 41.5 52.3 55.5 43.5 55.0 51.5 23.0 35.5 30.0 24.0 44.9 32.5 15.0 38.4 17.5
+> Ours-Asym 44.0 56.0 61.0 40.0 55.0 53.5 24.0 35.9 33.5 23.5 44.7 32.5 12.5 36.2 18.0
+
+compression-based algorithms and MergeRAG . 
+
+Evaluation: Following standard practices in multi-hop rea-soning tasks, we evaluate the performance of all methods using token-level Exact Match (EM), F1 score, and Accu-racy metrics on different datasets. EM measures the strictest form of correctness, calculating the percentage of predic-tions that match the ground truth exactly. F1 score provides an assessment of partial correctness by computing the har-monic mean of token-level precision and recall between the generated response and the reference. Finally, Accu-racy is used to evaluate the algorithm’s success in capturing key information: generated answers with the ground truth appearing as a substring are considered as correct. 
+
+4.2. Main Results 
+
+The experimental results are summarized in Table 1. To pro-vide a deeper understanding of MergeRAG’s performance, we examine the findings from two primary aspects: 
+
+Comparison between MergeRAG and baselines: The results show that MergeRAG clearly outperforms existing baselines on all datasets. Specifically, on multi-hop datasets like 2WikiMQA, HotpotQA and MuSiQue, both variants of MergeRAG obtain the best performance among all meth-ods. On the MuSiQue dataset, MergeRAG-Asym surpasses the strongest baseline BGE-reranker by a substantial mar-gin of 12.1 points in F1 score; MergeRAG also outper-forms the query-agnostic baseline RAPTOR by 15.7 points, demonstrating the superiority of our query-aware merging over static clustering. On the document-intensive QASPER dataset, MergeRAG witnesses a 5.2–7.4 points improvement in F1 score compared to state-of-the-art methods. Although MergeRAG does not yield optimal F1 score on the TriviaQA dataset, it still achieves the best Accuracy and competitive EM and F1 performance. 
+
+Comparison between MergeRAG-Sym and MergeRAG-Asym: We further compare the effectiveness of Symmet-ric versus Asymmetric Merging for MergeRAG. The re-sults demonstrate that MergeRAG-Asym stands out partic-ularly in multi-hop reasoning scenarios (e.g., 2WikiMQA, MuSiQue). Since MergeRAG-Asym aggressively elimi-nates semantic redundancy by removing repetitive informa-tion, it preserves valuable token space for distinct reasoning steps within the constrained context budget. Nonetheless, for datasets requiring high recall from long-tail documents (e.g., QASPER, TriviaQA), MergeRAG-Sym stands out for its ability to capture tail information. Unlike standard RAG which directly discards such low-ranking chunks, Merg-eRAG merges them into new chunks to recover valid evi-dence that would otherwise be lost. 
+
+4.3. Impact of Context Length 
+
+In this section, we investigate the impact of k to demonstrate the advantage of MergeRAG within token-constrained sce-narios. Specifically, we vary k from 1 to 5, and set the maximum context window budget L to k times the average chunk length. The F1 scores of MergeRAG and the baseline solutions are presented in Figure 4. 2
+
+We observe that MergeRAG maintains exceptional robust performance even within limited context budget. At the ex-treme setting when k = 1 , i.e. , the maximum context length is equal to merely a single chunk, MergeRAG successfully extracts and synthesizes useful information from multiple chunks to construct a high-quality context. This result vali-dates our core design philosophy: our method compresses redundant information to fit multi-source evidence into a minimal window, while selecting a single best chunk may be incomplete for RAG. In contrast, other baselines suffer from a sharp decline in F1 scores as k decreases: Notably, when k = 1 , the F1 scores of baselines drop to approximately half of MergeRAG, high-lighting their inability to effectively organize information across different chunks. When the answer requires reason-
+
+> 2We only report F1 score in the main text; the corresponding results for EM and Accuracy are provided in Appendix C.
+
+7Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach BM25 BGE-reranker RECOMP RAPTOR TreeRAG Ours-Sym Ours-Asym 1 2 3 4 5
+
+> k
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> F1
+
+(a) 2WikiMQA 1 2 3 4 5 
+
+> k
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> F1
+
+(b) HotpotQA 1 2 3 4 5 
+
+> k
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> F1
+
+(c) MuSiQue 1 2 3 4 5 
+
+> k
+> 0.40
+> 0.45
+> 0.50
+> 0.55
+> F1
+
+(d) TriviaQA 1 2 3 4 5 
+
+> k
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> F1
+
+(e) QASPER 
+
+Figure 4. Impact of different k on F1. 2WikiMQA HotpotQA MuSiQue TriviaQA QASPER 
+
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 70
+> 80
+> Latency (s)
+> Sym-Sequential
+> Sym-Hierarchical
+> Asym-Sequential
+> Asym-Hierarchical
+
+(a) Latency 2WikiMQA HotpotQA MuSiQue TriviaQA QASPER  
+
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> F1 (%)
+> Sym-Sequential
+> Sym-Hierarchical
+> Asym-Sequential
+> Asym-Hierarchical
+
+(b) F1 
+
+Figure 5. Ablation on Hierarchical Parallel Merging 
+
+ing across disjoint pieces of evidence, or when the top-1 chunk is noisy, their inability to merge information leads to retrieval failure. Furthermore, although their performance gradually recovers as the constraint is relaxed, it remains consistently inferior to MergeRAG. 
+
+4.4. Efficiency Analysis 
+
+To empirically validate the scalability of our proposed Hi-erarchical Parallel Merging, we compare its performance against the sequential merging version of MergeRAG. We use vLLM (Kwon et al., 2023) as the inference backend, and set the parallel parameter B = 8 for hierarchical merg-ing. We measure the latency for each query to quantify the acceleration ratio, while simultaneously evaluating accu-racy metrics ( i.e. , EM, F1, accuracy) to assess the balance between computational efficiency and synthesis quality in Figure 5. 3
+
+Effects on Latency: After implementing hierarchical strat-egy, the generation latency achieves up to 2.24 ×/2.26 × ac-celeration for Symmetric Merging and Asymmetric Merging respectively. Although such speedup is sub-linear relative to the batch size ( B = 8 ), it is primarily attributed to two fac-tors: ① the chunk selection process incurs additional latency, 
+
+> 3
+
+We only report F1 score and average query latency in the main text; detailed results for EM and Accuracy are provided in Appendix D. 
+
+especially the computation of NLL which involves dense forward passes; ② vLLM itself already employs continuous batching and request scheduling optimization. Nevertheless, the > 2× speedup still remains significant for real-time applications. 
+
+Effects on F1 Score: The experimental results illustrate that the hierarchical strategy achieves comparable or even supe-rior generation quality w.r.t. F1 score. On the 2WikiMQA, HotpotQA and MuSiQue datasets, Hierarchical Batched Merging achieves at least a 4% improvement for Symmetric Merging, and a 0.5%–1.5% gain for Asymmetric Merging. This strategy also brings marginal benefits to the QASPER dataset, with a 1.6% increase for Symmetric Merging. No-tably, while a slight dip in F1 score is observed on TriviaQA dataset compared to the sequential baseline, this degrada-tion is negligible, which is less than 0.8% for Symmetric Merging. 
+
+## 5. Conclusion 
+
+In this paper, we reconceptualize the retrieval-augmented generation problem as a dynamic context construction prob-lem rather than a static chunk selection task. Addressing the inherent limitations of existing retrieve-then-select pipelines, we propose MergeRAG, a novel query-aware framework for RAG context synthesis. Specifically, MergeRAG applies 
+
+Symmetric Merging to maintain information in the tail, and 8Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+Asymmetric Merging to eliminate semantic redundancy. In addition, we introduce the Hierarchical Parallel Merging 
+
+strategy to reduce information loss and accelerate execution speed during the merging operation. Extensive experiments across different benchmarks demonstrate the superiority of MergeRAG over state-of-the-art algorithms, validating the efficacy of retrieval-as-synthesis. 
+
+## Impact Statement 
+
+This paper presents work whose goal is to advance the field of Retrieval-Augmented Generation (RAG). There are many potential societal consequences of our work, none which we feel must be specifically highlighted here. 
+
+## References 
+
+Achiam, J., Adler, S., Agarwal, S., Ahmad, L., Akkaya, I., Aleman, F. L., Almeida, D., Altenschmidt, J., Altman, S., Anadkat, S., et al. Gpt-4 technical report. arXiv preprint arXiv:2303.08774 , 2023. Amirshahi, S., Bigdeli, A., Clarke, C. L., and Ghenai, A. Evaluating the robustness of retrieval-augmented genera-tion to adversarial evidence in the health domain. arXiv preprint arXiv:2509.03787 , 2025. Asai, A., Wu, Z., Wang, Y., Sil, A., and Hajishirzi, H. Self-rag: Learning to retrieve, generate, and critique through self-reflection. arXiv preprint arXiv:2310.11511 , 2023. Chen, J., Xiao, S., Zhang, P., Luo, K., Lian, D., and Liu, Z. M3-embedding: Multi-linguality, multi-functionality, multi-granularity text embeddings through self-knowledge distillation. In Findings of the Association for Computational Linguistics ACL 2024 , pp. 2318–2335, 2024. Cheng, X., Wang, X., Zhang, X., Ge, T., Chen, S.-Q., Wei, F., Zhang, H., and Zhao, D. xrag: Extreme context com-pression for retrieval-augmented generation with one to-ken. Advances in Neural Information Processing Systems ,37:109487–109516, 2024. Dasigi, P., Lo, K., Beltagy, I., Cohan, A., Smith, N. A., and Gardner, M. A dataset of information-seeking questions and answers anchored in research papers. arXiv preprint arXiv:2105.03011 , 2021. Edge, D., Trinh, H., Cheng, N., Bradley, J., Chao, A., Mody, A., Truitt, S., Metropolitansky, D., Ness, R. O., and Larson, J. From local to global: A graph rag ap-proach to query-focused summarization. arXiv preprint arXiv:2404.16130 , 2024. Fatehkia, M., Lucas, J. K., and Chawla, S. T-rag: lessons from the llm trenches. arXiv preprint arXiv:2402.07483 ,2024. Gao, Y., Xiong, Y., Gao, X., Jia, K., Pan, J., Bi, Y., Dai, Y., Sun, J., Wang, M., and Wang, H. Retrieval-augmented generation for large language models: A survey. arXiv preprint arXiv:2312.10997 , 2(1), 2023. Gao, Y., Xiong, Y., Wu, W., Li, B., Zhong, Y., and Wang, H. U-niah: Unified rag and llm evaluation for long context needle-in-a-haystack. ACM Transactions on Information Systems , 2025. Grattafiori, A., Dubey, A., Jauhri, A., Pandey, A., Kadian, A., Al-Dahle, A., Letman, A., Mathur, A., Schelten, A., Vaughan, A., et al. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 , 2024. Guu, K., Lee, K., Tung, Z., Pasupat, P., and Chang, M. Retrieval augmented language model pre-training. In 
+
+International conference on machine learning , pp. 3929– 3938. PMLR, 2020. Ho, X., Nguyen, A.-K. D., Sugawara, S., and Aizawa, A. Constructing a multi-hop qa dataset for compre-hensive evaluation of reasoning steps. arXiv preprint arXiv:2011.01060 , 2020. Izacard, G., Lewis, P., Lomeli, M., Hosseini, L., Petroni, F., Schick, T., Dwivedi-Yu, J., Joulin, A., Riedel, S., and Grave, E. Atlas: Few-shot learning with retrieval aug-mented language models. Journal of Machine Learning Research , 24(251):1–43, 2023. Ji, Z., Yu, T., Xu, Y., Lee, N., Ishii, E., and Fung, P. Towards mitigating llm hallucination via self reflection. In Find-ings of the Association for Computational Linguistics: EMNLP 2023 , pp. 1827–1843, 2023. Jiang, H., Wu, Q., Luo, X., Li, D., Lin, C.-Y., Yang, Y., and Qiu, L. Longllmlingua: Accelerating and enhancing llms in long context scenarios via prompt compression. In Pro-ceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pp. 1658–1677, 2024. Jiang, Z., Xu, F. F., Gao, L., Sun, Z., Liu, Q., Dwivedi-Yu, J., Yang, Y., Callan, J., and Neubig, G. Active re-trieval augmented generation. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , pp. 7969–7992, 2023. Jin, Y., Sharma, K., Rakesh, V., Dou, Y., Pan, M., Das, M., and Kumar, S. Sara: Selective and adaptive retrieval-augmented generation with context compression. arXiv preprint arXiv:2507.05633 , 2025. 9Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+Joshi, M., Choi, E., Weld, D. S., and Zettlemoyer, L. Triviaqa: A large scale distantly supervised challenge dataset for reading comprehension. arXiv preprint arXiv:1705.03551 , 2017. Karpukhin, V., Oguz, B., Min, S., Lewis, P. S., Wu, L., Edunov, S., Chen, D., and Yih, W.-t. Dense passage retrieval for open-domain question answering. In EMNLP (1) , pp. 6769–6781, 2020. Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C. H., Gonzalez, J., Zhang, H., and Stoica, I. Efficient memory management for large language model serving with pagedattention. In Proceedings of the 29th sym-posium on operating systems principles , pp. 611–626, 2023. Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N., K ¨uttler, H., Lewis, M., Yih, W.-t., Rockt ¨aschel, T., et al. Retrieval-augmented generation for knowledge-intensive nlp tasks. Advances in neural information pro-cessing systems , 33:9459–9474, 2020. Li, X., Bai, Y., Jin, B., Zhu, F., Pan, L., and Cao, Y. Long context vs. rag: Strategies for processing long documents in llms. In Proceedings of the 48th International ACM SIGIR Conference on Research and Development in In-formation Retrieval , pp. 4110–4113, 2025a. Li, Y., Dong, B., Guerin, F., and Lin, C. Compressing context to enhance inference efficiency of large language models. In Proceedings of the 2023 conference on empir-ical methods in natural language processing , pp. 6342– 6353, 2023. Li, Z., Ruan, Y., Liu, W., Wang, Z., and Yang, T. Cft-rag: An entity tree based retrieval augmented gen-eration algorithm with cuckoo filter. arXiv preprint arXiv:2501.15098 , 2025b. Liu, A., Feng, B., Xue, B., Wang, B., Wu, B., Lu, C., Zhao, C., Deng, C., Zhang, C., Ruan, C., et al. Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437 , 2024. Ma, X., Wang, L., Yang, N., Wei, F., and Lin, J. Fine-tuning llama for multi-stage text retrieval. In Proceedings of the 47th International ACM SIGIR Conference on Research and Development in Information Retrieval , pp. 2421– 2425, 2024. Meng, S., Liu, J., Chen, Y., Mao, S., Cai, P., Yan, G., Shi, B., and Wang, D. From ranking to selection: A simple but efficient dynamic passage selector for retrieval augmented generation. arXiv preprint arXiv:2508.09497 , 2025. Mousavi, S. M., Alghisi, S., and Riccardi, G. Llms as repos-itories of factual knowledge: Limitations and solutions. 
+
+arXiv preprint arXiv:2501.12774 , 2025. Rau, D., Wang, S., D ´ejean, H., Clinchant, S., and Kamps, J. Context embeddings for efficient answer generation in retrieval-augmented generation. In Proceedings of the Eighteenth ACM International Conference on Web Search and Data Mining , pp. 493–502, 2025. Reimers, N. and Gurevych, I. Sentence-bert: Sentence embeddings using siamese bert-networks. arXiv preprint arXiv:1908.10084 , 2019. Robertson, S. and Zaragoza, H. The probabilistic relevance framework: BM25 and beyond , volume 4. Now Publish-ers Inc, 2009. Sarthi, P., Abdullah, S., Tuli, A., Khanna, S., Goldie, A., and Manning, C. D. Raptor: Recursive abstractive processing for tree-organized retrieval. In The Twelfth International Conference on Learning Representations , 2024. Shannon, C. E. A mathematical theory of communication. 
+
+The Bell system technical journal , 27(3):379–423, 1948. Singh, I. S., Aggarwal, R., Allahverdiyev, I., Taha, M., Akalin, A., Zhu, K., and O’Brien, S. Chunkrag: Novel llm-chunk filtering method for rag systems. arXiv preprint arXiv:2410.19572 , 2024. Siriwardhana, S., Weerasekera, R., Wen, E., Kaluarachchi, T., Rana, R., and Nanayakkara, S. Improving the domain adaptation of retrieval augmented generation (rag) models for open domain question answering. Transactions of the Association for Computational Linguistics , 11:1–17, 2023. Sun, W., Yan, L., Ma, X., Wang, S., Ren, P., Chen, Z., Yin, D., and Ren, Z. Is chatgpt good at search? investigat-ing large language models as re-ranking agents. arXiv preprint arXiv:2304.09542 , 2023. Tao, W., Xing, X., Chen, Y., Huang, L., and Xu, X. Treerag: Unleashing the power of hierarchical storage for en-hanced knowledge retrieval in long documents. In Find-ings of the Association for Computational Linguistics: ACL 2025 , pp. 356–371, 2025. Tishby, N., Pereira, F. C., and Bialek, W. The informa-tion bottleneck method. arXiv preprint physics/0004057 ,2000. Touvron, H., Lavril, T., Izacard, G., Martinet, X., Lachaux, M.-A., Lacroix, T., Rozi `ere, B., Goyal, N., Hambro, E., Azhar, F., et al. Llama: Open and efficient foundation lan-guage models. arXiv preprint arXiv:2302.13971 , 2023. Trivedi, H., Balasubramanian, N., Khot, T., and Sabharwal, A. Musique: Multihop questions via single-hop ques-tion composition. Transactions of the Association for Computational Linguistics , 10:539–554, 2022. 10 Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+Wei, J., Wang, X., Schuurmans, D., Bosma, M., Xia, F., Chi, E., Le, Q. V., Zhou, D., et al. Chain-of-thought prompting elicits reasoning in large language models. Advances in neural information processing systems , 35:24824–24837, 2022. Xiong, W., Li, X. L., Iyer, S., Du, J., Lewis, P., Wang, W. Y., Mehdad, Y., Yih, W.-t., Riedel, S., Kiela, D., et al. Answering complex open-domain questions with multi-hop dense retrieval. arXiv preprint arXiv:2009.12756 ,2020. Xu, F., Shi, W., and Choi, E. Recomp: Improving retrieval-augmented lms with compression and selective augmen-tation. arXiv preprint arXiv:2310.04408 , 2023. Yang, A., Li, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Gao, C., Huang, C., Lv, C., et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. Yang, Z., Qi, P., Zhang, S., Bengio, Y., Cohen, W., Salakhut-dinov, R., and Manning, C. D. Hotpotqa: A dataset for diverse, explainable multi-hop question answering. In 
+
+Proceedings of the 2018 conference on empirical methods in natural language processing , pp. 2369–2380, 2018. Zhang, L., Zhang, Y., Long, D., Xie, P., Zhang, M., and Zhang, M. Rankinggpt: Empowering large language models in text ranking with progressive enhancement. 
+
+CoRR , 2023. Zhang, Z., Zhang, A., Li, M., and Smola, A. Automatic chain of thought prompting in large language models. 
+
+arXiv preprint arXiv:2210.03493 , 2022. 11 Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+## A. Pseudo-code of MergeRAG 
+
+A.1. Symmetric and Asymmetric Merging 
+
+The pseudo-code of the merging operation is shown in Algorithm 1 (symmetric) and Algorithm 2 (asymmetric). 
+
+Algorithm 1 Symmetric Merging Operation 
+
+Input: Set of chunks C = {c1, c 2, · · · , c N }, user query q, maximum context length Lt ← 0, C(0) ← C 
+
+while P
+
+> c∈C (t)
+
+l(c) > L and C(t) > 1 do 
+
+(c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+) ← arg min  
+
+> ci,c j∈C (t),i ̸=j
+
+{S(ci; q) + S(cj ; q)}
+
+c∗ ← M (c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+; q)
+
+C(t+1) ←  C(t) \ { c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+} ∪ { c∗}
+
+t ← t + 1 
+
+end while 
+
+S ← C (t)
+
+return S
+
+Algorithm 2 Asymmetric Merging Operation 
+
+Input: Set of chunks C = {c1, c 2, · · · , c N }, user query q, maximum context length Lt ← 0, C(0) ← C 
+
+while P
+
+> c∈C (t)
+
+l(c) > L and C(t) > 1 do 
+
+c∗ 
+
+> i
+
+← arg min 
+
+> ci∈C (t)
+
+S(ci; q)
+
+c∗ 
+
+> j
+
+← arg min   
+
+> cj∈C (t),j ̸=i
+
+LNLL (c∗ 
+
+> i
+
+|cj )
+
+c∗ ← M (c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+; q)
+
+C(t+1) ←  C(t) \ { c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+} ∪ { c∗}
+
+t ← t + 1 
+
+end while 
+
+S ← C (t)
+
+return S
+
+A.2. Hierarchical Parallel Merging 
+
+The pseudo-code for Hierarchical Parallel Merging is shown in Algorithm 3 (symmetric) and Algorithm 4 (asymmetric). 12 Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+Algorithm 3 Batched Symmetric Merging Operation 
+
+Input: Set of chunks C = {c1, c 2, · · · , c N }, user query q, maximum context length Lt ← 0, C(0) ← C 
+
+while P
+
+> c∈C (t)
+
+l(c) > L and C(t) > 1 do 
+
+R ← C (t) // Temporary remaining set 
+
+P ← ∅ // Set of pairs to merge 
+
+K ←
+
+ |C(t)|
+
+> 2
+
+
+
+// Adjust batch size 
+
+for 1 ≤ k ≤ K do 
+
+(c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+) ← arg min  
+
+> ci,c j∈R ,i ̸=j
+
+{S(ci; q) + S(cj ; q)}
+
+add (c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+) to PR ← R \ { c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+}
+
+end for 
+
+Cnew ← ∅
+
+for each (c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+) ∈ P in parallel do 
+
+c∗ ← M (c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+; q)
+
+Cnew ← C new ∪ { c∗}
+
+end for 
+
+C(t+1) ← R ∪ C new 
+
+t ← t + 1 
+
+end while 
+
+S ← C (t)
+
+return S
+
+Algorithm 4 Batched Asymmetric Merging Operation 
+
+Input: Set of chunks C = {c1, c 2, · · · , c N }, user query q, maximum context length Lt ← 0
+
+C(0) ← C 
+
+while P
+
+> c∈C (t)
+
+l(c) > L and C(t) > 1 do 
+
+R ← C (t) // Temporary remaining set 
+
+P ← ∅ // Set of pairs to merge 
+
+K ←
+
+ |C(t)|
+
+> 2
+
+
+
+// Adjust batch size 
+
+for 1 ≤ k ≤ K do 
+
+c∗ 
+
+> i
+
+← arg min 
+
+> ci∈R
+
+S(ci; q)
+
+c∗ 
+
+> j
+
+← arg min   
+
+> cj∈R ,j ̸=i
+
+LNLL (c∗ 
+
+> i
+
+|cj )
+
+add (c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+) to PR ← R \ { c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+}
+
+end for 
+
+Cnew ← ∅
+
+for each (c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+) ∈ P in parallel do 
+
+c∗ ← M (c∗ 
+
+> i
+
+, c ∗ 
+
+> j
+
+; q)
+
+Cnew ← C new ∪ { c∗}
+
+end for 
+
+C(t+1) ← R ∪ C new 
+
+t ← t + 1 
+
+end while 
+
+S ← C (t)
+
+return S
+
+13 Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+## B. Prompts for Merging and Generation 
+
+We design prompts that translate the theoretical objectives of MergeRAG into executable LLM instructions. Specifically, the prompt for Symmetric Merging is shown as follows: 
+
+Prompt for Symmetric Merging 
+
+Task: 
+
+Merge Chunk A and Chunk B into a single context based on the Query. 
+
+Instructions: 
+
+• Selective Retention: Extract and keep all relevant sentences or phrases from Chunk A and Chunk B that address the Query verbatim. Do not paraphrase or modify the original text. • Pruning: Remove any content that is irrelevant to the Query. • No Generation: Do not answer the Query. Do not generate any new information or external knowledge. • Output: Provide only the merged verbatim text. 
+
+Input Data: 
+
+Query: {query }
+
+Chunk A : {chunk a }
+
+Chunk B: {chunk b }
+
+Output: 
+
+The prompt for Asymmetric Merging is shown as follows: 
+
+Prompt for Asymmetric Merging 
+
+Task: 
+
+Construct a merged context by using Chunk A as the primary anchor and filling in missing details from Chunk B. 
+
+Instructions: 
+
+• Role Definition: Chunk A is the Anchor (Primary Context). Chunk B is Supplementary Material. • Strict Verbatim Policy: You must extract exact sentences or phrases from the original text. Do not rewrite, paraphrase, or modify any words from either chunk. • Processing Chunk A (Anchor): Retain all sentences in Chunk A that are relevant to the Query. Remove only the parts of Chunk A that are completely irrelevant. • Processing Chunk B (Supplement): Extract sentences from Chunk B only if they meet two conditions: 
+
+– Strictly relevant to the Query. 
+
+– Contains information NOT present in Chunk A (Deduplication). • Assembly: Combine the retained parts of Chunk A and the selected unique parts of Chunk B into a single context. Maintain the logical flow of Chunk A as the baseline. • No Generation: Do not answer the Query. Do not add connecting words. Do not generate external knowledge. • Output: Provide only the merged verbatim text. 
+
+Input Data: 
+
+Query: {query }
+
+Chunk A (Anchor): {chunk a }
+
+Chunk B (Source): {chunk b }
+
+Output: 
+
+14 Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+The prompt for generating the final answer is shown as follows: 
+
+Prompt for Generation 
+
+Answer the question based ONLY on the provided context. 
+
+Instructions: 
+
+1. Directness : Provide the answer immediately without preamble. 2. Prioritization : If the context mentions a primary method/entity along with minor exceptions or auxiliary steps, provide ONLY the primary one. 3. Ambiguity : If multiple candidates exist (e.g., multiple baselines), use the specific details in the question to select the correct one. 4. Format : If the answer is a list, provide only the key items. If it’s a Yes/No question, output ONLY ‘Yes’ or ‘No’. Context: {context }
+
+Question: {question }
+
+Answer: 
+
+## C. Detailed Metrics for Different k
+
+Here, we provide EM and Accuracy metrics for MergeRAG and various baselines. As illustrated in Figure 6 and 7, both metrics exhibit similar trends as k decreases. While certain baselines achieve performance competitive with MergeRAG for larger k, their generation quality deteriorates sharply once the context length is reduced. On the 2WikiMQA dataset, the EM scores drop from ∼30% ( k = 5 ) to ∼20% ( k = 1 ), and Accuracy drops from up to 45% ( k = 5 ) to 30% ( k = 1 ) for state-of-the-art baselines. However, MergeRAG still achieves comparable generation quality using only a small fraction of the tokens. The EM score and Accuracy only show a marginal decrease of ∼5% for MergeRAG, validating that it optimizes information density rather than relying on information redundancy. BM25 BGE-reranker RECOMP RAPTOR TreeRAG Ours-Sym Ours-Asym 1 2 3 4 5
+
+> k
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> EM
+
+(a) 2WikiMQA 1 2 3 4 5 
+
+> k
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> EM
+
+(b) HotpotQA 1 2 3 4 5 
+
+> k
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> EM
+
+(c) MuSiQue 1 2 3 4 5 
+
+> k
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> EM
+
+(d) TriviaQA 1 2 3 4 5 
+
+> k
+> 0.0
+> 0.1
+> 0.2
+> EM
+
+(e) QASPER 
+
+Figure 6. Impact of different k on EM. BM25 BGE-reranker RECOMP RAPTOR TreeRAG Ours-Sym Ours-Asym 1 2 3 4 5
+
+> k
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> Acc
+
+(a) 2WikiMQA 1 2 3 4 5 
+
+> k
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> Acc
+
+(b) HotpotQA 1 2 3 4 5 
+
+> k
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> Acc
+
+(c) MuSiQue 1 2 3 4 5 
+
+> k
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> Acc
+
+(d) TriviaQA 1 2 3 4 5 
+
+> k
+> 0.0
+> 0.1
+> 0.2
+> Acc
+
+(e) QASPER 
+
+Figure 7. Impact of different k on Accuracy. 
+
+15 Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+## D. Detailed Metrics for Hierarchical Merging 
+
+Here, we provide EM and Accuracy metrics for sequential and hierarchical pipelines of MergeRAG. As shown in Figure 8, Hierarchical Parallel Merging generally achieves higher EM and Accuracy on all datasets. On the 2WikiMQA dataset, Hierarchical Parallel Merging achieves a 5% increase in EM for Symmetric Merging, and a 1% increase in EM for Asymmetric Merging. The Accuracy is also improved by 4%/2% for Symmetric/Asymmetric Merging on the 2WikiMQA dataset. This positive trend extends to other multi-hop datasets such as HotpotQA and MuSiQue, where the hierarchical structure consistently yields higher EM and Accuracy scores compared to the sequential approach. On the remaining datasets (TriviaQA and QASPER), the hierarchical approach maintains performance parity with negligible fluctuations, demonstrating that MergeRAG can achieve RAG acceleration without sacrificing generation quality. 2WikiMQA HotpotQA MuSiQue TriviaQA QASPER 
+
+> 0
+> 10
+> 20
+> 30
+> 40
+> EM (%)
+> Sym-Sequential
+> Sym-Hierarchical
+> Asym-Sequential
+> Asym-Hierarchical
+
+(a) EM 2WikiMQA HotpotQA MuSiQue TriviaQA QASPER  
+
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> Accuracy (%)
+> Sym-Sequential
+> Sym-Hierarchical
+> Asym-Sequential
+> Asym-Hierarchical
+
+(b) Accuracy 
+
+Figure 8. Ablation on Hierarchical Parallel Merging 
+
+## E. Model Generalizability Analysis 
+
+To demonstrate the generalizability of the MergeRAG framework, we run experiments with different backend models. Specifically, we also use Llama-3.1-8B-Instruct (Grattafiori et al., 2024) as the unified generator. Table 2 summarizes the comparative results with the context budget fixed at k = 5 . The experimental results show that MergeRAG still maintains superior performance independently of the generation model: MergeRAG obtains optimal F1 score on the 2WikiMQA, MusiQue and QASPER datasets. Even on the HotpotQA and TriviaQA datasets where MergeRAG does not rank first, it achieves runner-up performance with margins negligible to the top baseline, validating its consistent effectiveness across different reasoning tasks. 
+
+Table 2. Experimental results on Llama-3.1-8B-Instruct. The best and second-best results are highlighted in bold and underlined respectively. 
+
+Methods 2WikiMQA HotpotQA MuSiQue TriviaQA QASPER EM F1 Acc EM F1 Acc EM F1 Acc EM F1 Acc EM F1 Acc BM25 15.5 23.4 24.0 28.5 38.7 34.5 10.0 17.2 10.5 20.5 44.0 29.0 9.0 23.1 9.5 BGE-reranker 23.5 33.5 35.5 27.5 36.2 30.8 14.5 22.9 16.5 22.5 46.0 30.0 10.5 28.0 13.0 RECOMP 18.0 24.2 24.5 27.5 40.0 32.0 10.5 15.3 11.0 21.0 44.6 29.7 12.6 27.9 14.6 RAPTOR 21.0 28.6 27.0 32.0 45.2 41.0 11.5 19.4 13.0 22.1 44.7 29.7 12.6 27.9 14.6 Tree-RAG 17.0 21.8 24.0 18.0 24.9 24.0 2.0 5.1 2.5 20.0 43.5 29.5 3.0 5.0 3.0 
+
+Ours-Sym 25.0 33.4 34.5 33.5 42.4 39.0 16.5 26.0 20.0 22.5 45.2 30.5 12.0 31.9 16.0 Ours-Asym 26.0 34.4 35.5 32.5 44.1 40.5 19.0 25.4 21.0 22.5 45.7 31.0 11.5 25.7 13.5 
+
+## F. A Qualitative Analysis Example 
+
+Here, we present a representative example from the MuSiQue dataset to demonstrate the effectiveness of MergeRAG. The query, When did military instruction start at the place where Larry Alcala was educated? , necessitates a multi-hop reason-16 Rethinking Retrieval-Augmentation as Synthesis: A Query-Aware Context Merging Approach 
+
+ing chain: the system must first identify the institution where Alcala studied (Entity ❶), and subsequently determine when military instruction began at that location (Target ❷). Initially, the context consists of Chunk A (85 tokens) with biographical details about Alcala, and Chunk B (678 tokens) containing historical records that might be relevant to the institution. When processed by MergeRAG, these fragments are fused into a cohesive unit: the algorithm selectively extracts the bridging evidence while filtering out semantic noise. Consequently, the merged chunk contains only 361 tokens — significantly more compact than the raw concatenation of the original inputs. Utilizing this synthesized context, the generator accurately resolves the dependency, determining that Alcala attended ❶ the University of the Philippines, which initiated military instruction in ❷ 1912. 
+
+A Qualitative Analysis Example for MergeRAG 
+
+Query 
+
+When did military instruction start at the place where Larry Alcala was educated ?
+
+## ↙↘ 
+
+Chunk A (85 tokens) 
+
+Larry Alcala earned his Bachelor of Fine Arts in Painting at the University of the Philippines (UP) 
+
+in 1950. He became a professor at the same university from 1951 to 1981. He also received the Australian Cultural Award accompanied by a travel study grant in 1975. He started his cartooning career in 1946 while still attending school. 
+
+Chunk B (678 tokens) 
+
+ROTC in the Philippines began in 1912 when the Philippine Constabulary commenced with military instruction at the University of the Philippines. The university’s Board of Regents then made representa-tions to the Unit. In 1866, by Auditor School, the two-year officers’ courses were established. In 1867, the courses were transformed into a Military Law Academy. . . . 
+
+## ↓ Merge Algorithm 
+
+Merged Result (361 tokens) 
+
+ROTC in the Philippines began in 1912 when the Philippine Constabulary commenced with military instruction at the University of the Philippines. The university’s Board of Regents then made representations to the Unit. In 1866, by Auditor School, the two-year officers’ courses were established. In 1867, the courses were transformed into a Military Law Academy. . . . Larry Alcala earned his Bachelor of Fine Arts in Painting at the University of the Philippines (UP) in 1950. He became a professor at the same university from 1951 to 1981. He also received the Australian Cultural Award accompanied by a travel study grant in 1975. He started his cartooning career in 1946 while still attending school. 
+
+## ↓ Downstream QA Task 
+
+Answer Derivation 
+
+By traversing the merged context, the model extracts the multi-hop reasoning chain: 
+
+Larry Alcala educated at 
+
+−−−−−→ ❶ the University of the Philippines military instruction started 
+
+−−−−−−−−−−−−→ ❷ 1912 Final Answer: 1912 
+
+17
