@@ -1,0 +1,1058 @@
+Title: Efficient and Effective Table-Centric Table Union Search in Data Lakes
+
+URL Source: https://arxiv.org/pdf/2603.17298v1
+
+Published Time: Thu, 19 Mar 2026 00:39:31 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# Efficient and Effective Table-Centric Table Union Search in Data Lakes 
+
+# Yongkang Sun 
+
+Hong Kong Polytechnic University yongkang.sun@connect.polyu.hk 
+
+# Zhihao Ding 
+
+Hong Kong Polytechnic University tommy-zh.ding@connect.polyu.hk 
+
+# Huiqiang Wang 
+
+Hong Kong Polytechnic University huiqiang.wang@connect.polyu.hk 
+
+# Reynold Cheng 
+
+The University of Hong Kong ckcheng@cs.hku.hk 
+
+# Jieming Shi 
+
+Hong Kong Polytechnic University jieming.shi@polyu.edu.hk 
+
+## ABSTRACT 
+
+In data lakes, information on the same subject is often fragmented across multiple tables. Table union search aims to find the top-𝑘 
+
+tables that can be unioned with a query table to extend it with more rows, without relying on metadata or ground-truth labels. Existing methods are mainly column-centric : they focus on modeling column unionability scores using column embeddings, which are then used throughout the search process for column matching, filtering, and aggregation. However, this overlooks holistic table-level semantics, which may result in suboptimal rankings and inefficiencies. We introduce TACTUS , a novel table-centric method for table union search. Unlike prior work that searches from columns to tables, we search in a table-first way and examine columns only in the final step. During offline processing, we directly generate table embeddings for holistic, table-level unionability scoring by designing table-level representation techniques , including positive table pair construction to simulate unionable tables, two-pronged negative table sampling to avoid latent positives and mine hard negatives to enhance representation quality, and attentive table encoding for effective embeddings. During online search, we first develop a table-centric adaptive candidate retrieval method that effi-ciently selects a compact, high-quality candidate pool by leveraging the distribution of table-level unionability scores induced by table embeddings. We then inspect columns only within this compact candidate set and design a dual-evidence reranking technique that integrates table-level and column-level scores to refine the final top-
+
+𝑘 results. Extensive experiments on real-world datasets show that 
+
+TACTUS significantly improves result quality while being much faster than existing methods in both offline and online processing, often by an order of magnitude. 
+
+PVLDB Reference Format: 
+
+Yongkang Sun, Zhihao Ding, Huiqiang Wang, Reynold Cheng, and Jieming Shi. Efficient and Effective Table-Centric Table Union Search in Data Lakes. PVLDB, 14(1): XXX-XXX, 2026. 
+
+PVLDB Artifact Availability: 
+
+The source code, data, and/or other artifacts have been made available at https://github.com/MyriadVerse/TACTUS. 
+
+> This work is licensed under the Creative Commons BY-NC-ND 4.0 International License. Visit https://creativecommons.org/licenses/by-nc-nd/4.0/ to view a copy of this license. For any use beyond those covered by this license, obtain permission by emailing info@vldb.org. Copyright is held by the owner/author(s). Publication rights licensed to the VLDB Endowment. Proceedings of the VLDB Endowment, Vol. 14, No. 1 ISSN 2150-8097. doi:XX.XX/XXX.XX
+
+## 1 INTRODUCTION 
+
+Tabular data on the web, from government, scientific, and commer-cial sources, are increasingly available [ 5, 9, 20 , 42 ]. Data on the same subject is often fragmented across multiple tables, published by different organizations [ 34 , 43 , 49 ], making it crucial to discover relevant tables in data lakes to construct richer datasets in various applications [46, 47, 66]. However, web tables often lack metadata (e.g., headers or schemas) [ 1, 19 , 48 , 66 ], rendering conventional search inadequate [ 5]. This motivates table search that relies on table content rather than curated metadata [49, 56]. In this paper, we focus on the task of Table Union Search [ 18 , 49 ,53 ]: given a query table 𝑇 𝑞 , the goal is to find the top-𝑘 tables in a data lake T that can be unioned with 𝑇 𝑞 to extend it with addi-tional rows. This task does not use table metadata or ground-truth labels, making it practical. Two tables are considered unionable if they describe the same subject and their columns are semantically aligned (e.g., tables on funded research projects published by differ-ent government divisions [ 49 ], or tables on video games published at different times [ 34 ]). Unioning such tables with different rows yields a larger, semantically consistent table. 
+
+Example 1.1. Consider the tables in Figure 1. We include column names to make the example easy to follow, while such metadata is often missing in practice and we do not assume its availability. Query table A and table B are unionable because they (i) concern the same subject (bus ridership data) and (ii) have semantically aligned columns. Intuitively, they can be unioned by merging their distinct rows to produce a larger table with consistent meaning. In contrast, table C concerns a different subject (Canada railway maintenance data) and is non-unionable with table A, even though some columns may incidentally share similar values (e.g., numer-ical columns). Forcing to union tables A and C would mix rows about bus ridership and railway maintenance, resulting in a table with undesired inconsistent content. Finding unionable tables has been widely studied, as reviewed in Section 2.2 [ 3, 18 , 30 , 34 , 43 , 49 , 53 ]. Notably, Nargesian et al .[49] formalized the table union search problem and evaluated var-ious features for measuring unionability. Methods differ in how they compute unionability scores. With advances in representation learning and pretrained language models (PLMs), recent methods such as Starmie [18 ] and LIFTus [ 53 ] learn column embeddings to score column unionability, and then aggregate these scores to derive table unionability scores for ranking. This alleviates the need for manual feature engineering and explicit cell value matching. 
+
+> arXiv:2603.17298v1 [cs.DB] 18 Mar 2026
+
+State-of-the-art methods [ 18 , 53 ] mainly adopt a column-centric 
+
+approach, focusing on modeling column unionability scores: (i) they first learn column embeddings for every column in the data lake T ;(ii) during online search, for a query table 𝑇 𝑞 , they compute column unionability scores by similarities between column embeddings of 
+
+𝑇 𝑞 and those in T , to filter and retrieve candidate tables; and (iii) for each candidate table 𝑇 𝑖 , they then perform column matching between 𝑇 𝑞 and 𝑇 𝑖 and aggregate the scores of highly-matched column pairs into a table unionability score for ranking to get the top-𝑘 results. However, this column-centric approach suffers from the fol-lowing issues. First, it proceeds early to column-level matching, overlooking the overall table-level semantics, which may lead to counterintuitive rankings as illustrated below. 
+
+Example 1.2. In Figure 1, Starmie computes pairwise column unionability scores and applies maximum-weight bipartite match-ing to align columns between tables A and B. The five links be-tween tables A and B represent matched column pairs with column unionability scores by Starmie , and summing them up yields a table unionability score of 1.446. For tables A and C, Starmie finds seven matched columns with a higher aggregated score of 2.056, causing table C to be ranked above table B, despite being non-unionable with table A. This misranking occurs since table C has columns with high column unionability scores to columns in ta-ble A (e.g., ‘Unnamed: 19’ and ‘Unnamed: 13’ in table C score 0.398 and 0.345 with ‘boardings’ and ‘location’ in table A). Aggregating them let table C to outrank the truly unionable table B. We believe that effective table union search should consider both holistic table-level semantics and column matches, while existing methods focus mainly on the columns and largely overlook table-level semantics. Further, for efficiency, prior methods use column-based filtering: retrieve any table with at least one column highly matched to any query column in 𝑇 𝑞 . As 𝑇 𝑞 has multiple columns, each matching columns in many tables, this yields a large candidate set with non-unionable tables, causing unnecessary overhead. Motivated by these findings, we propose TACTUS , a TA ble-C entric method for efficient and accurate T able Union S earch. Our approach performs search in a table-to-column manner, in contrast to the existing column-to-table paradigm. 
+
+TACTUS first ensures that the overall table-level semantics of a table 𝑇 𝑖 are promising for union with 𝑇 𝑞 , and then refines it by integrating both table-level and column-level patterns. Specifically, we generate a table embedding T𝑖 for each table 𝑇 𝑖 ∈ T to cap-ture table-level unionability. During online search, for a query 
+
+𝑇 𝑞 , we first use table embeddings to compute a table-level union-ability score 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) and design table-centric adaptive candidate retrieval to obtain a compact candidate set S. For example, in Fig-ure 1, TACTUS assigns a high score 𝜇 𝑇 (𝐴, 𝐵 ) = 0.805 and a low score 𝜇 𝑇 (𝐴, 𝐶 ) = 0.233 , retaining table B for further inspection and pruning non-unionable table C early. Since we filter using a single embedding per table, unlike prior methods that use multi-ple column embeddings from 𝑇 𝑞 , our candidate retrieval yields a compact, distribution-aware pool S with controllable size: for each query, it adaptively selects candidates based on the distribution of 𝜇 𝑇 scores to get a concise, high-coverage S with size typically close to 𝑘 . Over S, we develop dual-evidence reranking : we combine alightings boardings cross_street on_street routes                                                                                                 
+
+> 0.7 8.3 MENARD JACKSON 126
+> 193.6 3.2 CENTRAL HARRISON 7
+> 776.0 352.8 FRANKLIN CHICAGO 1166
+> alightings boardings cross_street location on_street routes stop_id
+> 106.4 49.4 THOMAS (41.90, -87.69) CALIFORNIA 52 3020
+> 130.9 33.3 CHICAGO (41.89, -87.69) CALIFORNIA 52 3023
+> 59.7 178.7 FRANKLIN (41.89, -87.71) KEDZIE 52 3028
+> 2017 GradeX
+> Crossings
+> Inventory
+> Unnamed:
+> 1…Unnamed:
+> 13
+> Unnamed:
+> 14
+> Unnamed:
+> 15 …Unnamed:
+> 19
+> Unnamed:
+> 23 …Unnamed:
+> 8
+> 4696 16643 …-112.63216 Chipman Active -FLB …5.0 2.0 …Vegreville
+> 7990 34232 …-79.25750 Toronto Active -FLBG …12.0 6.0 …Uxbridge
+> 4744 15649 …-81.21520 London Active -FLBG …2.0 2.0 …Dundas
+> 0.358 0.315 0.313 0.193 0.267
+> Query
+> Table A
+> Table B
+> Table C
+> 0.223 0.388 0.345 0.242 0.398 0.204 0.256
+> The table unionability scores by
+> existing column -centric method:
+> 1.446 between A and B
+> 2.056 between A and C
+
+Figure 1: Tables A and B are unionable as they share the same subject (bus ridership) and have semantically aligned columns. Table C, on a different subject (railway mainte-nance), is non-unionable with table A; unioning them leads to inconsistent table content. The links between columns indi-cate the highly matched column pairs with column unionabil-ity scores from [ 18 ], which are aggregated into table union-ability scores (shown top-right); it ranks non-unionable ta-ble C (2.056) above unionable table B (1.446) for query table A. 
+
+the table-level unionability score 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) with an extra column alignment score 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 ) to compute the final table unionability score 𝜇 (𝑇 𝑞 ,𝑇 𝑖 ), and rank candidates by 𝜇 (𝑇 𝑞 ,𝑇 𝑖 ) for the top-𝑘 . Note that 𝜇 𝑇 from table embeddings is used for retrieval and ranking, while 𝜇 𝐴 is computed only for candidates in the last step. During offline stage, we obtain a table embedding T𝑖 for each 
+
+𝑇 𝑖 ∈ T to capture table-level unionability, in contrast to prior work [ 18 , 53 ] that learns column embeddings for all columns in 
+
+T . Since ground-truth labels are unavailable, we develop self-supervised table-level representation techniques to obtain table embeddings, ensuring that unionable tables are close while non-unionable tables are distant in the embedding space. Specifically, we introduce positive table pair construction to simulate unionable table pairs, and a two-pronged negative table sampling strategy that excludes latent positives and mines hard negatives to enhance table embeddings for unionability estimation. We develop an attentive table encoder with tailored serialization and multi-head attention to produce table embeddings, trained with a table-level contrastive objective. While contrastive learning is popular across domains, the key differences among methods lie in how they instantiate its core components. We design these dedicated techniques for table pairs to get effective table embeddings, as detailed in Section 4, in contrast to prior methods [18, 53] that focus on column pairs. We conduct extensive experiments and show that TACTUS con-sistently achieves superior result quality while being significantly faster than existing methods in both offline and online stages, often by an order of magnitude. Our contributions are as follows: 
+
+• We propose TACTUS , a novel table-centric framework for effi-cient and accurate table union search in data lakes. 
+
+• We design an efficient table-to-column search process, introduc-ing table-centric adaptive candidate retrieval and dual-evidence reranking techniques. 
+
+• To obtain effective table embeddings, we develop positive table pair construction, two-pronged negative table sampling, and attentive table encoding methods. 
+
+• Extensive experiments demonstrate that TACTUS consistently achieves state-of-the-art effectiveness and efficiency. 
+
+> 2
+
+## 2 PRELIMINARIES 2.1 Table Union Search Problem 
+
+A data lake T is a collection of 𝑛 tables. Each table 𝑇 ∈ T consists of multiple columns and rows. The top-𝑘 table union search problem [ 18 , 49 , 53 ] in Definition 2.1 aims to identify a subset T𝑞 ⊆ T of size 𝑘 that contains the top-𝑘 
+
+tables 𝑇 with the highest table unionability scores 𝜇 (𝑇 𝑞 ,𝑇 ) to a query table 𝑇 𝑞 .Note that there is no universal definition of the table unionabil-ity score 𝜇 (· , ·) ; different methods compute it based on their own design choices, as discussed in Section 2.2. In our approach, we first develop the table-level unionability score 𝜇 𝑇 (𝑇 𝑞 ,𝑇 ) from table em-beddings for candidate filtering, and then combine the table-level 
+
+𝜇 𝑇 (𝑇 𝑞 ,𝑇 ) with a column-level alignment score 𝜇 𝐴 (𝑇 𝑞 ,𝑇 ) to get our final unionability score 𝜇 (𝑇 𝑞 ,𝑇 ) for reranking. Moreover, there are two problem settings to emphasize [ 18 , 49 ,53 ]. (i) In real-world data lakes, metadata such as column headers or schemas are often missing or unreliable [ 30 , 35 , 49 , 57 ]. Thus, table union search does not use any table metadata and relies solely on table content for unionability assessment. (ii) The table union search is generally formulated as an unsupervised problem, since ground-truth unionability labels for table pairs are typically unavailable. In the experiments, benchmark datasets with such labels are used solely for effectiveness evaluation. 
+
+Definition 2.1 (Top-𝑘 Table Union Search). Given a data lake T
+
+and a query table 𝑇 𝑞 , the table union search problem is to find a subset T𝑞 ⊆ T with |T 𝑞 | = 𝑘 such that for every 𝑇 ∈ T 𝑞 and every 𝑇 ′ ∈ T \ T 𝑞 , 𝜇 (𝑇 𝑞 ,𝑇 ) ≥ 𝜇 (𝑇 𝑞 ,𝑇 ′), where 𝜇 (· , ·) is the table unionability score. 
+
+## 2.2 Related Work 
+
+Table Union Search. Early work relied on keywords, string/set-based similarity, and schema information to identify related ta-bles [ 7, 24 , 36 , 51 , 56 ]. Ling et al . [43] defined table stitching as the task of unioning tables with identical schemas within a site, while Lehmberg and Bizer [34] merged web tables using metadata such as column headers. Sarma et al . [56] framed the problem of finding unionable web tables as the entity complement problem, introducing entity and schema consistency measures for search. These works underscore the need to find unionable tables but rely on table metadata, which is often unavailable in practice [ 30 , 49 , 57 ]. Nargesian et al . [49] formalized table union search without meta-data, defining its own column unionability score based on statistical value overlap, ontology annotations, and language features, and computing table unionability through optimal one-to-one column alignment. D 3L [ 3] measures column similarity using multiple fea-tures, including column names, and employs hashing to retrieve candidate tables. Khatiwada et al . [30] extend the table union search framework [ 49 ] by requiring an intent column in the query table, and propose SANTOS , which incorporates relationship semantics between columns and knowledge bases for search. Starmie [18 ] is the first to apply contrastive learning with PLMs for table union search, generating column embeddings that capture contextual semantics and quantify column unionability via cosine similarity. LIFTus [ 53 ] further improves column representations by incorpo-rating both linguistic and non-linguistic features. These methods [ 18 , 49 , 53 ], especially Starmie and LIFTus, pri-marily adopt a column-centric approach for table union search. They focus on first modeling column unionability scores, which are then used throughout the search process and aggregated to get table unionability scores. For example, the state-of-the-art Starmie 
+
+method generates column embeddings for all columns in the data lake T . During online search, it retrieves candidate tables that con-tain at least one column highly unionable with any column in the query table 𝑇 𝑞 , based on column unionability scores. It then com-putes the table unionability score between 𝑇 𝑞 and each candidate 
+
+𝑇 𝑖 using maximum-weight bipartite matching over their column unionability scores, and returns the top-𝑘 unionable tables. As illustrated in Section 1 (Figure 1), column-centric approaches focus on column details too early and overlook the overall table-level semantics, which can result in irrelevant unions—such as combining a bus ridership table with a railway maintenance table that are clearly not unionable. An experimental study [ 4] also shows the importance of table-level semantics. We argue that effective table union search should first capture holistic table-level semantics and then refine results with fine-grained column details. Accordingly, we propose our table-centric 
+
+TACTUS method, which searches from tables to columns, rather than from columns to tables in prior work. We produce one em-bedding per table to compute a table-level unionability score 𝜇 𝑇 ,enabling efficient candidate retrieval and early pruning of tables on unrelated subjects. Only over the candidate set, we inspect columns, get a column-level score 𝜇 𝐴 , and combine it with 𝜇 𝑇 into our final table unionability score 𝜇 for top-𝑘 ranking. By leveraging table embeddings, TACTUS operates on a smaller candidate set and im-proves both effectiveness and efficiency. Besides, a recent work [ 31 ] introduces a new problem of finding diverse unionable tuples for query tuples, and develops the DUST method based on embedding and clustering techniques. Another related but different problem is join discovery, to find tables that can be joined to expand columns horizontally [ 15 –17 , 23 , 33 , 55 , 59 , 67 ]. For example, MATE [ 17 ] efficiently discovers multi-column (n-ary) key joins at scale using a space-efficient hash-based super key index, while the Ember system [ 59 ] abstracts and automates keyless joins by constructing an index with task-specific embeddings. These studies highlight the importance and ongoing research in tabular data discovery. 
+
+Representation Learning of Tables. Representation learning has been widely adopted for various tabular data tasks. For example, 
+
+Sherlock [ 25 ] and SATO [65 ] generate embeddings to predict the semantic types of columns by designing rich features and tailored models. Prior work [ 18 , 53 ] has adapted these representations for table union search evaluation, and we also include them in the experiments. Other studies leverage PLMs for table understand-ing [ 13 ], entity matching [ 8, 40 , 41 , 60 ], question answering [ 26 ], schema matching [ 32 , 60 ], table transformation [ 37 , 38 ], and ta-ble overlap estimation [ 52 ]. We build on this line of research, but design dedicated embedding, scoring, and search techniques for table union search. There are also studies on general table repre-sentation learning that focus on effective pre-training [ 10 , 27 ], but              
+
+> 3…
+> 𝑇 !
+> 𝑇 "𝒩 #$%&
+> (!)
+> 𝒯 Attentive Table
+> Encoder 𝜀 )𝐓 !
+> … Loss
+> ℒ
+> Apply 𝜀 )
+> 𝑇 *𝐓 *
+> 𝜇 )
+> 𝒮
+> FastText
+> Encoding
+> Dual -evidence Rerank
+> 𝜇 =𝜇 )+𝜇 +
+> Top -k
+> Offline
+> Online
+> …
+> Two -pronged Negative
+> Table Sampling
+> Positive Table Pair
+> Construction
+> … 𝐓 !,
+> 𝐓 "
+> Adaptive
+> Candidate
+> Retrieval
+> 𝜇 +
+> (𝑇 !,𝑇 !,)
+> …
+> 𝒯
+> …
+> …
+> 𝐓 -𝐓 .𝐓 /𝐓 !
+> Table Embeddings
+> …
+> Apply 𝜀 )
+
+Figure 2: The Overview of TACTUS 
+
+these pursue objectives different from table union search, which aims to efficiently find accurate sets of unionable tables. Recently, large language models (LLMs) have shown great potential in data management [ 2 , 22 , 29 , 44 ]. For example, Liu et al . [44] proposed Magneto, a schema matching method that combines the strengths of small and large language models to achieve state-of-the-art per-formance. Kayali et al . [29] applied LLMs to data discovery and exploration, demonstrating a promising direction toward unifying various tasks under foundation models. These developments also motivate us to explore LLMs for table union search in future work. 
+
+## 3 SOLUTION OVERVIEW 
+
+Here we present a high-level overview of our method in Figure 2, while detailed designs are elaborated in subsequent sections. In the offline stage, given a data lake T , we generate a table em-bedding T𝑖 for each table 𝑇 𝑖 ∈ T . Since ground-truth unionability labels are unavailable, we design methods to construct positive and negative table pairs for each table 𝑇 𝑖 in Section 4.1. Specifically, we first construct a positive table 𝑇 + 
+
+> 𝑖
+
+for 𝑇 𝑖 by jointly sampling rows and columns, ensuring that 𝑇 𝑖 and 𝑇 + 
+
+> 𝑖
+
+share similar semantics while also containing distinct content, thereby closely simulating real-world unionable scenarios. Next, we apply two-pronged negative table sampling : we exclude tables that are likely unionable with 𝑇 𝑖 
+
+(i.e., latent positives), and mine hard negative tables N (𝑖 ) 
+
+> hard
+
+for 𝑇 𝑖 that are challenging to distinguish from true positives. This approach enhances the quality of table embeddings for unionability estima-tion. Next, we develop an attentive table encoder in Section 4.2 that generates table embeddings using dedicated serialization and multi-head attention aggregation. The table encoder E𝑇 is trained to pull positive table pairs (𝑇 𝑖 ,𝑇 + 
+
+> 𝑖
+
+) closer and push negative tables of 𝑇 𝑖 
+
+further apart. Applying the trained table encoder E𝑇 to all tables in T yields their table embeddings I = {T𝑖 | 𝑇 𝑖 ∈ T } . Our table embeddings are designed to capture table-level unionability seman-tics, so their similarity directly serves as the table-level unionability score 𝜇 𝑇 (𝑇 𝑖 ,𝑇 𝑗 ) between tables 𝑇 𝑖 and 𝑇 𝑗 .In the online stage, given a query table 𝑇 𝑞 , we first apply table-centric adaptive candidate retrieval (Section 5.1), which uses the table-level unionability score 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) from table embeddings to efficiently identify promising candidate tables. Specifically, we per-form a single nearest neighbor search over the indexed table em-beddings I using the query table embedding T𝑞 to retrieve initial candidates, and then adaptively select a concise candidate pool S
+
+based on the distribution of table-level unionability scores, typi-cally yielding a small, high-quality set with size close to 𝑘 . Over the candidate set S, we further refine the ranking by integrating both table-level and column-level semantics. Specifically, we em-ploy a dual-evidence reranking method (Section 5.2) that combines the table-level unionability score 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) and a column align-ment score 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 ) to compute the final table unionability score 
+
+𝜇 (𝑇 𝑞 ,𝑇 𝑖 ). The column alignment score 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 ) uses column em-beddings computed offline via FastText encoding on basic features as described in Section 5.2. We then return the top-𝑘 tables with the highest 𝜇 (𝑇 𝑞 ,𝑇 𝑖 ) from S as the result. 
+
+## 4 TABLE-CENTRIC OFFLINE PROCESSING 
+
+We aim to produce a table embedding T𝑖 for each table 𝑇 𝑖 in the data lake T , such that unionable tables are close in the embedding space while non-unionable tables are well separated. A straightforward approach is to aggregate column embeddings from existing methods [ 18 , 53 ] to form a table embedding T𝑖 . How-ever, as shown in Table 3 of the experiments, this is suboptimal: column embeddings are trained for column-level unionability, and simple aggregation is insufficient to capture holistic table seman-tics. Thus, we propose a direct table-level representation method to produce table embeddings that reflect table-level unionability. 
+
+## 4.1 Table-Level Unionability Modeling 
+
+Given two tables, 𝑇 𝑖 and 𝑇 𝑗 , if they are unionable, their embeddings 
+
+T𝑖 and T𝑗 should be close in the embedding space; otherwise, they should be far apart. However, in the unsupervised problem setting, ground-truth table unionability labels are unavailable for train-ing table embeddings. Contrastive learning [ 11 ] is a widely used technique for learning data representations without supervision. Applying contrastive learning requires the following components: (i) constructing positive pairs of similar instances, (ii) sampling neg-ative instances that are dissimilar, and (iii) designing an encoder to map instances to embeddings, together with a suitable contrastive loss to train over positive and negative samples. While contrastive learning is a general framework, the key dif-ferences between methods hinge on how they implement the com-ponents. These design choices are critical for the quality of the resulting representations. Starmie [18 ] pioneers this direction for table union search by applying contrastive learning at the column 
+
+level: constructing positive and negative column pairs, and per-forming column encoding to preserve column unionability via a column-pair-based contrastive loss. In contrast, our approach differs in all components by designing techniques at the table level. Specifically, we introduce: (i) a positive table pair construction technique to simulate table unionability in the absence of labels; (ii) a two-pronged negative table sampling strategy that excludes latent positives and mines hard negatives that are challenging to distinguish from positives, enabling the table embeddings to better capture unionability patterns; and (iii) an attentive table encoder with dedicated serialization and multi-head attention aggregation in Section 4.2, trained with a table-level contrastive loss on table pairs. 
+
+Positive Table Pair Construction. Given a training batch B of 
+
+𝑁 tables, we construct a positive table 𝑇 + 
+
+> 𝑖
+
+for each table 𝑇 𝑖 in B,
+
+> 4
+
+forming a positive table pair (𝑇 𝑖 ,𝑇 + 
+
+> 𝑖
+
+). Prior work [ 18 , 53 ] constructs positive column pair and explores various sampling strategies at the cell, column, and row levels for different datasets. Instead, we construct positive table pairs as follows. (1) For each table 𝑇 𝑖 , we randomly select a proportion of rows and a proportion of columns to retain, and sample these to obtain 𝑇 + 
+
+> 𝑖
+
+. The sampled rows are shuffled to increase the diversity of the positive table while preserving semantic consistency. (2) Note that 𝑇 + 
+
+> 𝑖
+
+is a subset of the original table 𝑇 𝑖 , i.e., every value in 𝑇 + 
+
+> 𝑖
+
+appears in 𝑇 𝑖 . However, real unionable tables often contain not only overlapping but also dis-tinct values. To better simulate this, we also apply row sampling to the original table 𝑇 𝑖 , so that 𝑇 𝑖 and 𝑇 + 
+
+> 𝑖
+
+have distinct content. This approach simulates real-world scenarios where unionable tables exhibit variations in both rows and columns while preserving over-all semantics. For notational simplicity, we continue to use 𝑇 𝑖 to denote this row-sampled version hereafter. Given a batch B of 𝑁 tables, we construct 𝑁 positive pairs 
+
+(𝑇 𝑖 ,𝑇 + 
+
+> 𝑖
+
+), resulting in 2𝑁 tables: the row-sampled originals B and their corresponding positives B+ = {𝑇 + 
+
+> 𝑖
+
+}𝑁 𝑖 =1. Together, these form the augmented batch B𝑎 = B ∪ B +. Hereafter, for any table 𝑇 𝑖 ∈ B 𝑎 
+
+where 𝑖 = 1, . . . , 2𝑁 , we denote its positive table as 𝑇 + 
+
+> 𝑖
+
+∈ B 𝑎 .
+
+Two-pronged Negative Table Sampling. For each table 𝑇 𝑖 in batch B𝑎 , we need to identify its negative table samples, i.e., tables that are likely non-unionable with 𝑇 𝑖 .A naive approach is to treat all tables in B𝑎 \{ 𝑇 𝑖 ,𝑇 + 
+
+> 𝑖
+
+} as negatives. However, this has two issues. First, it may include false negatives: some tables in B𝑎 \ { 𝑇 𝑖 ,𝑇 + 
+
+> 𝑖
+
+} may actually be unionable with 𝑇 𝑖 (i.e., latent positives), which is unknown a priori. Penalizing these as neg-ative tables during training degrades representation quality. Second, some tables in B𝑎 \ { 𝑇 𝑖 ,𝑇 + 
+
+> 𝑖
+
+} may be easy negatives that are clearly non-unionable with 𝑇 𝑖 , offering little learning signal and wasting computation. Including such easy negatives can dilute the effect of informative samples, so training should focus on hard negatives that are more challenging to distinguish from positives [44, 54]. We thus propose a two-pronged negative table sampling tech-nique: (i) exclude latent positives—tables with a high likelihood of being unionable with the query table, and (ii) select hard neg-atives—remaining tables that are difficult to distinguish from the query table. Both steps are performed dynamically per batch using the current table embeddings. First, for latent positive exclusion, within each training batch B𝑎 ,we use the current table embeddings to identify and exclude tables that are likely unionable with 𝑇 𝑖 from its negative set. Specifically, for tables 𝑇 𝑖 and 𝑇 𝑗 in B𝑎 , their table embeddings T𝑖 and T𝑗 are designed such that their cosine similarity reflects their table-level unionability score 𝜇 𝑇 (𝑇 𝑖 ,𝑇 𝑗 ), as will be detailed in Equation (3). If 
+
+𝜇 𝑇 (𝑇 𝑖 ,𝑇 𝑗 ) exceeds a threshold, we treat 𝑇 𝑗 as a latent positive of 
+
+𝑇 𝑖 in batch B𝑎 . For a table 𝑇 𝑖 in B𝑎 , its latent positive set P (𝑖 )
+
+> latent
+
+consists of tables 𝑇 𝑗 (excluding 𝑇 𝑖 and its predefined positive 𝑇 + 
+
+> 𝑖
+
+)with score 𝜇 𝑇 to 𝑇 𝑖 exceeds a threshold 𝛾 , set to 0.9, in Equation (1): 
+
+P (𝑖 ) 
+
+> latent
+
+=  𝑇 𝑗 ∈ B 𝑎 𝑇 𝑗 ≠ 𝑇 𝑖 , 𝑇 𝑗 ≠ 𝑇 + 
+
+> 𝑖
+
+, 𝜇 𝑇 (𝑇 𝑖 ,𝑇 𝑗 ) > 𝛾 . (1) We exclude these latent positives in P (𝑖 ) 
+
+> latent
+
+from being selected as negative samples for table 𝑇 𝑖 in batch B𝑎 , resulting in the remaining negative candidates N (𝑖 ) 
+
+> rem
+
+for 𝑇 𝑖 , in Equation (2) below. 𝐓 𝑖     
+
+> 𝐓 𝑗 1
+> 𝐓 𝑗 2
+> Latent Positive
+> Easy Negative 𝐓 𝑗 2
+> Hard Negative
+> Table Embedding Space
+> 𝐓 𝑗 3
+> 𝐓 𝑖
+> 𝐓 1
+> 𝐓 4Latent Positive
+> Easy Negatives
+> 𝐓 2
+> Hard Negatives
+> Table Embedding Space
+> 𝐓 3
+> 𝐓 5
+
+Figure 3: Illustration of Two-pronged Negative Sampling 
+
+Second, for hard negative table sampling, we aim to identify the most informative negative tables N (𝑖 ) 
+
+> hard
+
+for 𝑇 𝑖 from N (𝑖 )
+
+> rem
+
+, as shown in the second line of Equation (2). Intuitively, tables that are relatively similar to 𝑇 𝑖 but not unionable are harder to distinguish and thus provide stronger training signals. Specifically, we rank tables in N (𝑖 ) 
+
+> rem
+
+by their score 𝜇 𝑇 (𝑇 𝑖 ,𝑇 𝑗 ), and retain the top half as hard negatives N (𝑖 )
+
+> hard
+
+. Since latent positives with high scores have already been excluded from N (𝑖 )
+
+> rem
+
+, it is reasonable to treat the remaining tables with relatively high scores as hard negatives. The lower half of tables in N (𝑖 ) 
+
+> rem
+
+with low scores are considered easy negatives and are thus excluded from training T𝑖 in the batch. 
+
+N (𝑖 ) 
+
+> rem
+
+= B𝑎 \  P (𝑖 ) 
+
+> latent
+
+∪ { 𝑇 𝑖 ,𝑇 + 
+
+> 𝑖
+
+},
+
+N (𝑖 ) 
+
+> hard
+
+= arg top- | N (𝑖 )    
+
+> rem |
+> 2
+> 𝑇 𝑗 ∈ N (𝑖 )
+> rem
+
+n
+
+𝜇 𝑇 (𝑇 𝑖 ,𝑇 𝑗 )
+
+o
+
+, (2) where arg top- |N (𝑖 ) 
+
+> rem
+
+|/ 2 returns the |N (𝑖 ) 
+
+> rem
+
+|/ 2 elements of N (𝑖 )
+
+> rem
+
+.As illustrated in Figure 3, the embedding space can be concep-tually divided into three regions: the innermost region near 𝑇 𝑖 
+
+contains latent positives (e.g., 𝑇 1), which are excluded from nega-tive sampling due to their high likelihood of being unionable with 
+
+𝑇 𝑖 ; the outermost region far from 𝑇 𝑖 contains easy negatives (e.g., 
+
+𝑇 4 and 𝑇 5), which are clearly non-unionable and thus provide little training signal; the middle region contains hard negatives (e.g., 𝑇 2
+
+and 𝑇 3), which are non-unionable but similar to 𝑇 𝑖 , making them challenging and informative for training. These hard negatives are retained, i.e., N (𝑖 ) 
+
+> hard
+
+= {𝑇 2,𝑇 3 }.By employing two-pronged negative sampling, each table 𝑇 𝑖 in 
+
+B𝑎 is with a negative set N (𝑖 ) 
+
+> hard
+
+whose size may vary. This allows to focus training on the informative negatives, thereby enhancing the effectiveness of the table embeddings for unionability estimation. 
+
+Training Objective. Our objective adopts cosine similarity between table embeddings to quantify table-level unionability 
+
+𝜇 𝑇 (𝑇 𝑖 ,𝑇 𝑗 ). For table 𝑇 𝑖 with its positive table 𝑇 + 
+
+> 𝑖
+
+and hard negatives 
+
+N (𝑖 )
+
+> hard
+
+, we use the InfoNCE loss for the pair (𝑇 𝑖 ,𝑇 + 
+
+> 𝑖
+
+) in Equation (3), where 𝜏 is a temperature parameter typically set to 0.07 [18, 53]: 
+
+ℓ (𝑇 𝑖 ,𝑇 + 
+
+> 𝑖
+
+) = − log exp  𝜇 𝑇 (𝑇 𝑖 ,𝑇 + 
+
+> 𝑖
+
+)/ 𝜏 Í   
+
+> 𝑇 𝑗 ∈ N (𝑖 )
+> hard
+
+exp  𝜇 𝑇 (𝑇 𝑖 ,𝑇 𝑗 )/ 𝜏  , (3) Then the batch loss is computed by averaging the single-pair loss over all 2𝑁 tables in B𝑎 . Minimizing this loss encourages each 
+
+T𝑖 to be close to its positive table T+ 
+
+> 𝑖
+
+, while simultaneously pushing 
+
+T𝑖 away from its hard negatives in N (𝑖 )
+
+> hard
+
+.
+
+L = 12𝑁 
+
+> 2𝑁
+
+∑︁ 
+
+> 𝑖 =1
+
+ℓ (𝑇 𝑖 ,𝑇 + 
+
+> 𝑖
+
+). (4) 
+
+> 5
+
+## 4.2 Attentive Table Encoding 
+
+We develop a table encoder E𝑇 that generates table embeddings T𝑖 
+
+for tables 𝑇 𝑖 . Recent work on various tasks [ 6 , 13 , 16 , 46 , 58 ] lever-ages PLMs to serialize a table into a text sequence to obtain contex-tualized token embeddings. We are not reinventing this pipeline. Instead, we focus on designing techniques to adapt and enhance the serialization and encoding steps to support our table-level union-ability representation modeling in Section 4.1. 
+
+Serialization. Given a table 𝑇 𝑖 , we serialize it into a token sequence suitable for input to a PLM such as BERT [ 14 ]. A straightforward way is to concatenate all cell values within each column and join columns using special delimiter tokens (e.g., [CLS] ). However, due to the token budget limit of PLMs, this approach does not priori-tize informative tokens and may allocate budget to less relevant content [16, 44]. Existing table union search methods [ 18 , 53 ] use various heuris-tics to rank and sample cell values for serialization: Starmie applies TF-IDF or alphabetical selection, while LIFTus ranks values by string length. In contrast, we adopt priority sampling [ 12 ], which has proven effective in schema matching [ 44 ], to select informative tokens for serialization. Priority sampling favors values with higher weights while introducing controlled randomness. In our approach, word frequency (TF) serves as the weight, which we find effective. Specifically, for each column 𝑐 𝑗 in table 𝑇 𝑖 , we tokenize and compute the frequency of each unique value 𝑤 in the column as TF( 𝑤 ). The weight of 𝑤 in 𝑐 𝑗 is then calculated as TF (𝑤 )/ ℎ(𝑤 ), where ℎ(𝑤 )
+
+is a random function in [0.8, 1]. All unique values in each column 
+
+𝑐 𝑗 are then ranked by their weights in descending order. For all columns in 𝑇 𝑖 , we select the top-ranked values for serialization until the token limit is reached. 
+
+Attentive Table Encoder. Given a table 𝑇 𝑖 with 𝑚 columns, let 
+
+Seq 𝑖 = [CLS] 𝑤 11𝑤 21 . . . [CLS] 𝑤 1
+
+> 𝑚
+
+𝑤 2 
+
+> 𝑚
+
+. . . denote its token sequence, where 𝑤 𝑖 𝑗 is the 𝑖 -th ranked token in column 𝑐 𝑗 . This sequence is fed into BERT, which uses Transformer layers with self-attention [ 61 ]to obtain contextualized embeddings. The special delimiter token 
+
+[CLS] marks the start of each column, and the hidden state at each [CLS] position in the final layer of the PLM is used as the embedding c𝑗 for column 𝑐 𝑗 , capturing its semantics in the context of the entire table. This yields 𝑚 column embeddings {c𝑗 }𝑚 𝑗 =1 for table 𝑇 𝑖 .Unlike existing methods that use column embeddings directly for column-centric table union search, we require a unified table embedding T𝑖 that captures the overall unionability of 𝑇 𝑖 as modeled in Section 4.1. To achieve this, we integrate the embeddings c𝑗 of table 𝑇 𝑖 into an intermediate embedding vector z𝑖 using a multi-head attention mechanism [ 61 ], as shown in Equation (5). We then refine z𝑖 via a multilayer perceptron (MLP) projection to obtain the final table embedding T𝑖 for table 𝑇 𝑖 , as in Equation (6). The MLP consists of two linear layers with a ReLU activation function [ 21 ]between the layers. Figure 4 illustrates the attentive table encoder with the dedicated serialization and aggregation steps as designed above. 
+
+z𝑖 = MultiHeadAtt ({ c𝑗 }𝑚 𝑗 =1; 𝑄, 𝐾, 𝑉 ), (5) 
+
+T𝑖 = MLP (z𝑖 ), (6) where 𝑄 is a learnable parameter, and 𝐾, 𝑉 are {c𝑗 }𝑚 𝑗 =1.                                                                        
+
+> Algorithm 1: TACTUS Training
+> Input: A data lake T
+> Output: Trained table encoder E𝑇
+> 1for ep =1to 𝑛 epoch do
+> 2Randomly partition Tinto batches
+> 3foreach batch Bdo
+> 4B𝑎 ← ∅ // Augmented batch
+> 5foreach 𝑇 𝑖 ∈ B do
+> 6Construct positive table pair (𝑇 𝑖 ,𝑇 +
+> 𝑖 )by Section 4.1
+> 7B𝑎 ← B 𝑎 ∪ { 𝑇 𝑖 ,𝑇 +
+> 𝑖 }
+> 8foreach 𝑇 𝑖 ∈ B 𝑎 do
+> 9T𝑖 ← E 𝑇 (𝑇 𝑖 )// Table embedding (Section 4.2) // Two-pronged negative sampling
+> 10 Get N(𝑖 )
+> hard of 𝑇 𝑖 by Equations (1) and (2)
+> 11 Get batch loss Lby Equations (3) and (4)
+> 12 E𝑇 ←back-propagate ( E 𝑇 ,L)
+> 13 return E𝑇 MultiHeadAtt
+> 𝒄 𝟏 𝒄 𝟐 𝒄 𝟑
+> Tom CA 12
+> Amy NY 27
+> [CLS]
+> Tom
+> Amy
+> [CLS]
+> CA
+> NY
+> [CLS]
+> 12
+> 27
+> 𝒄 𝟏
+> MLP
+> 𝐓 𝑖 PLM 𝒄 𝟐
+> 𝒄 𝟑
+> 𝑇 𝑖
+> serialization
+
+Figure 4: Illustration of the Attentive Table Encoder 
+
+## 4.3 Training Procedure 
+
+Algorithm 1 outlines the training procedure. Given a data lake T of tables, each epoch begins by randomly partitioning T into batches (Lines 1-2). For each batch B, we construct its augmented batch B𝑎 
+
+by generating a positive table pair (𝑇 𝑖 ,𝑇 + 
+
+> 𝑖
+
+) for each table 𝑇 𝑖 in B
+
+using the positive table pair construction described in Section 4.1, and include both 𝑇 𝑖 and 𝑇 + 
+
+> 𝑖
+
+in B𝑎 (Lines 3-7). Then, for each table 
+
+𝑇 𝑖 in B𝑎 , we obtain its table embedding T𝑖 using the attentive table encoder E𝑇 described in Section 4.2 (Lines 8–9). Next, we perform two-pronged negative table sampling in Equations (1) and (2) to obtain the hard negative set N (𝑖 ) 
+
+> hard
+
+for each 𝑇 𝑖 ∈ B 𝑎 (Line 10). Notably, the two-pronged negative table sampling (Line 10) is performed within each batch B𝑎 in the for loop at Line 8, using only the current table embeddings computed in this batch (Line 9). This ensures that only information available within the current batch is used, thereby avoiding any information leakage or circular dependencies. The loss L is then computed at Line 11, and the model is updated via back-propagation with the Adam optimizer (Line 12). Finally, the trained table encoder E𝑇 is returned (Line 13). After training, we use the trained table encoder E𝑇 to compute the table embedding T𝑖 = E𝑇 (𝑇 𝑖 ) for each table 𝑇 𝑖 in the data lake 
+
+T , resulting in the set of table embeddings I = {T𝑖 | 𝑇 𝑖 ∈ T } .Each table embedding is a multi-dimensional vector, and the sim-ilarity between two table embeddings quantifies the unionability of their corresponding tables. Notably, the number of table embed-dings equals the number of tables in T , whereas existing methods generate column embeddings for all columns in the lake. For efficient approximate nearest neighbor search over embed-dings, various vector indexing methods are available [ 39 , 50 , 63 ]. Prior work [ 18 , 53 ] uses HNSW [ 45 ] for column embeddings. The 
+
+> 6
+
+choice of index is orthogonal to table union search. For fair com-parison, we use the same index, but index our table embeddings. 
+
+## 5 TACTUS ONLINE SEARCH 
+
+Given a large data lake T , searching for unionable tables with a query table 𝑇 𝑞 is computationally expensive if the entire lake is exhaustively inspected to obtain the top-𝑘 results. A common approach is the filter-and-refine paradigm. Existing methods [ 18 , 53 ] follow a column-centric strategy: they filter candi-date tables by column-level unionability scores to any column in 𝑇 𝑞 ,then refine by aggregating scores of highly-matched columns for top-𝑘 selection. In the filtering stage, since a query table 𝑇 𝑞 often has multiple columns, and each column may match columns from many tables, prior work retrieves a large candidate set. During refinement, they aggregate column unionability scores of highly-matched columns, overlooking the holistic table-level semantics across all columns. We argue that both the semantics of entire tables and individual columns are essential for accurate table union search. Therefore, we design our search process in a table-centric manner: only when a table is sufficiently promising at the table level is it worthwhile to examine its columns in detail with the query 𝑇 𝑞 . Algorithm 2 outlines the online search process of our method TACTUS .First, we propose a table-centric adaptive candidate retrieval method (Section 5.1) that leverages the table embeddings from Sec-tion 4.3 to efficiently filter out irrelevant tables and obtain a compact, controllable candidate pool S of likely unionable tables based on their table-level unionability scores 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) to the query 𝑇 𝑞 . Since this process operates on table embeddings—one per table—it en-ables flexible adjustment of the candidate pool size according to the distribution of 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) scores, rather than being constrained by the number of columns in 𝑇 𝑞 as in existing methods. Our approach is distribution-aware: it adaptively determines the candidate pool size based on the observed unionability score distribution for the query, resulting in a concise yet high-coverage candidate set. Then, over the compact candidate pool S, we perform a final dual-evidence reranking step (Section 5.2) that combines the table-level unionability score 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) from table embeddings with a lightweight column alignment score 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 ) to compute the final unionability score 𝜇 (𝑇 𝑞 ,𝑇 𝑖 ) for each candidate. This approach effec-tively integrates table-level and column-level semantics to refine the top-𝑘 results. 
+
+## 5.1 Table-Centric Adaptive Candidate Retrieval 
+
+Given the table embeddings I = {T𝑖 | 𝑇 𝑖 ∈ T } from Section 4, we can efficiently compute the table-level unionability score 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 )
+
+for each 𝑇 𝑖 and retrieve the top-ranked candidates. However, a fixed-size candidate pool is suboptimal: if too large, it includes many irrelevant tables; if too small, it may miss union-able ones. Moreover, the effective pool size varies by query, as the number of promising unionable tables differs across queries. Thus, candidate retrieval should adaptively adjust the pool size based on the unionability score distribution for each query. Hence, we propose a table-centric adaptive candidate retrieval method that constructs a high-quality candidate pool S for a query                                                                                                       
+
+> Algorithm 2: TACTUS Search Process
+> Input: Query table 𝑇 𝑞 , table embeddings I, absolute threshold 𝜏 abs ,drop threshold 𝜏 drop , result size 𝑘
+> Output: Top-𝑘 result T𝑞
+> // Table-Centric Adaptive Candidate Retrieval. (Section 5.1)
+> 1T𝑞 ← E 𝑇 (𝑇 𝑞 )
+> 2Sinit ←Get the top-3𝑘 tables for 𝑇 𝑞 by nearest neighbor search on table embeddings I={T𝑖 |𝑇 𝑖 ∈ T } , ranked in descending order of 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 )
+> 3𝑖 cut ←𝑘
+> 4for 𝑖 ←𝑘 +1to 3𝑘 do
+> 5if 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 )<𝜏 abs or 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 −1) − 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 )>𝜏 drop then
+> 6𝑖 cut ←𝑖 −1
+> 7break
+> 8S ← S init [:𝑖 cut ]
+> // Dual-Evidence Reranking (Section 5.2)
+> 9foreach candidate table 𝑇 𝑖 ∈ S do
+> 10 Compute 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 )by Equation (8)
+> 11 𝜇 (𝑇 𝑞 ,𝑇 𝑖 ) ← 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) + 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 )
+> 12 Sort Sby 𝜇 (𝑇 𝑞 ,𝑇 𝑖 )in descending order
+> 13 T𝑞 ← S [ :𝑘 ]
+> 14 return T𝑞
+
+table 𝑇 𝑞 , with the pool size adaptively determined by the distribution of table-level unionability scores 𝜇 𝑇 .In Algorithm 2, Lines 1–8 detail the construction of S. Given a query table 𝑇 𝑞 , we first compute its table embedding T𝑞 (Line 1), and then perform a single nearest-neighbor search over the indexed table embeddings I to retrieve an initial set Sinit containing the top-
+
+3𝑘 tables with the highest table-level unionability scores 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 )
+
+(Line 2). Sinit serves as the initial pool from which we adaptively determine the candidate pool S. Empirically, we set |S init | = 3𝑘 ,which is sufficiently large to cover potentially unionable tables. This is because our table embeddings, as designed in Section 4, effectively encode union-oriented semantics, so the identified top-
+
+3𝑘 tables are very likely to cover all truly unionable tables, while those beyond this range are typically irrelevant and not worth further consideration. Experiments in Figure 8 show that varying 
+
+|S init | beyond 3𝑘 yields negligible gains. Moreover, this step is efficient and accounts for only a negligible fraction of query time. Lines 3-8 adaptively determine the candidate pool S by scanning the ranked list Sinit and selecting a cutoff position 𝑖 cut based on the distribution of table-level unionability scores 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ). This cutoff separates likely unionable tables from less relevant ones. We set the initial cutoff 𝑖 cut to 𝑘 to ensure at least 𝑘 candidates. Intuitively, if 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) drops sharply or falls below a threshold, this marks a natural boundary in the score distribution, beyond which tables are unlikely to be unionable. To determine the cutoff position, we scan the tables in Sinit in descending order of 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ). The scan stops when either of the following conditions is met: (1) the score 
+
+𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) of the current table drops below an absolute threshold 
+
+𝜏 abs , or (2) the difference in scores between two consecutive tables exceeds a threshold 𝜏 drop . We then set the cutoff position 𝑖 cut to the previous table’s position (Lines 4–7). The threshold 𝜏 abs specifies the minimum unionability score required for a table to be considered 
+
+> 7
+
+as a candidate, while 𝜏 drop identifies a significant drop in the score distribution, which separates unionable tables from less relevant ones. In Section 6, we use the same threshold settings for all datasets in our experiments and also vary them to assess their impact and provide practical guidance. Then, the candidate pool S consists of the top tables in Sinit up to the cutoff 𝑖 cut (Line 8). 
+
+Discussion. (i) Our candidate retrieval operates solely on table embeddings—one vector per table—so the candidate pool size is di-rectly controllable and does not depend on the number of columns in the query table, in contrast to existing column-centric meth-ods. (ii) It is possible to directly return the top-𝑘 tables ranked by 
+
+𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) (i.e., by retrieving the top-𝑘 in Line 2 of Algorithm 2) as the final result, without further refinement. As shown in our abla-tion study in Table 5, this approach already outperforms existing methods, highlighting the effectiveness of the table embeddings developed in Section 4. 
+
+## 5.2 Dual-Evidence Reranking 
+
+Nevertheless, it is well established that column-level semantics are also crucial for accurate table union search. Thus, we incor-porate column-level information only in this final step, using a dual-evidence reranking approach that combines table-level union-ability and column alignment over the candidate pool S.Specifically, the dual-evidence reranking computes the final ta-ble unionability score 𝜇 (𝑇 𝑞 ,𝑇 𝑖 ) for each candidate table 𝑇 𝑖 ∈ S by integrating two complementary signals: (i) the table-level union-ability score 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) derived from table embeddings, and (ii) a column alignment score 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 ) that captures fine-grained col-umn compatibility between 𝑇 𝑞 and 𝑇 𝑖 , as described below. For each table 𝑇 , we precompute and store the FastText embeddings [ 28 ] of its columns 𝑐 𝑗 during the offline stage. FastText generates word em-beddings by representing each word as a bag of character n-grams and aggregating the corresponding n-gram embeddings, efficiently capturing subword information. FastText can be used off-the-shelf without additional training and is computationally efficient and providing effective performance for our purposes. While other models such as BERT could also be employed, as shown in Table 7 of experiments, FastText achieves strong performance with greater efficiency in our method. For each unique value 𝑣 in the value set V𝑗 of column 𝑐 𝑗 , we obtain its FastText embedding FT (𝑣 ). We then compute the FastText-based column embedding e𝑗 for 𝑐 𝑗 by aggregating these value em-beddings, weighted by the frequency 𝑓 (𝑣 ) of 𝑣 in the column: 
+
+e𝑗 =
+
+Í𝑣 ∈ V 𝑗 𝑓 (𝑣 ) · FT (𝑣 )
+
+Í𝑣 ∈ V 𝑗 𝑓 (𝑣 ) (7) During online search, we first compute the FastText-based col-umn embedding e𝑟 for each column 𝑐 𝑟 of the query table 𝑇 𝑞 using Equation (7). For each candidate table 𝑇 𝑖 in the pool S, we compute the column alignment score 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 ) as defined in Equation (8), by aligning each query column 𝑐 𝑟 to its most similar column in 𝑇 𝑖 :
+
+𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 ) = 1
+
+|𝑇 𝑞 |∑︁ 𝑐 𝑟 ∈𝑇 𝑞 
+
+max   
+
+> 𝑐 𝑗 ∈𝑇 𝑖
+
+𝜙 (e𝑟 , e𝑗 ), (8) where 𝜙 (· , ·) denotes cosine similarity, and |𝑇 𝑞 | is the number of columns in 𝑇 𝑞 .
+
+Table 1: Dataset Statistics                             
+
+> Benchmark # Tables # Cols Avg # Cols Avg # Rows SANTOS Small 550 6,322 11.49 6,921 TUS Small 1,530 14,810 9.68 4,466 TUS Large 5,043 54,923 10.89 1,915 Wiki Union 40,752 106,744 2.62 51 SANTOS Large 11,090 123,477 11.13 7,675 WDC 1,000,000 5,438,291 5.44 14.27
+
+Our final table unionability score 𝜇 (𝑇 𝑞 ,𝑇 𝑖 ) is defined as the sum of the table-level unionability score 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) and the column align-ment score 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 ), as shown in Equation (9). Note that both 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) and 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 ) are in the range [0, 1] and exhibit similar means and standard deviations within each dataset in the experiments. For example, on the Wiki Union dataset, the mean (std) of 𝜇 𝑇 is 0.780 (0.125 ), while that of 𝜇 𝐴 is 0.795 (0.155 ). Therefore, we simply sum them to obtain the final score. This parameter-free approach already achieves strong performance in our experiments. More sophisticated combinations, such as a weighted sum with a tunable hyperparameter, could be explored in the future. 
+
+𝜇 (𝑇 𝑞 ,𝑇 𝑖 ) = 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) + 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 ). (9) As shown in Lines 9–14 of Algorithm 2, for each candidate table 
+
+𝑇 𝑖 in S, we compute its column alignment score 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 ) using Equation (8), and then combine it with 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) to obtain the final table unionability score 𝜇 (𝑇 𝑞 ,𝑇 𝑖 ). The candidates are then reranked by this score at Line 12, and the top-𝑘 tables are returned as the final result T𝑞 at Line 14. This dual-evidence reranking incorporates the column alignment score 𝜇 𝐴 (𝑇 𝑞 ,𝑇 𝑖 ) as a complementary signal to the table-level unionability score 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ), and is applied only to the candidate tables in S, thereby further improving result quality. 
+
+## 6 EXPERIMENTS 
+
+We conduct extensive experiments using widely-adopted bench-mark datasets to evaluate the effectiveness and efficiency of our proposed method TACTUS with state-of-the-art baselines. 
+
+## 6.1 Experiment Setup 
+
+Datasets. We use six benchmark datasets adopted in [ 18 , 30 , 53 ], with their statistics summarized in Table 1. The first four datasets provide ground truth for unionable tables and are used to evaluate both effectiveness and efficiency, while the last two datasets lack ground truth and are used only for online efficiency evaluation, following [18, 53]. The SANTOS Small benchmark [30] comprises 550 real tables from open datasets in Canada, the UK, the US, and Australia, with 50 query tables. The TUS Small and TUS Large benchmarks [ 49 ] contain 1,530 and 5,043 tables, respectively, gen-erated from Canadian open data. We randomly select 150 and 100 query tables for TUS Small and TUS Large, respectively [ 18 , 30 , 53 ]. The Wiki Union benchmark [ 57 ] is constructed from Wikidata [ 62 ]and contains 40,752 tables. Originally designed for supervised table unionability prediction [ 57 ], it provides ground-truth labels for unionable table pairs. To adapt this dataset for unsupervised table union search, we identify all unionable tables for each table based on ground truth and randomly select 100 tables, each with more than 40 unionable tables, as query tables. Following prior work [ 18 , 53 ], 
+
+> 8
+
+Table 2: MAP@k, P@k, and R@k results on all benchmarks with ground truth, where k=10 for SANTOS Small, k=60 for the TUS benchmarks and k=40 for Wiki Union. Avg. Rank in the last column represents, for each method, the average of its ranks among all methods across all metrics and datasets. The best is in bold, and the second best is underlined.                                                                                                          
+
+> Method SANTOS Small TUS Small TUS Large Wiki Union Avg. Rank 𝑀𝐴𝑃 @𝑘 𝑃 @𝑘 𝑅 @𝑘 𝑀𝐴𝑃 @𝑘 𝑃 @𝑘 𝑅 @𝑘 𝑀𝐴𝑃 @𝑘 𝑃 @𝑘 𝑅 @𝑘 𝑀𝐴𝑃 @𝑘 𝑃 @𝑘 𝑅 @𝑘
+> D3L0.5595 0.5100 0.4167 0.7916 0.7762 0.2147 0.5155 0.5102 0.1430 0.0905 0.0575 0.0684 6.42
+> Sherlock 0.8082 0.6860 0.5080 0.9592 0.9220 0.2886 0.7600 0.5897 0.1296 0.2960 0.2418 0.2017 5.25
+> SATO 0.8822 0.8280 0.6077 0.9462 0.9302 0.2928 0.8924 0.8228 0.1924 0.5263 0.4495 0.3701 3.83
+> SANTOS 0.9446 0.9160 0.6820 0.8892 0.8406 0.2708 ------5
+> Starmie 0.9644 0.9360 0.6926 0.9672 0.9342 0.3100 0.9113 0.8508 0.2199 0.4485 0.3930 0.3115 3LIFTus 0.9730 0.9600 0.7158 0.9709 0.9381 0.3112 0.9662 0.9357 0.2397 0.3438 0.2850 0.2331 2.5
+> TACTUS 0.9860 0.9720 0.7290 0.9936 0.9876 0.3299 0.9844 0.9728 0.2516 0.6537 0.6238 0.5066 1
+
+the SANTOS Large and WDC [ 35 ] datasets are used only for online efficiency evaluation, as they lack ground truth. SANTOS Large includes 80 randomly selected query tables [ 18 , 30 , 53 ], while WDC consists of one million tables randomly sampled from the WDC web tables corpus, with 50 randomly selected query tables. These six datasets vary in size, column and row counts, and table widths, providing a comprehensive evaluation of different methods. 
+
+Baselines. We compare TACTUS with state-of-the-art methods, including Starmie [18 ], LIFTus [ 53 ], SANTOS [30 ], D 3L [ 3], Sher-lock [25 ], and SATO [65 ]. D 3L was originally designed using features such as table content and column names; following [ 18 , 30 , 53 ], we configure it without access to column names for fair comparison. 
+
+Sherlock and SATO produce column representations; to enable table union search, we follow the evaluation protocol in [ 18 ], aligning their online query processing with that of Starmie since all three methods produce column embeddings. 
+
+Implementations. For all competitors, we use their publicly avail-able codebases. For fair comparison, we apply HNSW [ 45 ] to index the column embeddings produced by Starmie , SATO , LIFTus, and 
+
+Sherlock , and the table embeddings produced by our TACTUS . Base-lines are configured with the recommended parameter settings from their respective papers. We implement TACTUS in Python using PyTorch and the Transformers library [ 64 ], adopting BERT [ 14 ] as the pretrained language model. We evaluate with maximum input sequence lengths set to be 256 and 512 tokens for all language models, and unless otherwise specified, we use 256 tokens by default, following prior work [18]. Our method TACTUS uses the same parameter settings across all datasets, including 𝛾 = 0.9, 𝜏 abs = 0.5, and 𝜏 drop = 0.2, demonstrat-ing robust performance across datasets; we also analyze the impact of varying parameters. For each dataset, query tables are excluded 
+
+from all offline processing, including training, to ensure no data leakage. Since no ground-truth labels are used during training, data splitting is unnecessary. We use a batch size of 64. Experiments are conducted on a server with an Intel Xeon Platinum 8370C CPU at 2.80GHz and an NVIDIA RTX Ada 6000 GPU. 
+
+Evaluation Metrics. For effectiveness [ 18 , 30 , 53 ], we use Mean Av-erage Precision at 𝑘 (𝑀𝐴𝑃 @𝑘 ), Precision at 𝑘 (𝑃 @𝑘 ), and Recall at 𝑘 
+
+(𝑅 @𝑘 ) to evaluate. Given a query table 𝑇 𝑞 , let T𝑔𝑡 be its truly union-able tables and T𝑞 the set of returned top-𝑘 tables by a method. The metrics are defined as: 𝑃 @𝑘 = | T 𝑞 ∩T 𝑔𝑡 | 
+
+> 𝑘
+
+, 𝑅 @𝑘 = | T 𝑞 ∩T 𝑔𝑡 || T 𝑔𝑡 | , 𝑀𝐴𝑃 @𝑘 =
+
+> 1
+> 𝑘
+
+Í𝑘 𝑖 =1 𝑃 @𝑖 . 𝑃 @𝑘 measures the proportion of top-𝑘 returned tables that are truly unionable with 𝑇 𝑞 ; 𝑅 @𝑘 measures the proportion of all truly unionable tables included in the top-𝑘 ; and 𝑀𝐴𝑃 @𝑘 
+
+averages 𝑃 @𝑖 over 𝑖 = 1 to 𝑘 . We also report the average rank (Avg. Rank) of each method, computed as its average ranking across all metrics and datasets. For efficiency, we report offline processing time, online processing time, and embedding index size. Follow-ing [ 18 , 30 , 53 ], we set 𝑘 = 60 for TUS datasets, 𝑘 = 10 for SANTOS Small, SANTOS Large, and WDC, and 𝑘 = 40 for Wiki Union. 
+
+## 6.2 Effectiveness Evaluation 
+
+Table 2 reports the effectiveness results of TACTUS and the base-lines on the four datasets with ground truth. SANTOS is not re-ported on TUS Large and Wiki Union due to its reliance on addi-tional knowledge, which is unavailable for these datasets [18, 30]. Our method TACTUS consistently achieves the best performance across all datasets and metrics, with an average rank of 1.0. For example, on TUS Small, TACTUS attains 𝑀𝐴𝑃 @𝑘 of 99.36%, 𝑃 @𝑘 of 98.76%, and 𝑅 @𝑘 of 32.99%, outperforming the second-best method LIFTus by 2.27%, 4.95%, and 1.87%, respectively, and Starmie by 2.64%, 5.34%, and 1.99%, respectively. Similar trends hold for larger datasets, where TACTUS achieves the best results. For example, on TUS Large, TACTUS achieves 𝑃 @𝑘 of 97.28%, exceeding LIF-Tus by 3.71% and Starmie by 12.20%. These results confirm the effectiveness of our table-centric embedding techniques (Section 4) and search process (Section 5). The table embeddings learned by 
+
+TACTUS capture table-level unionability semantics, enabling the table-centric adaptive candidate retrieval in Section 5.1 to obtain high-quality candidates that are likely to be unionable with the query table. The dual-evidence reranking in Section 5.2 further re-fines these candidates by jointly leveraging table- and column-level evidence, leading to superior performance. On the Wiki Union dataset, all methods exhibit lower perfor-mance than on the other datasets, as tables in Wiki Union typically contain fewer columns and rows, providing limited contextual infor-mation for table union search. Nevertheless, TACTUS significantly outperforms all baselines, achieving 𝑀𝐴𝑃 @𝑘 of 65.37%, 𝑃 @𝑘 of 62.38%, and 𝑅 @𝑘 of 50.66%, which are 12.74%, 17.43%, and 13.65% higher than the runner-up SATO , respectively. Column-centric methods such as LIFTus and Starmie are less effective on Wiki Union because the limited context constrains the quality of the column embeddings and candidate retrieval. In contrast, TACTUS 
+
+leverages holistic table-level semantics to produce table embeddings                                                           
+
+> 9246810
+> k
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> P@K
+> (a) P@kon SANTOS Small
+> 10 20 30 40 50 60
+> k
+> 0.8
+> 0.9
+> 1.0
+> P@K
+> (b) P@kon TUS Small
+> 10 20 30 40 50 60
+> k
+> 0.8
+> 0.9
+> 1.0
+> P@K
+> (c) P@kon TUS Large
+> 816 24 32 40
+> k
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> P@K
+> (d) P@kon Wiki Union
+> 246810
+> k
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> R@k/Rub @k
+> (e) R@k/Rub @kon SANTOS Small
+> 10 20 30 40 50 60
+> k
+> 0.8
+> 0.9
+> 1.0
+> R@k/Rub @k (f) R@k/Rub @kon TUS Small
+> 10 20 30 40 50 60
+> k
+> 0.8
+> 0.9
+> 1.0
+> R@k/Rub @k (g) R@k/Rub @kon TUS Large
+> 816 24 32 40
+> k
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> R@k/Rub @k (h) R@k/Rub @kon Wiki Union
+> TACTUS LIFTus Starmie SANTOS SATO Sherlock D3L
+
+Figure 5: Precision 𝑃 @𝑘 and Relative Recall 𝑅 @𝑘 /𝑅 𝑢𝑏 @𝑘 with Varied 𝑘 
+
+as described in Section 4, which is more effective for large, sparse benchmarks like Wiki Union. Moreover, our table-centric adap-tive candidate retrieval and dual-evidence reranking techniques in Section 5 further enhance online search effectiveness, leading to substantial improvements over the baselines on Wiki Union. We further vary 𝑘 to evaluate precision and recall. Fig-ures 5(a,b,c,d) report precision 𝑃 @𝑘 as 𝑘 increases. Precision de-creases for all methods as 𝑘 grows; TACTUS consistently maintains a clear advantage across all settings, especially at larger 𝑘 . For exam-ple, in Figure 5(b) (TUS Small), at 𝑘 = 40 , TACTUS achieves 99.10% precision, which is 2.82% higher than LIFTus; on Wiki Union in Figure 5(d), at 𝑘 = 32 , TACTUS attains 66.53% precision, 19.07% higher than SATO (47.46%). For recall, note that when 𝑘 is smaller than the number of ground-truth unionable tables |T 𝑔𝑡 | for a query 𝑇 𝑞 , recall can-not reach 100%. The upper bound, i.e., the best possible recall, is 
+
+𝑅 𝑢𝑏 @𝑘 = min (𝑘, | T 𝑔𝑡 | ) | T 𝑔𝑡 | . For example, on TUS Large with 𝑘 = 60 ,
+
+𝑅 𝑢𝑏 @𝑘 is as low as 0.2581; for even smaller 𝑘 (e.g., 𝑘 = 10 ), 𝑅 𝑢𝑏 @𝑘 
+
+becomes much lower. This makes the 𝑅 @𝑘 curves of different meth-ods difficult to distinguish, as also observed in [ 18 , 53 ]. To better visualize recall trends, we therefore adopt a relative recall metric, 
+
+𝑅 @𝑘 /𝑅 𝑢𝑏 @𝑘 , which normalizes the achieved recall by the upper bound 𝑅 𝑢𝑏 @𝑘 . As shown in Figures 5(e,f,g,h), relative recall de-creases for all methods as 𝑘 increases, which matches the intuition that a larger 𝑘 makes it harder to retrieve all unionable tables. Across all 𝑘 , TACTUS achieves the highest relative recall, with the gap widening as 𝑘 grows. These results further validate the effec-tiveness of our table embedding techniques in Section 4 and the online search techniques in Section 5. 
+
+## 6.3 Efficiency Evaluation 
+
+The offline time includes data preprocessing, model training, em-bedding generation, and index construction. We report the offline processing time of TACTUS and the baselines on the four datasets with ground truth used in the effectiveness evaluation. Note that SANTOS Large and WDC do not require offline training and are only used for online efficiency evaluation. As shown in Figure 6 (log-scale), TACTUS is significantly faster than all baselines, including those with runner-up effectiveness in Table 2, often by more than an order of magnitude. For example, on SANTOS Small, TACTUS completes offline processing in only SANTOS Small TUS Small TUS Large Wiki Union 
+
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> Running Time (Logarithm)  s
+> TACTUS (ours)
+> LIFTus
+> Starmie
+> SATO
+> Sherlock
+> D3L
+> SANTOS
+
+Figure 6: Offline Processing Time in Seconds (The baseline with runner-up effectiveness in Table 2 is marked with ★)SANTOS Small SANTOS Large TUS Small TUS Large Wiki Union WDC 
+
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> Running Time (Logarithm)  s
+> TACTUS (ours)
+> LIFTus
+> Starmie
+> SATO
+> Sherlock
+> D3L
+> SANTOS
+
+Figure 7: Online Processing Time in Seconds (The baseline with runner-up effectiveness in Table 2 is marked with ★)
+
+66 seconds, which is 12 .8× faster than LIFTus (842 seconds) and 
+
+12 .3× faster than Starmie (811 seconds), the two strong baselines in Table 2. On Wiki Union, TACTUS finishes offline processing in 610 seconds, which is 11 .8× faster than SATO (7217 seconds), the baseline with the second-best effectiveness in Table 2; while Starmie 
+
+is relatively efficient on Wiki Union, its effectiveness in Table 2 is lower. In addition, Starmie is more efficient than LIFTus due to the latter’s additional multi-aspect computation per column. Among the baselines, Sherlock is relatively fast, but as shown in Table 2, its effectiveness is lower, with an average rank of 5.25. The offline efficiency of TACTUS primarily stems from its table-centric offline processing, as described in Section 4, which contrasts with existing methods that require building and processing column embeddings. The online processing time for a method mainly includes two steps: encode query tables and columns into embeddings; search for top-𝑘 unionable tables. The first step typically dominates the total time, though prior work often reports only the second step. In Figure 7 (log-scale), we report the total online processing time for all methods across all datasets. TACTUS consistently achieves 
+
+> 10
+
+faster online processing than all baselines, often by more than an order of magnitude. For example, on TUS Large, TACTUS processes all queries in just 4.18 seconds, which is 11 .80 × faster than LIFTus (49.33 seconds) and 34 .95 × faster than Starmie (146.11 seconds), and significantly faster than the other baselines. On both Wiki Union and WDC, which have fewer columns per table, TACTUS 
+
+still maintains a clear efficiency advantage. On Wiki Union, SATO ,the runner-up in Table 2, is 6 × slower than TACTUS ; while Starmie 
+
+and LIFTus are comparable in efficiency, they yield lower effec-tiveness as reported in Table 2. The online efficiency of TACTUS 
+
+demonstrates that our table-centric adaptive candidate retrieval in Section 5.1 can quickly retrieve a small number of high-quality can-didates for reranking to obtain the final top-𝑘 results, as described in Section 5. The experiments in Table 6 in Section 6.4 further shows that TACTUS retrieves fewer candidates than the baselines while achieving higher effectiveness, validating the strength of our table-centric modeling and search techniques in Sections 4 and 5. 
+
+## 6.4 Experimental Analysis 
+
+Comparison with Baselines using Aggregated Column Em-beddings as Table Embeddings. For a table 𝑇 𝑖 , existing meth-ods [ 18 , 53 ] produce column embeddings. A straightforward ap-proach to obtain a table embedding is to aggregate its column em-beddings, e.g., via average pooling. To further demonstrate the effectiveness and necessity of our table embedding techniques in Section 4, we adapt Starmie and LIFTus as follows: aggregate their column embeddings to form table embeddings for candidate retrieval, and rerank the retrieved candidates using their origi-nal unionability scoring functions. We refer to these variants as 
+
+Starmie 𝑎𝑔𝑔 and LIFTus 𝑎𝑔𝑔 , respectively. As shown in Table 3, TAC-TUS consistently outperforms both Starmie 𝑎𝑔𝑔 and LIFTus 𝑎𝑔𝑔 across all datasets. This is because the baseline column embeddings are optimized for column-level unionability, and simple aggregation cannot capture the holistic table semantics required for table-level unionability. These results highlight the effectiveness of our table-centric embedding techniques in Section 4. 
+
+Performance with 512 Tokens. Table 4 reports the performance when setting the maximum input sequence length of BERT to 512 tokens. We observe that (i) all methods achieve similar performance to that in Table 2 with 256 tokens, with only minor differences; and (ii) TACTUS consistently maintains its performance advantage over the baselines. These results demonstrate the robustness of our method and justify the use of 256 tokens as the default setting, following common practice [18, 53]. 
+
+Ablation Study. We evaluate the contribution of each major com-ponent in TACTUS by considering the following ablated variants: (i) disabling the dual-evidence reranking in Section 5.2 and using only 𝜇 𝑇 (𝑇 𝑞 ,𝑇 𝑖 ) as the final unionability score to select the top-𝑘 
+
+tables (w/o rerank); (ii) removing the two-pronged negative sam-pling in Section 4.1 (w/o two-pronged); (iii) replacing the adaptive candidate retrieval in Section 5.1 with a fixed candidate pool size of 
+
+3𝑘 (w/o adaptive); and (iv) substituting the attentive aggregation in Section 4.2 with simple average pooling (w. avgPooling). As shown in Table 5, each component contributes to the overall performance of TACTUS across all datasets. For example, the reranking module improves MAP@60 on TUS Small from 97.95% to 99.36%, a 1.41% 
+
+Table 3: Performance of baseline variants using aggregated column embeddings as table embeddings                 
+
+> MAP@k SANTOS Small TUS Small TUS Large Wiki Union
+> TACTUS 0.9860 0.9936 0.9844 0.6537
+> Starmie 𝑎𝑔𝑔 0.9768 0.9511 0.8981 0.4380 LIFTus 𝑎𝑔𝑔 0.9452 0.9227 0.9080 0.3277
+
+Table 4: MAP@k with maximum token length 512                 
+
+> Method SANTOS Small TUS Small TUS Large Wiki Union
+> TACTUS 0.9895 0.9951 0.9830 0.6514
+> Starmie 0.9618 0.9670 0.9143 0.4505 LIFTus 0.9736 0.9718 0.9656 0.3438
+
+Table 5: Ablation Study (MAP@k)                          
+
+> Variant SANTOS Small TUS Small TUS Large Wiki Union
+> TACTUS 0.9860 0.9936 0.9844 0.6537
+> TACTUS w/o rerank 0.9788 0.9795 0.9780 0.6443
+> TACTUS w/o two-pronged 0.9747 0.9775 0.9818 0.6485
+> TACTUS w/o adaptive 0.9822 0.9905 0.9802 0.6443
+> TACTUS w. avgPooling 0.9795 0.9891 0.9798 0.6360
+
+Table 6: Average candidate set size and average fraction of truly unionable tables in the set (%)                  
+
+> SANTOS Small TUS Small TUS Large Wiki Union
+> 𝑘 10 60 60 40
+> TACTUS 12.84 (94.7%) 91.57 (89.9%) 114.04 (88.2%) 44.62 (60.2%)
+> Starmie 41.24 (49.9%) 167.91 (68.9%) 247.45 (51.3%) 69.62 (25.6%) LIFTus 30.90 (63.0%) 222.90 (51.6%) 228.45 (63.1%) 65.76 (24.8%)
+
+absolute gain. Notably, TACTUS (w/o rerank ), i.e., using only the table-centric candidate retrieval in Section 5.1 to get the top-𝑘 ta-bles, already outperforms all baselines in Table 2 in MAP@k on all datasets, validating the effectiveness of our table-centric designs in Sections 4 and 5.1. Moreover, two-pronged negative sampling is particularly effective for SANTOS Small and TUS Small, while adaptive candidate retrieval and attentive aggregation are more beneficial on Wiki Union and TUS Large. 
+
+Study on Candidate Set S. Table 6 reports, for each method, the average candidate set size and the fraction of truly unionable tables per candidate set. Our method TACTUS consistently retrieves a much smaller candidate set S with a higher fraction of truly unionable tables across all datasets, and the set size is close to 
+
+𝑘 . For example, on SANTOS Small with 𝑘 = 10 , TACTUS yields an average candidate set size of 12.84 with 94.7% truly unionable tables, while Starmie and LIFTus return much larger sets of 41.24 and 30.90 candidates with only 49.9% and 63.0% truly unionable tables, respectively. Similar trends are observed on other datasets. These results demonstrate the effectiveness of our table-centric adaptive candidate retrieval in Section 5.1, which leverages table embeddings that capture holistic table-level unionability scores 𝜇 𝑇 
+
+to directly retrieve a compact, high-quality candidate set S adaptive to the distribution of 𝜇 𝑇 scores. In contrast, column-centric methods such as Starmie and LIFTus include a table in the candidate set if any of its columns matches any query column, while a query table has multiple columns, resulting in larger candidate sets with a lower fraction of truly unionable tables. 
+
+The Effect of the Size of Sinit . By default, we set the initial candi-date set size |S init | to 3𝑘 in Algorithm 2 (Section 5.1). To access its effect, we vary |S init | from 𝑘 to 6𝑘 and report MAP@k and online search time in Figure 8. As |S init | increases from 𝑘 to 3𝑘 , MAP@k                
+
+> 11 0.98
+> 0.99
+> 1.00
+> k2k 3k 4k 5k 6k
+> (a) MAP@k of Sinit
+> 0.64
+> 0.66
+> k2k 3k 4k 5k 6k
+> (b) Time of Sinit
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> Query Time (s)
+> MAP@k
+> SANTOS Small TUS Small TUS Large Wiki Union
+
+Figure 8: Vary |S init |0.96                 
+
+> 0.98
+> 1.00
+> 0.98
+> 0.99
+> 1.00
+> 0.98
+> 0.99
+> 1.00
+> 0.7 0.75 0.8 0.85 0.9 0.95
+> (a)
+> 0.64
+> 0.66
+> 0.3 0.5 0.7 0.9
+> (b) abs
+> 0.64
+> 0.66
+> 0.1 0.2 0.3 0.4
+> (c) drop
+> 0.64
+> 0.66
+> MAP@k
+> SANTOS Small TUS Small TUS Large Wiki Union
+
+Figure 9: Vary Parameters Table 7: Comparison of FastText and BERT for reranking in accuracy (MAP@k) and encoding time (s) Model SANTOS Small TUS Small TUS Large Wiki Union                    
+
+> MAP@k / Time(s) MAP@k / Time(s) MAP@k / Time(s) MAP@k / Time(s) FastText 0.9860 / 13 0.9936 / 34 0.9844 / 71 0.6537 / 211 BERT 0.9857 / 35 0.9938 / 92 0.9828 / 202 0.6540 / 635 G1 G2 G3 G4
+> Query Column Groups
+> 0.90
+> 0.95
+> 1.00
+> MAP@10
+> (a) MAP@k on SANTOS Small
+> G1 G2 G3 G4
+> Query Column Groups
+> 0.90
+> 0.95
+> 1.00
+> MAP@60
+> (b) MAP@k on TUS Small
+> G1 G2 G3 G4
+> Query Column Groups
+> 0.8
+> 0.9
+> 1.0
+> MAP@60
+> (c) MAP@k on TUS Large
+> TACTUS LIFTus Starmie
+
+Figure 10: MAP@k by Query Table Width 
+
+improves due to the inclusion of more unionable tables, but plateaus for larger values ( 4𝑘 to 6𝑘 ), while online search time continues to increase. Thus, setting |S init | = 3𝑘 is sufficient to achieve high effectiveness with reasonable overhead. 
+
+Parameter Analysis. We use the same parameter settings for all datasets by default. Here, we analyze the impact of varying key parameters, including 𝛾 in Equation (1) for identifying latent positives, and 𝜏 abs and 𝜏 drop in Section 5.1 for adaptive candidate retrieval. In Figure 9(a), as 𝛾 increases from 0.7 to 0.9, performance improves because more accurate latent positives are excluded from the negative set; further increasing 𝛾 causes performance to plateau or decrease, as an overly strict threshold may fail to exclude enough latent positives. Thus, we set 𝛾 = 0.9 by default. In Figure 9(b,c), we vary 𝜏 abs from 0.3 to 0.9 and 𝜏 drop from 0.1 to 0.4. For both parameters, performance increases and then decreases as the values grow. Therefore, we set 𝜏 abs = 0.5 and 𝜏 drop = 0.2 by default. 
+
+Reranking: FastText vs. BERT. In Section 5.2, we adopt FastText for dual-evidence reranking due to its efficiency and suitability for our design. To further validate this choice, we compare FastText with BERT for reranking. Table 7 reports the accuracy and efficiency of our method using FastText versus BERT for reranking. Both achieve nearly identical MAP@k, while FastText is substantially more efficient in encoding. 
+
+Vary Query Table Width. We analyze the impact of query table width by sorting all query tables in ascending order of their number of columns and dividing them into four equal-sized groups, denoted as G1 (narrowest) to G4 (widest). As shown in Figure 10, the perfor-mance of all methods generally improves as table width increases 510 25 50 75 100       
+
+> Training Table Ratio
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> MAP@60
+> (a) TUS Large
+> 510 25 50 75 100
+> Training Table Ratio
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> MAP@40
+> (b) Wiki Union
+> TACTUS LIFTus Starmie
+
+Figure 11: MAP@k when varying training data ratio (%) Table 8: Embedding Index Size (MB)                                  
+
+> Method SANTOS Small SANTOS Large TUS Small TUS Large Wiki Union WDC
+> TACTUS 10.9 196.9 27.4 97.1 396.0 12779.5
+> Starmie 38.7 746.6 58.2 215.8 420.9 34570.2 LIFTus 519.8 7811.9 1218.9 3719.5 10040.9 414860.8
+> SATO 104.6 2242.6 244.6 1013.8 1760.2 94589.7
+> Sherlock 116.8 2252.8 276.6 1015.2 1975.2 100526.1
+
+from G1 to G4, as wider tables provide richer contextual informa-tion for unionability search. TACTUS consistently outperforms the baselines; for example, on SANTOS Small in G2, TACTUS achieves 
+
+𝑀𝐴𝑃 @𝑘 of 99.45%, which is 2.50% higher than LIFTus (96.95%) and 3.56% higher than Starmie (95.89%). 
+
+Training Efficiency. In Figure 11, we evaluate the training effi-ciency of TACTUS , Starmie , and LIFTus by varying the fraction of training tables used on TUS Large and Wiki Union. As the propor-tion of training data increases from 5% to 100%, all methods improve in 𝑀𝐴𝑃 @𝑘 , while TACTUS consistently achieves the highest per-formance across all fractions. The gains of TACTUS are particularly pronounced in the low-data regime (e.g., 5% or 10% of training tables). For example, in Figure 11(b) on Wiki Union, when using only 10% of the training data, TACTUS attains 𝑀𝐴𝑃 @𝑘 of 62.60%, which is 31.82% higher than LIFTus and 23.68% higher than Starmie .These results demonstrate that our table-centric method TACTUS 
+
+is especially effective and data-efficient under limited training data. 
+
+Embedding Index Size. We report the total size of all embeddings and the index built over these embeddings in Table 8. TACTUS 
+
+requires less space than all baselines across all datasets for em-bedding and index storage. For example, on TUS Large, TACTUS 
+
+requires only 97.1 MB, while LIFTus, the runner-up in effectiveness in Table 2, requires 3719.5 MB and Starmie requires 215.8 MB. This demonstrates the space efficiency of our techniques. 
+
+## 7 CONCLUSION 
+
+We present TACTUS , a novel table-centric framework for efficient and accurate table union search in large data lakes. Unlike exist-ing column-centric approaches, TACTUS model holistic table-level unionability through dedicated table embeddings, and enable effi-cient and effective online search by table-centric adaptive candidate retrieval and dual-evidence reranking techniques. Our offline pro-cessing introduces positive table pair construction, two-pronged negative sampling, and attentive table encoder for effective table-level unionability estimation. Extensive experiments demonstrate that TACTUS consistently achieves state-of-the-art effectiveness and efficiency across diverse datasets. This work underscores the value of table-level modeling for tabular data discovery. Future directions include extending our framework to other tasks such as table join search and schema matching, and exploring large language models for table representation learning. 
+
+> 12
+
+## REFERENCES 
+
+[1] Marco D. Adelfio and Hanan Samet. 2013. Schema Extraction for Tabular Data on the Web. Proc. VLDB Endow. 6, 6 (2013), 421–432. [2] Muhammad Imam Luthfi Balaka, David Alexander, Qiming Wang, Yue Gong, Adila Krisnadhi, and Raul Castro Fernandez. 2025. Pneuma: Leveraging LLMs for Tabular Data Representation and Retrieval in an End-to-End System. Proc. ACM Manag. Data 3, 3 (2025), 200:1–200:28. [3] Alex Bogatu, Alvaro A. A. Fernandes, Norman W. Paton, and Nikolaos Konstanti-nou. 2020. Dataset Discovery in Data Lakes. In ICDE . IEEE, 709–720. [4] Allaa Boutaleb, Bernd Amann, Hubert Naacke, and Rafael Angarita. 2025. Some-thing’s Fishy In The Data Lake: A Critical Re-evaluation of Table Union Search Benchmarks. CoRR abs/2505.21329 (2025). [5] Dan Brickley, Matthew Burgess, and Natasha F. Noy. 2019. Google Dataset Search: Building a search engine for datasets in an open Web ecosystem. In 
+
+WWW . ACM, 1365–1375. [6] Jean-Flavien Bussotti, Enzo Veltri, Donatello Santoro, and Paolo Papotti. 2023. Generation of Training Examples for Tabular Natural Language Inference. Proc. ACM Manag. Data 1, 4 (2023), 243:1–243:27. [7] Michael J. Cafarella, Alon Y. Halevy, and Nodira Khoussainova. 2009. Data Integration for the Relational Web. Proc. VLDB Endow. 2, 1 (2009), 1090–1101. [8] Riccardo Cappuzzo, Paolo Papotti, and Saravanan Thirumuruganathan. 2020. Creating Embeddings of Heterogeneous Relational Datasets for Data Integration Tasks. In SIGMOD Conference . ACM, 1335–1349. [9] Sonia Castelo, Rémi Rampin, Aécio S. R. Santos, Aline Bessa, Fernando Chirigati, and Juliana Freire. 2021. Auctus: A Dataset Search Engine for Data Discovery and Augmentation. Proc. VLDB Endow. 14, 12 (2021), 2791–2794. [10] Pei Chen, Soumajyoti Sarkar, Leonard Lausen, Balasubramaniam Srinivasan, Sheng Zha, Ruihong Huang, and George Karypis. 2023. HyTrel: Hypergraph-enhanced Tabular Data Representation Learning. In NeurIPS .[11] Ting Chen, Simon Kornblith, Mohammad Norouzi, and Geoffrey E. Hinton. 2020. A Simple Framework for Contrastive Learning of Visual Representations. In 
+
+ICML (Proceedings of Machine Learning Research) , Vol. 119. 1597–1607. [12] Majid Daliri, Juliana Freire, Christopher Musco, Aécio S. R. Santos, and Haoxiang Zhang. 2024. Sampling Methods for Inner Product Sketching. Proc. VLDB Endow. 
+
+17, 9 (2024), 2185–2197. [13] Xiang Deng, Huan Sun, Alyssa Lees, You Wu, and Cong Yu. 2022. TURL: Table Understanding through Representation Learning. SIGMOD Rec. 51, 1 (2022), 33–40. [14] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019. BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding. In NAACL-HLT (1) . 4171–4186. [15] Yuyang Dong, Kunihiro Takeoka, Chuan Xiao, and Masafumi Oyamada. 2021. Efficient Joinable Table Discovery in Data Lakes: A High-Dimensional Similarity-Based Approach. In ICDE . IEEE, 456–467. [16] Yuyang Dong, Chuan Xiao, Takuma Nozawa, Masafumi Enomoto, and Masafumi Oyamada. 2023. DeepJoin: Joinable Table Discovery with Pre-trained Language Models. Proc. VLDB Endow. 16, 10 (2023), 2458–2470. [17] Mahdi Esmailoghli, Jorge-Arnulfo Quiané-Ruiz, and Ziawasch Abedjan. 2022. MATE: Multi-Attribute Table Extraction. Proc. VLDB Endow. 15, 8 (2022), 1684– 1696. [18] Grace Fan, Jin Wang, Yuliang Li, Dan Zhang, and Renée J. Miller. 2023. Semantics-aware Dataset Discovery from Data Lakes with Contextualized Column-based Representation Learning. Proc. VLDB Endow. 16, 7 (2023), 1726–1739. [19] Mina H. Farid, Alexandra Roatis, Ihab F. Ilyas, Hella-Franziska Hoffmann, and Xu Chu. 2016. CLAMS: Bringing Quality to Data Lakes. In SIGMOD Conference .ACM, 2089–2092. [20] Raul Castro Fernandez, Ziawasch Abedjan, Famien Koko, Gina Yuan, Samuel Madden, and Michael Stonebraker. 2018. Aurum: A Data Discovery System. In 
+
+ICDE . 1001–1012. [21] Xavier Glorot, Antoine Bordes, and Yoshua Bengio. 2011. Deep Sparse Rectifier Neural Networks. In AISTATS (JMLR Proceedings) , Vol. 15. 315–323. [22] Yuxiang Guo, Zhonghao Hu, Yuren Mao, Baihua Zheng, Yunjun Gao, and Ming-wei Zhou. 2025. BIRDIE: Natural Language-Driven Table Discovery Using Dif-ferentiable Search Index. Proc. VLDB Endow. 18, 7 (2025), 2070–2083. [23] Yuxiang Guo, Yuren Mao, Zhonghao Hu, Lu Chen, and Yunjun Gao. 2025. Snoopy: Effective and Efficient Semantic Join Discovery via Proxy Columns. IEEE Trans. Knowl. Data Eng. 37, 5 (2025), 2971–2985. [24] Hazar Harmouch, Thorsten Papenbrock, and Felix Naumann. 2021. Relational Header Discovery using Similarity Search in a Table Corpus. In ICDE . IEEE, 444–455. [25] Madelon Hulsebos, Kevin Zeng Hu, Michiel A. Bakker, Emanuel Zgraggen, Arvind Satyanarayan, Tim Kraska, Çagatay Demiralp, and César A. Hidalgo. 2019. Sherlock: A Deep Learning Approach to Semantic Data Type Detection. In 
+
+KDD . ACM, 1500–1508. [26] Hiroshi Iida, Dung Thai, Varun Manjunatha, and Mohit Iyyer. 2021. TABBIE: Pretrained Representations of Tabular Data. In NAACL-HLT . 3446–3456. [27] Ran Jia, Haoming Guo, Xiaoyuan Jin, Chao Yan, Lun Du, Xiaojun Ma, Tamara Stankovic, Marko Lozajic, Goran Zoranovic, Igor Ilic, Shi Han, and Dongmei Zhang. 2023. GetPt: Graph-enhanced General Table Pre-training with Alternate Attention Network. In KDD . ACM, 941–950. [28] Armand Joulin, Edouard Grave, Piotr Bojanowski, and Tomás Mikolov. 2017. Bag of Tricks for Efficient Text Classification. In EACL (2) . 427–431. [29] Moe Kayali, Anton Lykov, Ilias Fountalis, Nikolaos Vasiloglou, Dan Olteanu, and Dan Suciu. 2024. CHORUS: Foundation Models for Unified Data Discovery and Exploration. Proc. VLDB Endow. 17, 8 (2024), 2104–2114. [30] Aamod Khatiwada, Grace Fan, Roee Shraga, Zixuan Chen, Wolfgang Gatter-bauer, Renée J. Miller, and Mirek Riedewald. 2023. SANTOS: Relationship-based Semantic Table Union Search. Proc. ACM Manag. Data 1, 1 (2023), 9:1–9:25. [31] Aamod Khatiwada, Roee Shraga, and Renée J. Miller. 2026. Diverse Unionable Tuple Search: Novelty-Driven Discovery in Data Lakes. In EDBT . OpenProceed-ings.org, 42–55. [32] Christos Koutras, George Siachamis, Andra Ionescu, Kyriakos Psarakis, Jerry Brons, Marios Fragkoulis, Christoph Lofi, Angela Bonifati, and Asterios Katsi-fodimos. 2021. Valentine: Evaluating Matching Techniques for Dataset Discovery. In ICDE . IEEE, 468–479. [33] Christos Koutras, Jiani Zhang, Xiao Qin, Chuan Lei, Vassilis N. Ioannidis, Chris-tos Faloutsos, George Karypis, and Asterios Katsifodimos. 2025. OmniMatch: Joinability Discovery in Data Products. Proc. VLDB Endow. 18, 11 (2025), 4588– 4601. [34] Oliver Lehmberg and Christian Bizer. 2017. Stitching Web Tables for Improving Matching Quality. Proc. VLDB Endow. 10, 11 (2017), 1502–1513. [35] Oliver Lehmberg, Dominique Ritze, Robert Meusel, and Christian Bizer. 2016. A Large Public Corpus of Web Tables containing Time and Context Metadata. In 
+
+WWW (Companion Volume) . ACM, 75–76. [36] Chen Li, Jiaheng Lu, and Yiming Lu. 2008. Efficient Merging and Filtering Algorithms for Approximate String Searches. In ICDE . IEEE Computer Society, 257–266. [37] Peng Li, Yeye He, Cong Yan, Yue Wang, and Surajit Chaudhuri. 2023. Auto-Tables: Synthesizing Multi-Step Transformations to Relationalize Tables without Using Examples. Proc. VLDB Endow. 16, 11 (2023), 3391–3403. [38] Peng Li, Yeye He, Cong Yan, Yue Wang, and Surajit Chaudhuri. 2025. Auto-tables: synthesizing multi-step transformations to relationalize tables without using examples. VLDB J. 34, 4 (2025), 47. [39] Wen Li, Ying Zhang, Yifang Sun, Wei Wang, Mingjie Li, Wenjie Zhang, and Xuemin Lin. 2020. Approximate Nearest Neighbor Search on High Dimensional Data - Experiments, Analyses, and Improvement. IEEE Trans. Knowl. Data Eng. 
+
+32, 8 (2020), 1475–1488. [40] Yuliang Li, Jinfeng Li, Yoshihiko Suhara, AnHai Doan, and Wang-Chiew Tan. 2020. Deep Entity Matching with Pre-Trained Language Models. Proc. VLDB Endow. 14, 1 (2020), 50–60. [41] Yuliang Li, Jinfeng Li, Yoshihiko Suhara, Jin Wang, Wataru Hirota, and Wang-Chiew Tan. 2021. Deep Entity Matching: Challenges and Opportunities. ACM J. Data Inf. Qual. 13, 1 (2021), 1:1–1:17. [42] Girija Limaye, Sunita Sarawagi, and Soumen Chakrabarti. 2010. Annotating and Searching Web Tables Using Entities, Types and Relationships. Proc. VLDB Endow. 3, 1 (2010), 1338–1347. [43] Xiao Ling, Alon Y. Halevy, Fei Wu, and Cong Yu. 2013. Synthesizing Union Tables from the Web. In IJCAI . 2677–2683. [44] Yurong Liu, Eduardo Peña, Aécio S. R. Santos, Eden Wu, and Juliana Freire. 2025. Magneto: Combining Small and Large Language Models for Schema Matching. 
+
+Proc. VLDB Endow. 18, 8 (2025), 2681–2694. [45] Yury A. Malkov and Dmitry A. Yashunin. 2020. Efficient and Robust Approximate Nearest Neighbor Search Using Hierarchical Navigable Small World Graphs. IEEE Trans. Pattern Anal. Mach. Intell. 42, 4 (2020), 824–836. [46] Zhengjie Miao and Jin Wang. 2023. Watchog: A Light-weight Contrastive Learn-ing based Framework for Column Annotation. Proc. ACM Manag. Data 1, 4 (2023), 272:1–272:24. [47] Renée J. Miller. 2018. Open Data Integration. Proc. VLDB Endow. 11, 12 (2018), 2130–2139. [48] Fatemeh Nargesian, Erkang Zhu, Renée J. Miller, Ken Q. Pu, and Patricia C. Arocena. 2019. Data Lake Management: Challenges and Opportunities. Proc. VLDB Endow. 12, 12 (2019), 1986–1989. [49] Fatemeh Nargesian, Erkang Zhu, Ken Q. Pu, and Renée J. Miller. 2018. Table Union Search on Open Data. Proc. VLDB Endow. 11, 7 (2018), 813–825. [50] James Jie Pan, Jianguo Wang, and Guoliang Li. 2024. Survey of vector database management systems. VLDB J. 33, 5 (2024), 1591–1615. [51] Rakesh Pimplikar and Sunita Sarawagi. 2012. Answering Table Queries on the Web using Column Keywords. Proc. VLDB Endow. 5, 10 (2012), 908–919. [52] Francesco Pugnaloni, Luca Zecchini, Matteo Paganelli, Matteo Lissandrini, Felix Naumann, and Giovanni Simonini. 2025. Table Overlap Estimation through Graph Embeddings. Proc. ACM Manag. Data 3, 3 (2025), 228:1–228:25. [53] Ermu Qiu, Jun Gao, Yaofeng Tu, and Jingru Yang. 2025. LIFTus: An Adaptive Multi-Aspect Column Representation Learning for Table Union Search. In ICDE .IEEE, 2174–2187. 
+
+> 13
+
+[54] Joshua David Robinson, Ching-Yao Chuang, Suvrit Sra, and Stefanie Jegelka. 2021. Contrastive Learning with Hard Negative Samples. In ICLR .[55] Aécio S. R. Santos, Aline Bessa, Christopher Musco, and Juliana Freire. 2022. A Sketch-based Index for Correlated Dataset Search. In ICDE . IEEE, 2928–2941. [56] Anish Das Sarma, Lujun Fang, Nitin Gupta, Alon Y. Halevy, Hongrae Lee, Fei Wu, Reynold Xin, and Cong Yu. 2012. Finding related tables. In SIGMOD Conference .ACM, 817–828. [57] Kavitha Srinivas, Julian Dolby, Ibrahim Abdelaziz, Oktie Hassanzadeh, Harsha Kokel, Aamod Khatiwada, Tejaswini Pedapati, Subhajit Chaudhury, and Horst Samulowitz. 2023. LakeBench: Benchmarks for Data Discovery over Data Lakes. 
+
+CoRR abs/2307.04217 (2023). [58] Yoshihiko Suhara, Jinfeng Li, Yuliang Li, Dan Zhang, Çagatay Demiralp, Chen Chen, and Wang-Chiew Tan. 2022. Annotating Columns with Pre-trained Lan-guage Models. In SIGMOD Conference . ACM, 1493–1503. [59] Sahaana Suri, Ihab F. Ilyas, Christopher Ré, and Theodoros Rekatsinas. 2021. Ember: No-Code Context Enrichment via Similarity-Based Keyless Joins. Proc. VLDB Endow. 15, 3 (2021), 699–712. [60] Jianhong Tu, Ju Fan, Nan Tang, Peng Wang, Guoliang Li, Xiaoyong Du, Xiaofeng Jia, and Song Gao. 2023. Unicorn: A Unified Multi-tasking Model for Supporting Matching Tasks in Data Integration. Proc. ACM Manag. Data 1, 1 (2023), 84:1– 84:26. [61] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser, and Illia Polosukhin. 2017. Attention is All you Need. In NIPS . 5998–6008. [62] Denny Vrandecic and Markus Krötzsch. 2014. Wikidata: a free collaborative knowledgebase. Commun. ACM 57, 10 (2014), 78–85. [63] Mengzhao Wang, Xiaoliang Xu, Qiang Yue, and Yuxiang Wang. 2021. A Com-prehensive Survey and Experimental Comparison of Graph-Based Approximate Nearest Neighbor Search. Proc. VLDB Endow. 14, 11 (2021), 1964–1978. [64] Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement De-langue, Anthony Moi, Pierric Cistac, Tim Rault, Rémi Louf, Morgan Funtowicz, Joe Davison, Sam Shleifer, Patrick von Platen, Clara Ma, Yacine Jernite, Julien Plu, Canwen Xu, Teven Le Scao, Sylvain Gugger, Mariama Drame, Quentin Lhoest, and Alexander M. Rush. 2020. Transformers: State-of-the-Art Natural Language Processing. In EMNLP (Demos) . 38–45. [65] Dan Zhang, Yoshihiko Suhara, Jinfeng Li, Madelon Hulsebos, Çagatay Demiralp, and Wang-Chiew Tan. 2020. Sato: Contextual Semantic Type Detection in Tables. 
+
+Proc. VLDB Endow. 13, 11 (2020), 1835–1848. [66] Yi Zhang and Zachary G. Ives. 2020. Finding Related Tables in Data Lakes for Interactive Data Science. In SIGMOD Conference . ACM, 1951–1966. [67] Erkang Zhu, Dong Deng, Fatemeh Nargesian, and Renée J. Miller. 2019. JOSIE: Overlap Set Similarity Search for Finding Joinable Tables in Data Lakes. In 
+
+SIGMOD Conference . ACM, 847–864.
