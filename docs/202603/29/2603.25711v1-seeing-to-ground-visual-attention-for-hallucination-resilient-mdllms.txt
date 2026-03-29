@@ -1,0 +1,961 @@
+Title: Seeing to Ground: Visual Attention for Hallucination-Resilient MDLLMs
+
+URL Source: https://arxiv.org/pdf/2603.25711v1
+
+Published Time: Fri, 27 Mar 2026 01:29:48 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+# Seeing to Ground: Visual Attention for Hallucination-Resilient MDLLMs 
+
+## Vishal Narnaware * Animesh Gupta * Kevin Zhai Zhenyi Wang Mubarak Shah Institute of Artificial Intelligence, University of Central Florida 
+
+## Abstract 
+
+Multimodal Diffusion Large Language Models (MDLLMs) achieve high-concurrency generation through parallel masked decoding, yet the architectures remain prone to mul-timodal hallucinations. This structural vulnerability stems from an algorithmic flaw: the decoder ranks candidate to-kens based on textual likelihood without verifying localized visual support. We establish that this language-only rank-ing induces an objective mismatch, where language prob-ability mass acts as a misspecified proxy for the intended multimodal task. Consequently, we reinterpret hallucina-tion as a localized optimization error, a phenomenon where the decoder exploits language shortcuts to maximize a proxy score at the expense of visual grounding. To address this ob-jective mismatch, we introduce VISAGE, a training-free de-coding framework that calibrates the objective at inference time. VISAGE estimates the proxy discrepancy by quantify-ing the spatial entropy of cross-attention distributions. By enforcing a localization consensus across attention heads, the method penalizes spatially uniform distributions and re-ranks token commitments to favor visually grounded out-comes. We provide an analytical stability guarantee es-tablishing that VISAGE maintains a bounded objective loss under estimation error. Evaluations across hallucination-sensitive and general-purpose benchmarks demonstrate the robustness of the framework, yielding relative gains of 8.59% on MMMU-val and 7.75% on HallusionBench. 
+
+## 1. Introduction 
+
+Multimodal Diffusion Large Language Models (MDLLMs) [12, 29, 32, 36] represent a high-concurrency alternative to autoregressive decoding [2, 24, 28] for vision-language generation. By enabling parallel token generation, these architectures reduce inference latency. However, the ar-chitectural efficiency does not address the persistent prob-lem of hallucination: the generation of responses that lack grounding in the visual input. Prior approaches often treat these generative failures as a consequence of insufficient 
+
+> *Equally contributing first author
+
+model capacity or poor multimodal alignment during pre-training [10]. In this work, we propose a different perspec-tive: in the parallel unmasking setting, hallucination is a localized optimization error induced by the decoding algo-rithm itself. This localized optimization error arises because the par-allel unmasking mechanism acts as an implicit, position-wise optimization process. By committing tokens based on maximum language likelihood under the denoising distri-bution, the decoder optimizes a language-only proxy ob-jective rather than the intended multimodal objective. This algorithmic reliance induces an objective mismatch. Conse-quently, the decoder maximizes the proxy score by exploit-ing language shortcuts [6], relying on textual priors to final-ize predictions without verifying localized visual probabil-ity mass. As illustrated in Figure 1 (left), when answering “Is there a cup in the image?”, standard masked decoding assigns high probability mass to the statistically plausible token “no”. Because the algorithm commits tokens based on the language-only proxy ranking, the ungrounded token is prematurely finalized, propagating as incorrect context for all subsequent parallel decoding steps. To empirically validate the language shortcut hypothe-sis, we analyze the normalized peak probability mass for visual and language components across the diffusion steps leading up to commitment. As shown in Figure 2, compar-ing the probability mass of grounded versus hallucinated token commitments reveals a structural disparity. When the model commits a visually grounded token (left), peak vi-sual probability mass exceeds the language prior leading up to the commitment step. In contrast, during a language shortcut hallucination (right), the visual probability mass remains spatially uniform, resulting in a suppressed peak relative to the textual context throughout the decoding pro-cess. This structural disparity demonstrates that standard probability-based ranking optimizes for textual likelihood while bypassing localized visual evidence, necessitating a re-ranking intervention at decoding time. To resolve the objective mismatch, we introduce VIS-AGE (Visual Attention Grounding Entropy), a training-free re-ranking framework. VISAGE intercepts the par-allel commitment schedule by deriving a visual re-ranking 1                                                            
+
+> arXiv:2603.25711v1 [cs.CV] 26 Mar 2026 0.6 0.2 0.4 0.7 Visually Corrected Confidence
+> There is [MASK] cup [MASK] [MASK] [MASK]
+> no on the deck
+> 0.9 0.4 0.6 0.8 Confidence
+> [MASK] [MASK] deck
+> aon the deck
+> Is there a cup in the image?
+> MMaDA + OURS
+> t =1
+> t =0
+> …
+> An intermediate step
+> …
+> [MASK] [MASK] [MASK] [MASK] [MASK] [MASK] [MASK]
+> There is
+> There is
+> no on the deck
+> [MASK] cup
+> cup
+> There is [MASK] cup [MASK] [MASK] [MASK]
+> no on the deck
+> 0.9 0.4 0.6 0.8 Confidence
+> [MASK] [MASK] [MASK]
+> no in the image
+> MMaDA + Low Confidence
+> …
+> …
+> [MASK] [MASK] [MASK] [MASK] [MASK] [MASK] [MASK]
+> There is
+> There is
+> no cup
+> cup
+> in the image
+> 0.8 0.7 0.6 Confidence
+
+Figure 1. VISAGE resolves language shortcuts by correcting the objective mismatch during parallel unmasking. Given the query “Is there a cup in the image? ”, the standard decoder (left) assigns a high language-only confidence ( 0.9) to the statistically plausible token “ no .” Because this proxy score lacks visual verification, the token is finalized prematurely and induces a hallucination. In contrast, VISAGE (right) calculates a visually corrected confidence ( 0.6) by estimating the proxy discrepancy bi. This modification to the ranking score prevents the early commitment of the ungrounded token, allowing the model to recover the correct multimodal outcome: “ There is a cup on the deck. ”0 50 100 150 200 250   
+
+> Diffusion Step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Normalized Attention
+> Visual Attn Language Attn Token Committed
+
+(a) Grounded Token 0 50 100 150 200 250    
+
+> Diffusion Step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Normalized Attention
+> Visual Attn Language Attn Token Committed
+
+(b) Hallucinated Token 
+
+Figure 2. The disparity between visual and linguistic proba-bility mass across decoding steps suggests objective misspeci-fication. We visualize the normalized peak probability mass for visual (orange) and language (blue) components across the refine-ment process. (a) In Visually Grounded Generation , peak visual probability mass exceeds the language attention prior before the commitment step (vertical dotted line), consistent with a localized, low-entropy distribution over image tokens. (b) In a Language Shortcut Hallucination , the visual component retains a uniform spatial distribution, resulting in a suppressed peak that falls below the language attention prior. This structural disparity demonstrates that the decoder optimizes for textual likelihood while bypassing localized visual probability mass, suggesting that the spatial Shan-non entropy of cross-attention provides a detectable signal for re-ranking ungrounded commitments. 
+
+penalty from the spatial Shannon entropy of cross-attention over image tokens. The spatial entropy computation quan-tifies the probability mass for localized visual evidence. To ensure robustness, VISAGE aggregates the spatial en-tropy across attention heads using a discrete β-quantile function. This aggregation operator functions as a local-ization consensus, ensuring that a token is only deemed grounded if a specific fraction of heads independently ex-hibit a low-entropy distribution. Tokens exhibiting spatially uniform attention distributions receive a re-ranking penalty and are downweighted, while tokens with a verified con-sensus of localized visual support retain their original prob-ability mass. As illustrated in Figure 1 (right), substituting the flawed proxy score with the entropy-calibrated proba-bility mass penalizes shortcut-driven tokens and aligns the parallel decoding process toward grounded multimodal out-comes. To summarize, our main contributions are as follows: 1. Formalization of the objective mismatch in parallel decoding. We reinterpret hallucination in MDLLMs as a localized optimization error rather than a generative capacity failure. We establish that probability-based un-masking operates as a misspecified proxy objective that incentivizes language shortcuts. 2. A consensus-driven framework for grounded gener-ation. We introduce VISAGE, a training-free inference framework that calibrates the decoding objective. By es-timating the proxy discrepancy via the spatial entropy of cross-attention, VISAGE enforces a localization con-sensus to penalize visually unsupported commitments. 3. Analytical stability and empirical hallucination re-silience. We establish a mathematical stability guarantee for the monotonic reweighting, proving that VISAGE bounds the maximum objective loss under estimation er-ror. We validate the framework across diverse multi-modal benchmarks, demonstrating consistent improve-ments in visually grounded generation. 
+
+## 2. Related Work 
+
+Multimodal Diffusion Language Models. Multimodal Diffusion Large Language Models (MDLLMs) adapt im-age diffusion to discrete text spaces by replacing sequential prediction with parallel masked decoding [1, 13]. Archi-tectures like LLaDA [17] and Dream [33] improve scala-bility via mask-prediction objectives, while MMaDA [32] and others [12, 29, 36] extend the MDLLM to joint vision-2language reasoning. These high-concurrency architectures reduce inference latency compared to autoregressive coun-terparts. However, the discrete proposal space breaks con-tinuous alignment mechanisms, such as classifier guidance [22, 23, 26, 35] and classifier-free guidance [8, 21], because the continuous mechanisms require backpropagating pertur-bations through a differentiable score function. VISAGE addresses the non-differentiable limitation by introducing a discrete re-ranking framework that recovers the grounding objective without continuous gradient approximations. 
+
+Visual Grounding and Hallucination. Hallucination mitigation relies on training-time alignment [3, 4, 15, 18, 19, 27] or autoregressive inference-time interventions via external verification or internal calibration. External veri-fication pipelines like Woodpecker [34] and MARINE [39] utilize auxiliary object detectors to validate content post-hoc, introducing multi-pass latency. Internal calibration methods instead utilize the base model’s representations to apply contrastive penalties [11, 30], suppress attention heads [20], or constrain information bottlenecks [38] dur-ing sequential next-token prediction. While these calibra-tion interventions mitigate linguistic biases, the sequential mechanisms ignore the localized optimization error spe-cific to parallel masked decoding, where the unmasking algorithm selects tokens based on the categorical textual distribution. The reliance on the textual distribution en-ables ungrounded language shortcuts [6] where language priors override visual conditioning. Unlike autoregressive interventions, VISAGE resolves the objective mismatch by deriving a robust grounding entropy from internal atten-tion distributions. The robust entropy ensures token com-mitments possess high probability mass across localized visual evidence, providing a training-free defense against decoding-induced hallucinations. 
+
+## 3. Problem Formulation 
+
+Let V be the vocabulary and x denote the text prompt. For a visual input v, the intermediate MDLLM se-quence at step t ∈ { 1, . . . , T } is represented by y(t) =[x; v; y(t)1 , . . . , y (t) 
+
+> L
+
+], where each response position y(t) 
+
+> i
+
+∈V ∪ { [MASK] }. Decoding initializes all L response posi-tions as y(1)  
+
+> i
+
+= [MASK] and replaces these mask tokens with discrete tokens over T steps. At each decoding step t,the set of masked token positions is defined as: 
+
+Ct = { i ∈ { 1, . . . , L } : y(t) 
+
+> i
+
+= [MASK] }. (1) For each masked token position i ∈ Ct, the model processes the sequence y(t) to compute a discrete probability distribu-tion over the vocabulary: 
+
+pθ (yi = ν | y(t), i ), ∀ν ∈ V .
+
+Let ˆyi ∈ V denote the token proposal at position i derived via greedy maximization of the categorical distribution. We define the position-wise confidence ci as the probability mass assigned to the proposal: 
+
+ci ≜ pθ (yi = ˆ yi | y(t), i ). (2) 
+
+Standard decoding optimizes a proxy objective inde-pendent of visual context. Governed by an unmasking schedule, the decoder is allocated a token budget kt for the current step. The decoder must select a subset of positions 
+
+Ut ⊆ Ct such that |Ut| = kt. The sequence is then up-dated by committing the proposed tokens at these selected positions: 
+
+y(t+1)  
+
+> i
+
+=
+
+(
+
+ˆyi, i ∈ Ut,y(t) 
+
+> i
+
+, otherwise. (3) Confidence-based ranking selects this subset by solving the following maximization problem: 
+
+Ut ≜ arg max   
+
+> U⊆Ct
+> |U|=kt
+
+X
+
+> i∈U
+
+log ci. (4) This maximization objective is equivalent to selecting the top-kt token positions ranked by the scalar ci.The formulation in Equation 4 reveals a structural vul-nerability. Because Equation 4 optimizes raw text proba-bility, the equation acts as a misspecified proxy objective that omits visual grounding verification. A high confidence score ci reflects statistical language priors derived from the initial prompt or previously unmasked tokens, rather than grounding in the visual input v. Consequently, the un-masking objective favors the language prior and enables the model to take language shortcuts, committing tokens that lack visual support. The mismatch between the proxy ob-jective and the intended multimodal objective necessitates a decoding-time correction mechanism capable of verifying localized visual grounding before token commitment. 
+
+## 4. VISAGE: Grounding-Aware Decoding 
+
+To address the reliance on language-only proxy objec-tives that induce hallucinations, we introduce VISAGE, a decoding-time re-ranking framework. Our method formal-izes hallucination as a localized optimization error under a misspecified ranking score, and introduces a cross-attention spatial entropy estimator to approximate the unobservable multimodal objective. 
+
+4.1. Sequential Commitment under Objective Mis-specification 
+
+As established in Equation 4, standard decoding ranks can-didate tokens by the proxy score rproxy (i) ≜ log ci. This 3Multimodal Diffusion Large Language Model (e.g., MMaDA)                   
+
+> Is there a couch in the image?
+> <think> [MASK] …there [MASK] [MASK] …is [MASK] [MASK] …
+> .…acouch no visible …
+> .…acouch no visible …
+> [MASK] …there [MASK] [MASK] is no [MASK] …<think> …
+> 𝛃 Quantile Consensus
+> VISAGE (Ours)
+> …
+
+⊙ 0.18 0.16 0.24 0.85 0.44                    
+
+> g
+> Confidence ( c)
+> Linear Ranking Score (
+> u=c·g 𝛂 )
+> Attention Maps
+> Proposed Tokens
+> Unmasked Tokens
+> Masked Tokens
+> Prompt
+> 0.62 0.25 0.48 0.51 0.31
+> 0.26 0.10 0.23 0.47 0.20
+> Confidence (c)
+> Grounding Multiplier (g)
+> Linear Ranking Score (u)
+> Robust Grounding Entropy (
+> H)
+> 4.55 5.25 3.16 0.18 1.24
+> Grounding Multiplier
+> gi= 1/(1+H i)Last Layer Attention Maps
+> …
+> …
+> …
+> …
+> …
+> Premature Token
+> Grounded Token
+> …
+> …
+> …
+> …
+> …
+> …
+> …Is there a couch in the image?
+
+Figure 3. Overview of VISAGE during parallel masked decoding. At each decoding step, the frozen MDLLM generates candidate tokens alongside their initial confidence c. To verify visual support, we extract each candidate token’s last-layer cross-attention weights over the image and compute Shannon entropy for each attention head. We then aggregate these values across heads via a β-quantile operator, yielding Robust Grounding Entropy H, which quantifies the concentration of visual support. A penalty multiplier g = 1 /(1 + H) is then computed. Tokens are subsequently re-ranked using the linear ranking score u = c · gα (α = 0 .5). As illustrated, the ungrounded token (“a” ) is penalized by high entropy, ensuring the visually supported token ( “no” ) attains a high linear ranking score and is successfully committed to the sequence. 
+
+score represents the textual likelihood of a candidate to-ken but lacks a mechanism to quantify spatial concentration over the visual input. The intended multimodal decoding objective r⋆ incorporates both textual likelihood and local-ized visual correspondence: 
+
+r⋆(i) = log ci + λ r vis (i), (5) where λ > 0 scales the visual grounding strength. Because a perfect oracle for visual correspondence rvis requires computationally expensive external verification that defeats the efficiency of parallel decoding, standard algorithms de-fault to the language-only proxy rproxy . This reliance in-duces an objective mismatch where rproxy (i)̸ = r⋆(i). We formalize this objective mismatch as the proxy discrepancy 
+
+bi ≥ 0:
+
+r⋆(i) = log ci − bi. (6) The proxy discrepancy bi quantifies the magnitude by which textual probability mass overrides localized visual evidence. This mismatch allows the decoder to maximize the proxy score by committing tokens with high textual likelihood even when the proxy discrepancy bi is large. Because these committed tokens provide the conditioning context for sub-sequent steps, such ungrounded commitments propagate as incorrect context throughout the parallel decoding process. The deviation from the intended multimodal objective r⋆
+
+defined in Equation 5 is a position-wise phenomenon cap-tured by the proxy discrepancy bi:
+
+bi = rproxy (i) − r⋆(i). (7) Under the discrepancy formulation in Equation 7, halluci-nations correspond to candidate positions that exhibit high textual likelihood rproxy (i) but suffer from a large position-wise discrepancy bi. By treating hallucination as a localized 4optimization error rather than a global sequence failure, we apply targeted re-ranking penalties to indices where visual correspondence is insufficient. 
+
+4.2. Grounding-Aware Objective Correction 
+
+Spatial entropy quantifies the localization of visual correspondence. Approximating the unobservable multi-modal objective r⋆(·) in Equation 6 requires a computable estimate of the proxy discrepancy bi. We do not assume that cross-attention weights represent the exact causal influ-ence of visual features; instead, we use the spatial concen-tration of normalized cross-attention score distributions as a proxy for visual evidence. As observed in the attention trajectories of Figure 2, grounded token commitments co-incide with high peak probability mass over specific image regions, consistent with a localized, low-entropy distribu-tion. Conversely, when the model relies on textual priors, the visual probability mass is distributed across the image tokens, resulting in a spatially uniform distribution with a suppressed peak. We formalize this relationship by deriv-ing a computable estimator ˆbi from the spatial entropy of the cross-attention distribution, penalizing tokens that lack concentrated visual probability mass. 
+
+Cross-attention entropy yields the grounding-aware ranking score. Let Iimg be indices of image tokens of visual input v and N := |I img | denote the number of im-age tokens. At step t, let A(t,h ) 
+
+> i,j
+
+denote the last-layer cross-attention from the query representation at masked text posi-tion i to image token j ∈ I img in head h ∈ { 1, . . . , M }. We renormalize attention over image tokens to obtain a normal-ized spatial distribution ˜A(t,h ) 
+
+> i, (·)
+
+:
+
+˜A(t,h ) 
+
+> i,j
+
+= A(t,h ) 
+
+> i,j
+
++ δN
+
+P 
+
+> j′∈I img
+
+A(t,h ) 
+
+> i,j ′
+
++ δ , j ∈ I img , (8) where δ > 0 is a numerical smoothing constant for stabil-ity. We interpret the distribution ˜A(t,h ) 
+
+> i, (·)
+
+as the spatial local-ization of visual evidence for the candidate token ˆyi. To quantify this concentration of probability mass, we define the Shannon entropy H(t,h ) 
+
+> i
+
+for the h-th attention head at token position i:
+
+H(t,h ) 
+
+> i
+
+= − X
+
+> j∈I img
+
+˜A(t,h ) 
+
+> i,j
+
+log   ˜A(t,h )
+
+> i,j
+
+. (9) In standard vision-language architectures, individual at-tention heads occasionally collapse to spurious artifacts, yielding artificially low entropy even when the token is un-grounded. To prevent a single spuriously sharp head from bypassing the grounding penalty, we aggregate the M head-wise entropies into a single robust grounding entropy scalar 
+
+Hi. We define the discrete quantile function qβ (·) as an op-erator that selects the ⌈βM ⌉-th smallest value from a set. This operator functions as a localization consensus : rather than trusting the head with the lowest entropy, we require a specific fraction of heads to agree that a token is grounded. Let Hi, (1) ≤ Hi, (2) ≤ · · · ≤ Hi, (M ) denote the head-wise entropy values {H(t,h ) 
+
+> i
+
+}Mh=1 sorted in ascending order. We define the aggregate robust grounding entropy Hi as the specific value at index ⌈βM ⌉ in the sorted set: 
+
+Hi ≜ qβ
+
+ {H(t,h ) 
+
+> i
+
+}Mh=1 
+
+ = Hi, (⌈βM ⌉), β ∈ (0 , 1] .
+
+(10) This quantile selection ensures that the aggregate entropy 
+
+Hi takes a numerically small value only if at least βM in-dividual heads also exhibit low entropy. For instance, set-ting β = 0 .5 defines Hi as the median head entropy. This median requirement enforces a majority consensus: the re-sulting discrepancy estimator ˆbi remains small, thereby pre-serving the token’s ranking, only if at least half of the at-tention heads independently yield concentrated probability mass over the image tokens. We define ˆbi as the computable estimator for the true proxy discrepancy bi. We convert the robust grounding en-tropy Hi into this estimator ˆbi, which increases with higher entropy: 
+
+ˆbi ≜ α log(1 + Hi), α ≥ 0, (11) where α acts as a coefficient to scale the penalty relative to the log-probability. This penalty yields the corrected log-score ˆr(i) = log ci − ˆbi. Defining the grounding multiplier 
+
+gi ≜ 11+ Hi , we transform the log-space score into the linear ranking score ui:
+
+ui = ci · gαi = ci · (1 + Hi)−α. (12) Under the kt budget constraint, the optimal commitment set 
+
+Ut is the subset that maximizes the sum of corrected scores: 
+
+Ut = arg max   
+
+> U⊆Ct
+> |U|=kt
+
+X
+
+> i∈U
+
+ˆr(i). (13) Because the objective is separable across candidates, the ex-act optimizer is given by the top-kt positions ranked by ui:
+
+Ut = TopK  {ui}i∈Ct , k t
+
+. (14) 
+
+Bounded estimation error ensures stable and grounded commitments. We provide a detailed description of the VISAGE procedure in the Supplementary Material. In prac-tice, the entire spatial entropy derivation reduces to a highly efficient inference mechanism: VISAGE reweights token proposals monotonically via the multiplier gαi . For a fixed confidence ci, the ranking score ui decreases as the robust 5grounding entropy Hi increases. This monotonic relation-ship ensures that the decoder commits a token only when the token is both confident and validated by localized visual correspondence. Analytically, the VISAGE framework pro-vides a stability guarantee against estimation error between the entropy-based estimator ˆbi and the true proxy discrep-ancy bi. If the spatial entropy estimator ˆbi approximates the proxy discrepancy bi such that the absolute error satisfies 
+
+|ˆbi − bi| ≤ εt for all candidates i ∈ Ct, the resulting ob-jective loss is at most 2ktεt relative to the optimal grounded subset. This 2ktεt bound arises from the potential for a worst-case rank reversal: an overestimated suboptimal to-ken (inflated by +εt) can displace an underestimated opti-mal token (deflated by −εt) in the index, resulting in a max-imum per-token objective loss of 2εt. We provide the for-mal derivation of this stability bound in the Supplementary. By directly addressing the proxy discrepancy, this bounded-error framework ensures the commitment process remains stable and visually grounded. 
+
+## 5. Experiments 
+
+Datasets. To evaluate hallucination mitigation, we utilize POPE [14] to probe basic object existence and Hallusion-Bench [7] to assess language-driven hallucinations and vi-sual illusions. Furthermore, to ensure the grounding in-terventions do not compromise overall generation quality, we benchmark general multimodal capabilities on MMMU-val [37] for college-level, multi-discipline question answer-ing, and MME [5] for comprehensive vision-language tasks. 
+
+Baseline Methods. We evaluate VISAGE against two pri-mary decoding strategies. Our base model is MMaDA [32], which employs standard confidence-based unmasking. Be-cause standard decoding selects tokens based on predicted textual likelihood, standard confidence-based unmasking remains vulnerable to language shortcut bias. As a strong inference-time baseline, we adapt Visual Contrastive De-coding (VCD) [11] to the masked diffusion framework. Originally designed for autoregressive models, we imple-ment VCD by contrasting logit distributions from the orig-inal image against a visually distorted counterpart at each parallel unmasking step. This contrast penalizes reliance on linguistic priors when visual evidence is intentionally de-graded. 
+
+Implementation Details. We build VISAGE decoding upon the MMaDA architecture. Our method uses a fixed spatial entropy quantile threshold β = 0 .25 across all ex-periments. For the grounding penalty, we apply a default of α = 0 .5 for most visually intensive benchmarks. How-ever, for MME, we reduce the penalty to α = 0 .3. Because MME uniquely evaluates both fine-grained perception and complex cognition tasks such as commonsense reasoning and translation, this lower penalty ensures the model re-tains the necessary linguistic and cognitive priors without over-regularizing the visual grounding. We justify this in Section 6.1 via ablation in Table 2. We omit restrictive post-prompts and extend the maximum generation lengths to elicit intermediate token sequences. All evaluated meth-ods share identical generation configurations within a given benchmark for fair comparison. While method-specific hy-perparameters remain constant, generation-specific param-eters vary by task complexity. For POPE, HallusionBench, and MME, we set the generation length and diffusion steps to 256, with a block length of 32. For MMMU-val, we maintain a generation length of 256, but utilize 128 diffu-sion steps and a block length of 64. 
+
+Evaluation. We evaluate model performance across the extended generation trajectories using two strategies. For POPE and MME, we use string-matching rules, comparing the final responses against the ground-truth labels to com-pute F1 metrics and the MME score. For HallusionBench and MMMU-val, we adopt the Qwen3-8B [31] as an exter-nal LLM-as-a-judge. The LLM judge is prompted to an-alyze whether the generated output aligns with the ground truth. 
+
+## 6. Main Results 
+
+Linear Ranking Score Reduces Language Shortcut Exploitation. We present results on hallucination and general purpose benchmarks in Table 1. Our method, VISAGE, yields improvements on hallucination-sensitive benchmarks, with a +7.75% relative gain on Hallusion-Bench, +8.59% on MMMU-val, and +0.26% on POPE over the MMaDA baseline, while sustaining only a negligible relative decrease of -0.81% on MME. The large improve-ment on HallusionBench reflects its unique design. The benchmark exposes models that over-rely on textual priors when faced with deceptive visual contexts, this gain vali-dates our core hypothesis. By penalizing ungrounded to-kens, VISAGE prevents the decoder from defaulting to sta-tistically plausible but unverified language shortcuts, forc-ing it to ground its generation in actual image content. While POPE evaluates object-level hallucination, the rel-ative gain (+0.26%) is compressed by systemic label noise in the underlying dataset. Because we enable intermedi-ate reasoning traces, VISAGE performs exhaustive spatial verification before committing to a token. This rigorous grounding identifies valid objects that are absent from the ground-truth annotations. POPE is constructed using MS COCO [16], which is known to have missing labels and false positive object assertions [25]. Qualitative analysis re-veals numerous instances where VISAGE rightly refutes 6Table 1. VISAGE improves visual reasoning across subject-specific and diagnostic benchmarks. . MMaDA + VISAGE (Ours) consis-tently outperforms the baseline and VCD across multiple benchmarks. We observe substantial gains over the base model, notably +2 .65 
+
+on HallusionBench and +2 .33% on MMMU-val. 
+
+Method MMMU-val 
+
+(Acc % ↑)
+
+HallusionBench 
+
+(Acc % ↑)
+
+POPE 
+
+(F1 ↑)
+
+MME 
+
+(Score ↑)MMaDA (Base) 27.11 34.18 75.97 1383.29 
+
+MMaDA + VCD 28.44 34.80 75.85 1342.21 MMaDA + VISAGE (Ours) 29.44 36.83 76.17 1372.05 Relative Gain % (Ours vs. Base) +8.59% +7.75% +0.26% -0.81% illusion       
+
+> figure
+> math
+> poster
+> video chart
+> map
+> OCR
+> table
+> 32.8
+> 36.6
+> 40.4
+> 44.2
+> 43.4
+> 45.8
+> 48.2
+> 50.6
+> 22.2 24.4 26.6 28.8
+> 35.2
+> 39.4
+> 43.6
+> 47.8
+> 33.6
+> 37.2
+> 40.8
+> 44.4
+> 26.0
+> 28.0
+> 30.0
+> 32.0
+> 28.6
+> 33.2
+> 37.8
+> 42.4
+> 32.4
+> 34.8
+> 37.2
+> 39.6 24.2
+> 27.4
+> 30.6
+> 33.8
+> Baseline VCD Ours
+
+Figure 4. HallusionBench Category Analysis. Radar chart comparing VISAGE against the Baseline and VCD. Our method achieves robust improvements across illusion and spatial-reasoning ( map , figure ) categories. 
+
+incorrect ground-truth assertions (penalized as false nega-tives). Consequently, these inherited label inaccuracies arti-ficially cap the measurable improvement on this benchmark. Detailed qualitative examples of these ground-truth failures are provided in the supplementary material. 
+
+Robustness to Deceptive Visual Contexts. Figure 4 il-lustrates the domains driving our overall performance gain on HallusionBench. VISAGE substantially expands the ac-curacy in highly spatial subsets, such as illusion (≈9%) and 
+
+map (12.5%). High accuracy in these specific categories requires precise feature localization to resolve visually de-ceptive or complex layouts. Notably, VCD offers negligible improvement in the illusion subset, suggesting that while contrastive decoding penalizes generic statistical priors, it fails to explicitly enforce the concentrated spatial verifica-tion needed to overcome deceptive visual prompts. Further-more, we observe consistent improvements across dense, structured formats such as figure , math , and OCR , where fine-grained semantic details are easily hallucinated by lan-guage priors. However, the baseline retains a distinct advan-tage in the video category. Video reasoning requires aggre-gating and grounding information across multiple frames, whereas our method derives grounding from frame-level at-tention without explicitly modeling temporal consistency. Extending the objective correction mechanism to capture cross-frame grounding remains an important direction for future work. 
+
+Grounding-Aware Re-ranking Stabilizes Multi-Step Reasoning. VISAGE achieves a +8.59% relative gain on MMMU-val (Table 1), which requires college-level, disci-pline specific multi-step reasoning. In such rigorous tasks, premature commitment to an ungrounded token during in-termediate reasoning steps often triggers a cascading fail-ure, where subsequent generations condition on the halluci-nated prior rather than the visual input. By re-ranking can-didate tokens via our corrective penalty to the confidence, VISAGE ensures that each step of the reasoning remains anchored to the image. This continuous regularization pre-vents the decoder from drifting into language shortcuts, sta-bilizing the generation of complex, long-form answers. 
+
+Overcoming Prompt-Driven Hallucinations. VISAGE neutralizes hallucinations induced by the language bias of the user’s prompt. Figure 5 illustrates this token-level cor-rection. In the top example, the baseline defaults to a sta-tistical heuristic, asserting the spoon is “placed outside the bowl” rather than verifying the actual spatial coordinates. Our method successfully anchors the generation to the cor-rect visual relationship. The bottom example highlights a more severe lexical trigger: the prompt asked if there are 
+
+“carrots” in an image of engineering tools, both methods correctly conclude with “ No .” However, this lexical trigger (“carrots” ) causes MMaDA to undergo a language short-cut. It ignores the visual evidence of engineering tools and 7Prompt Generation  
+
+> <think> The image shows a bowl of broccoli with a lemon slice and a lemon wedge in the background. The spoon is placed in the bowl, indicating that it is in the bowl.</think> Yes
+> Ground Truth: yes
+> Question:
+> Is the spoon in the bowl? Please answer yes or no.
+
+Prompt Generation  
+
+> Ground Truth: No, all the items here are engineering tools
+> Question:
+> Are there any carrots in this figure?
+> OUR Method:
+> MMaDA:
+> <think> The image shows a bowl of broccoli with a lemon slice and a lemon wedge in the background. The spoon is not inside the bowl, as it is placed outside the bowl.</think> No
+> <think> The image shows a row of tools, including pliers, wrenches, and other hand tools, arranged on a white background. There are no carrots visible in the image. The tools appear to be related to construction or repair work.</think> No
+> OUR Method:
+> MMaDA:
+> <think> The image shows a row of kitchen tools, including spatulas, spatulas, and a tape measure. There are no carrots visible in the image. The answer is no.</think> No
+
+Figure 5. Qualitative comparison of visually grounded yes/no questions. We compare MMaDA and our method on two examples where hallucination arises from language shortcuts. Top: MMaDA incorrectly answers “ No ” by over-relying on the textual prior that a spoon rests outside a bowl. Our method correctly grounds its “ Yes ” decision in localized visual evidence. Bottom: While both methods correctly answer “ No ”, MMaDA hallucinates irrelevant objects in its intermediate thinking trace. In contrast our method maintains strictly visually consistent descriptions. Table 2. Effect of α. Sensitivity analysis of the grounding penalty on MME scores. 
+
+Penalty ( α) MME (Score ↑)0.5 1320.77 0.3 1372.05 
+
+0.1 1362.68 confidently hallucinates “ kitchen tools, including spatulas ”to satisfy the food-related prompt. Our method suppresses this prompt-driven language shortcuts, forcing the model to correctly identify “ pliers ” and “ wrenches .” 
+
+6.1. Ablative Studies. 
+
+Effect of Penalty Factor α. The penalty factor α scales the penalty applied to the language model’s confidence (log-probability). It interpolates between language-driven confi-dence and the grounded multimodal objective, controlling how strongly visually ambiguous tokens are downweighted during commitment. The ablation results in Table 2 support this interpretation. On the MME benchmark, which includes cognition tasks such as Commonsense Reasoning, Text Translation, Nu-merical Calculation, Code Reasoning, a moderate penalty (α = 0 .3) achieves the best score (1372.05). It outperforms a stronger penalty ( α = 0 .5, yielding 1320.77), suggesting that excessive penalization can degrade performance when visual grounding is not the primary source of hallucination. Conversely, applying a weak penalty ( α = 0 .1, yielding 1362.68) fails to adequately suppress premature token com-mitments. Without sufficient regularization of the model’s confidence, the decoder is not forced to seek concentrated visual evidence, leaving it vulnerable to the language short-cuts our method aims to prevent. 
+
+Robustness via β-Quantile Consensus. Table 3 validates the necessity of our β-quantile consensus ( qβ ) for robust grounding entropy. On the MMMU-val benchmark, the 
+
+qβ strategy achieves 29.44% accuracy, outperforming both mean (28.78%) and minimum (28.56%) aggregation. In multimodal transformers, individual attention heads can produce spuriously sharp distributions even when a to-ken is not grounded. A minimum-entropy is therefore vul-8Table 3. Ablative Study on head aggregation. Quantile aggrega-tion improves robustness over mean pooling. 
+
+Aggregation MMMU-val (Acc% ↑)Min over Heads 28.56 Mean over Heads 28.78 
+
+qβ (Ours) 29.44 
+
+nerable to a single sharp head falsely signaling grounding. Conversely, mean pooling dilutes genuine localized signals if most heads remain diffuse. The qβ consensus provides a principled compromise: it requires that visual grounding is consistently concentrated across a non-trivial consensus of heads before assigning grounding penalty. By filtering out both isolated artifacts and uninformative diffuse heads, 
+
+qβ consensus ensures stable and reliable spatial verification during token commitment. 
+
+## 7. Conclusion 
+
+We identify a structural limitation in Multimodal Diffusion Large Language Models (MDLLMs): probability-based masked decoding optimizes a language-only proxy objec-tive, inducing hallucination through language shortcuts. By reframing parallel unmasking as a localized optimization er-ror under objective misspecification, we establish that hallu-cinated tokens arise from a quantifiable proxy discrepancy rather than generative capacity failure. To resolve this ob-jective mismatch, we introduce VISAGE, a training-free re-ranking framework that calibrates the decoding objec-tive at inference time. By deriving a discrepancy estimator from the spatial entropy of cross-attention distributions and enforcing a localization consensus, VISAGE downweights tokens lacking concentrated visual probability mass. Eval-uations across hallucination-sensitive and general-purpose benchmarks demonstrate the robustness of the framework. Our results establish that structural interventions on the dis-crete decoding objective, without parameter updates, re-solve multimodal misalignments in parallel decoding archi-tectures. 
+
+Limitations and Future Work. VISAGE addresses vi-sual grounding during parallel masked decoding for image-to-text generation. The current framework does not explic-itly incorporate the temporal token dimensions characteris-tic of video-based MDLLMs. While spatial entropy gen-eralizes to spatio-temporal attention maps, VISAGE does not enforce cross-frame temporal consistency. Extending the entropy-based consensus to explicitly model motion dy-namics and temporal grounding in video-based parallel de-coding represents a promising direction for future research. 9References 
+
+[1] Jacob Austin, Daniel D Johnson, Jonathan Ho, Daniel Tar-low, and Rianne Van Den Berg. Structured denoising dif-fusion models in discrete state-spaces. Advances in neural information processing systems , 34:17981–17993, 2021. [2] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, et al. Qwen3-vl technical report. arXiv preprint arXiv:2511.21631 , 2025. [3] Fei Deng, Qifei Wang, Wei Wei, Tingbo Hou, and Matthias Grundmann. Prdp: Proximal reward difference prediction for large-scale reward finetuning of diffusion models. In Pro-ceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 7423–7433, 2024. [4] Hanze Dong, Wei Xiong, Deepanshu Goyal, Yihan Zhang, Winnie Chow, Rui Pan, Shizhe Diao, Jipeng Zhang, Kashun Shum, and Tong Zhang. Raft: Reward ranked finetuning for generative foundation model alignment. arXiv preprint arXiv:2304.06767 , 2023. [5] Chaoyou Fu, Peixian Chen, Yunhang Shen, Yulei Qin, Mengdan Zhang, Xu Lin, Jinrui Yang, Xiawu Zheng, Ke Li, Xing Sun, et al. Mme: A comprehensive evaluation bench-mark for multimodal large language models. In The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track , 2025. [6] Yash Goyal, Tejas Khot, Douglas Summers-Stay, Dhruv Ba-tra, and Devi Parikh. Making the v in vqa matter: Elevating the role of image understanding in visual question answer-ing. In Proceedings of the IEEE conference on computer vision and pattern recognition , pages 6904–6913, 2017. [7] Tianrui Guan, Fuxiao Liu, Xiyang Wu, Ruiqi Xian, Zongxia Li, Xiaoyu Liu, Xijun Wang, Lichang Chen, Furong Huang, Yaser Yacoob, et al. Hallusionbench: an advanced diagnos-tic suite for entangled language hallucination and visual il-lusion in large vision-language models. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 14375–14385, 2024. [8] Jonathan Ho and Tim Salimans. Classifier-free diffusion guidance. arXiv preprint arXiv:2207.12598 , 2022. [9] Feng Hong, Geng Yu, Yushi Ye, Haicheng Huang, Huangjie Zheng, Ya Zhang, Yanfeng Wang, and Jiangchao Yao. Wide-in, narrow-out: Revokable decoding for efficient and effec-tive DLLMs. In The Fourteenth International Conference on Learning Representations , 2026. [10] Adam Tauman Kalai, Ofir Nachum, Santosh S Vempala, and Edwin Zhang. Why language models hallucinate. arXiv preprint arXiv:2509.04664 , 2025. [11] Sicong Leng, Hang Zhang, Guanzheng Chen, Xin Li, Shijian Lu, Chunyan Miao, and Lidong Bing. Mitigating object hal-lucinations in large vision-language models through visual contrastive decoding. In Proceedings of the IEEE/CVF Con-ference on Computer Vision and Pattern Recognition , pages 13872–13882, 2024. [12] Shufan Li, Konstantinos Kallidromitis, Hritik Bansal, Akash Gokul, Yusuke Kato, Kazuki Kozuka, Jason Kuen, Zhe Lin, Kai-Wei Chang, and Aditya Grover. Lavida: A large diffu-sion language model for multimodal understanding. arXiv preprint arXiv:2505.16839 , 2025. [13] Xiang Li, John Thickstun, Ishaan Gulrajani, Percy S Liang, and Tatsunori B Hashimoto. Diffusion-lm improves control-lable text generation. Advances in neural information pro-cessing systems , 35:4328–4343, 2022. [14] Yifan Li, Yifan Du, Kun Zhou, Jinpeng Wang, Wayne Xin Zhao, and Ji-Rong Wen. Evaluating object hallucination in large vision-language models. In Proceedings of the 2023 conference on empirical methods in natural language pro-cessing , pages 292–305, 2023. [15] Zhanhao Liang, Yuhui Yuan, Shuyang Gu, Bohan Chen, Tiankai Hang, Ji Li, and Liang Zheng. Step-aware prefer-ence optimization: Aligning preference with denoising per-formance at each step. arXiv preprint arXiv:2406.04314 , 2 (5):7, 2024. [16] Tsung-Yi Lin, Michael Maire, Serge Belongie, James Hays, Pietro Perona, Deva Ramanan, Piotr Doll´ ar, and C Lawrence Zitnick. Microsoft coco: Common objects in context. In 
+
+European conference on computer vision , pages 740–755. Springer, 2014. [17] Shen Nie, Fengqi Zhu, Zebin You, Xiaolu Zhang, Jingyang Ou, Jun Hu, Jun Zhou, Yankai Lin, Ji-Rong Wen, and Chongxuan Li. Large language diffusion models. arXiv preprint arXiv:2502.09992 , 2025. [18] Jan Peters and Stefan Schaal. Reinforcement learning by reward-weighted regression for operational space control. In 
+
+Proceedings of the 24th international conference on Machine learning , pages 745–750, 2007. [19] Rafael Rafailov, Archit Sharma, Eric Mitchell, Christo-pher D Manning, Stefano Ermon, and Chelsea Finn. Direct preference optimization: Your language model is secretly a reward model. Advances in neural information processing systems , 36:53728–53741, 2023. [20] Sreetama Sarkar, Yue Che, Alex Gavin, Peter Anthony Beerel, and Souvik Kundu. Mitigating hallucinations in vision-language models through image-guided head suppres-sion. In Proceedings of the 2025 Conference on Empiri-cal Methods in Natural Language Processing , pages 12492– 12511, 2025. [21] Dazhong Shen, Guanglu Song, Zeyue Xue, Fu-Yun Wang, and Yu Liu. Rethinking the spatial inconsistency in classifier-free diffusion guidance. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition ,pages 9370–9379, 2024. [22] Yifei Shen, Xinyang Jiang, Yifan Yang, Yezhen Wang, Dongqi Han, and Dongsheng Li. Understanding and improv-ing training-free loss-based diffusion guidance. Advances in Neural Information Processing Systems , 37:108974– 109002, 2024. [23] Changhao Shi, Haomiao Ni, Kai Li, Shaobo Han, Mingfu Liang, and Martin Renqiang Min. Exploring compositional visual generation with latent classifier guidance. In Proceed-ings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 853–862, 2023. [24] Gemma Team, Thomas Mesnard, Cassidy Hardin, Robert Dadashi, Surya Bhupatiraju, Shreya Pathak, Laurent Sifre, 
+
+10 Morgane Rivi` ere, Mihir Sanjay Kale, Juliette Love, et al. Gemma: Open models based on gemini research and tech-nology. arXiv preprint arXiv:2403.08295 , 2024. [25] Ulyana Tkachenko, Aditya Thyagarajan, and Jonas Mueller. Objectlab: Automated diagnosis of mislabeled images in ob-ject detection data. arXiv preprint arXiv:2309.00832 , 2023. [26] Bram Wallace, Akash Gokul, Stefano Ermon, and Nikhil Naik. End-to-end diffusion latent optimization improves classifier guidance. In Proceedings of the IEEE/CVF Inter-national Conference on Computer Vision , pages 7280–7290, 2023. [27] Bram Wallace, Meihua Dang, Rafael Rafailov, Linqi Zhou, Aaron Lou, Senthil Purushwalkam, Stefano Ermon, Caiming Xiong, Shafiq Joty, and Nikhil Naik. Diffusion model align-ment using direct preference optimization. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 8228–8238, 2024. [28] Weiyun Wang, Zhangwei Gao, Lixin Gu, Hengjun Pu, Long Cui, Xingguang Wei, Zhaoyang Liu, Linglin Jing, Shenglong Ye, Jie Shao, et al. Internvl3. 5: Advancing open-source multimodal models in versatility, reasoning, and efficiency. 
+
+arXiv preprint arXiv:2508.18265 , 2025. [29] Yi Xin, Qi Qin, Siqi Luo, Kaiwen Zhu, Juncheng Yan, Yan Tai, Jiayi Lei, Yuewen Cao, Keqi Wang, Yibin Wang, et al. Lumina-dimoo: An omni diffusion large language model for multi-modal generation and understanding. arXiv preprint arXiv:2510.06308 , 2025. [30] Xinhao Xu, Hui Chen, Mengyao Lyu, Sicheng Zhao, Yizhe Xiong, Zijia Lin, Jungong Han, and Guiguang Ding. Mit-igating hallucinations in multi-modal large language mod-els via image token attention-guided decoding. In Proceed-ings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) ,pages 1571–1590, Albuquerque, New Mexico, 2025. Asso-ciation for Computational Linguistics. [31] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. [32] Ling Yang, Ye Tian, Bowen Li, Xinchen Zhang, Ke Shen, Yunhai Tong, and Mengdi Wang. MMaDA: Multimodal large diffusion language models. In The Thirty-ninth An-nual Conference on Neural Information Processing Systems ,2025. [33] Jiacheng Ye, Zhihui Xie, Lin Zheng, Jiahui Gao, Zirui Wu, Xin Jiang, Zhenguo Li, and Lingpeng Kong. Dream 7b: Diffusion large language models. arXiv preprint arXiv:2508.15487 , 2025. [34] Shukang Yin, Chaoyou Fu, Sirui Zhao, Tong Xu, Hao Wang, Dianbo Sui, Yunhang Shen, Ke Li, Xing Sun, and Enhong Chen. Woodpecker: Hallucination correction for multimodal large language models. Science China Information Sciences ,67(12):220105, 2024. [35] Jiwen Yu, Yinhuai Wang, Chen Zhao, Bernard Ghanem, and Jian Zhang. Freedom: Training-free energy-guided condi-tional diffusion model. In Proceedings of the IEEE/CVF In-ternational Conference on Computer Vision , pages 23174– 23184, 2023. [36] Runpeng Yu, Xinyin Ma, and Xinchao Wang. Dimple: Dis-crete diffusion multimodal large language model with paral-lel decoding. arXiv preprint arXiv:2505.16990 , 2025. [37] Xiang Yue, Yuansheng Ni, Kai Zhang, Tianyu Zheng, Ruoqi Liu, Ge Zhang, Samuel Stevens, Dongfu Jiang, Weiming Ren, Yuxuan Sun, et al. Mmmu: A massive multi-discipline multimodal understanding and reasoning benchmark for ex-pert agi. In Proceedings of the IEEE/CVF conference on computer vision and pattern recognition , pages 9556–9567, 2024. [38] Feiran Zhang, Yixin Wu, Zhenghua Wang, Xiaohua Wang, Changze Lv, Xuanjing Huang, and Xiaoqing Zheng. Vib-probe: Detecting and mitigating hallucinations in vision-language models via variational information bottleneck. 
+
+arXiv preprint arXiv:2601.05547 , 2026. [39] Linxi Zhao, Yihe Deng, Weitong Zhang, and Quanquan Gu. Mitigating object hallucination in large vision-language models via image-grounded guidance. In Forty-second In-ternational Conference on Machine Learning , 2025. 
+
+11 Supplementary Material 
+
+## A. Analytical Derivation of the Stability Bound 
+
+In this section, we provide the formal derivation bounding the objective loss of the VISAGE commitment step under estima-tion error. Let Ct denote the set of candidate masked indices at decoding step t. Let r⋆(i) be the intended multimodal objective score for candidate i ∈ Ct, and let ˆr(i) be the VISAGE corrected log-score. We assume the spatial entropy estimator bounds the proxy discrepancy error such that for all i ∈ Ct:
+
+|ˆr(i) − r⋆(i)| ≤ εt. (A.1) Under the budget constraint kt, let U ⋆ denote the optimal commitment set that maximizes the intended objective, and let 
+
+ˆU denote the set selected by VISAGE via the corrected log-score: 
+
+U ⋆ = arg max   
+
+> U⊆Ct
+> |U|=kt
+
+X
+
+> i∈U
+
+r⋆(i), (A.2) 
+
+ˆU = arg max   
+
+> U⊆Ct
+> |U|=kt
+
+X
+
+> i∈U
+
+ˆr(i). (A.3) We define the objective loss L incurred by selecting ˆU instead of the optimal set U ⋆ as: 
+
+L = X 
+
+> j∈U⋆
+
+r⋆(j) − X 
+
+> i∈ˆU
+
+r⋆(i). (A.4) To bound the objective loss L, we partition the sets into their intersection and disjoint components. Let Sshared = U ⋆ ∩ ˆU
+
+denote the tokens correctly selected, Smissed = U ⋆ \ ˆU denote the optimal tokens rejected, and Sfalse = ˆU \ U ⋆ denote the suboptimal tokens falsely accepted. Because both U ⋆ and ˆU have exactly kt elements, the disjoint sets have equal cardinality: 
+
+|Smissed | = |Sfalse | = m, where m ≤ kt.The objective loss simplifies to the difference over the disjoint sets: 
+
+L = X
+
+> j∈Smissed
+
+r⋆(j) − X
+
+> i∈Sfalse
+
+r⋆(i). (A.5) From the bounded error assumption in Equation A.1, we bound the intended scores using the estimated scores: 
+
+r⋆(j) ≤ ˆr(j) + εt ∀j ∈ Smissed , (A.6) 
+
+r⋆(i) ≥ ˆr(i) − εt ∀i ∈ Sfalse . (A.7) Substituting the inequalities from Equations A.6 and A.7 into Equation A.5 yields: 
+
+L ≤ X
+
+> j∈Smissed
+
+ ˆr(j) + εt
+
+ − X
+
+> i∈Sfalse
+
+ ˆr(i) − εt
+
+ (A.8) 
+
+=
+
+ X
+
+> j∈Smissed
+
+ˆr(j) − X
+
+> i∈Sfalse
+
+ˆr(i)
+
+ + 2 mε t. (A.9) By the definition of ˆU , the set ˆU maximizes the sum of the estimated scores ˆr. Therefore, the sum of the estimated scores for the selected tokens in Sfalse must be greater than or equal to the sum of the estimated scores for the rejected tokens in 
+
+Smissed : X
+
+> i∈Sfalse
+
+ˆr(i) ≥ X
+
+> j∈Smissed
+
+ˆr(j). (A.10) 1Algorithm 1 Visual Attention Grounding Entropy (VISAGE) Decoding 
+
+Require: Text instruction X, visual tokens v, answer length L, image indices Iimg , mask token [MASK] 
+
+Require: Steps N , unmask schedule {kt}Nt=1 , penalty α ≥ 0, quantile β ∈ (0 , 1] , smoothing δ > 0 
+
+> 1:
+
+Y ← [X; v; [MASK] , . . . , [MASK] ] ▷ L masks appended after text and vision  
+
+> 2:
+
+A ← {| X| + |v| + 1 , . . . , |X| + |v| + L} ▷ Isolate response indices  
+
+> 3:
+
+for t = 1 to N do  
+
+> 4:
+
+Run model on Y to obtain discrete distributions pθ and last-layer cross-attentions A(t) 
+
+> 5:
+
+Ct ← { i ∈ A : Yi = [MASK] } ▷ Identify masked candidate positions  
+
+> 6:
+
+if Ct = ∅ then  
+
+> 7:
+
+break  
+
+> 8:
+
+end if  
+
+> 9:
+
+for all i ∈ Ct do  
+
+> 10:
+
+ˆyi ← arg max ν∈V pθ (yi = ν | Y ) ▷ Greedy token proposal  
+
+> 11:
+
+ci ← pθ (yi = ˆ yi | Y ) ▷ Calculate initial probability mass  
+
+> 12:
+
+for h = 1 to M do  
+
+> 13:
+
+Z ← P 
+
+> k∈I img
+
+A(t,h ) 
+
+> i,k
+
++ δ 
+
+> 14:
+
+˜A(t,h ) 
+
+> i,j
+
+← (A(t,h ) 
+
+> i,j
+
++ δ/ |I img |)/Z ∀j ∈ I img  
+
+> 15:
+
+H(t,h ) 
+
+> i
+
+← − P
+
+> j∈I img
+
+˜A(t,h ) 
+
+> i,j
+
+log( ˜A(t,h ) 
+
+> i,j
+
+) 
+
+> 16:
+
+end for  
+
+> 17:
+
+Hi ← qβ ({H(t,h ) 
+
+> i
+
+}Mh=1 ) ▷ Apply β-quantile localization consensus  
+
+> 18:
+
+ui ← ci · (1 + Hi)−α ▷ Calculate linear ranking score  
+
+> 19:
+
+end for  
+
+> 20:
+
+K ← min( kt, |Ct|) 
+
+> 21:
+
+Ut ← TopK( {ui}i∈Ct , K ) 
+
+> 22:
+
+for all i ∈ Ut do  
+
+> 23:
+
+Yi ← ˆyi ▷ Commit tokens at selected indices  
+
+> 24:
+
+end for  
+
+> 25:
+
+end for  
+
+> 26:
+
+return Y|X|+|v|+1: |X|+|v|+L
+
+Consequently, the difference term 
+
+P 
+
+> j∈Smissed
+
+ˆr(j) − P 
+
+> i∈Sfalse
+
+ˆr(i)
+
+
+
+is less than or equal to zero. Applying this inequality to Equation A.9, we obtain: 
+
+L ≤ 0 + 2 mε t. (A.11) Because the number of swapped tokens m is bounded by the unmasking budget kt (m ≤ kt), the maximum objective loss is bounded: 
+
+L ≤ 2ktεt. (A.12) This derivation concludes the proof. The factor of two formally captures the worst-case rank reversal, where a suboptimal candidate is overestimated by +εt and an optimal candidate is underestimated by −εt.
+
+## B. Detailed VISAGE Decoding Procedure 
+
+Algorithm 1 provides the pseudo-code for VISAGE. The algorithm illustrates the implementation within the parallel masked decoding loop. The procedure demonstrates how VISAGE interacts with the standard unmasking schedule ( {kt}Nt=1 ). At each step t, the algorithm isolates the masked candidate positions ( Ct), extracts their corresponding last-layer cross-attention maps ( A(t)), and computes the head-wise spatial entropies. After applying the β-quantile consensus ( qβ ) to obtain the robust grounding entropy ( Hi), the initial confidence ( ci) is monotonically re-weighted to produce the linear ranking score ( ui). The top-K tokens ranked by ui are then committed to the sequence Y . Because the algorithm utilizes the internal attention distri-butions already computed during the forward pass of the MDLLM, VISAGE introduces negligible computational overhead and requires no auxiliary verification models. 2C. Qualitative Examples 
+
+C.1. HallusionBench 
+
+Standard decoding algorithms generate ungrounded predictions when localized visual evidence contradicts strong statisti-cal language priors or human perceptual biases. As illustrated in Figure A.1, the baseline model (MMaDA [32]) is misled by these contextual priors within the HallusionBench benchmark [7], whereas VISAGE recovers the multimodal objective by penalizing unverified token commitments. For instance, when evaluating a perspective illusion (top row), MMaDA in-corporates the probability mass of the converging lines of a drawn hallway, hallucinating that two identical silhouettes are different heights based on their relative placement in the foreground versus the background. VISAGE bypasses the con-textual prior, deriving its probability mass directly from the raw spatial dimensions to affirm the silhouettes are identical in height. Similarly, with a color illusion (middle row), the baseline assigns probability mass to a surrounding striped pattern, incorrectly concluding that two identical circles are different colors. By enforcing the spatial consensus, VISAGE suppresses the language shortcut and establishes that the pixel-level visual evidence for both objects is identical. This over-reliance on language priors also extends to geometric deceptions (bottom row). When asked if the lines of blocks in a distorted pattern are parallel, MMaDA defaults to a textual heuristic defining a checkerboard (“each row is parallel to the previous row”) and answers incorrectly. VISAGE bypasses the linguistic assumption, utilizing the localized visual probability mass of the actual arrangement to identify the non-parallel structure. 
+
+C.2. MMMU-val Benchmark 
+
+In tasks requiring multi-discipline comprehension, premature token commitments corrupt the intermediate decoding steps of the MDLLM. As demonstrated in Figure A.2, VISAGE stabilizes the refinement process across diverse domains within the MMMU-val benchmark [37]. In visual motif recognition (top row), MMaDA relies on shallow associations to classify a Lord of the Rings poster as a generic “Fable.” VISAGE enforces spatial consensus over the visual elements to identify the image as a “Quest Story.” This stabilization extends to multimodal reading comprehension; when interpreting Langston Hughes’ poem “Dreams” (middle row), the baseline model assigns probability mass to a loosely related thematic option. VISAGE maintains alignment with the provided text to extract the direct instructional message. Furthermore, in a historical reasoning scenario (bottom row), MMaDA is skewed by broad statistical priors and object hallucination. When analyzing a Japanese statue, the baseline hallucinates a non-existent “bench” and defaults to a generalized regional assumption of a highly patriarchal society. By utilizing localized visual cues, the entropy-based framework suppresses the ungrounded priors, asserting that Japanese women exercised societal influence during the period. Across the tasks, VISAGE anchors its probability mass in the provided evidence, preventing the decoder from committing the ungrounded language shortcuts that confound the baseline. 
+
+C.3. POPE Benchmark 
+
+While VISAGE mitigates hallucinations, the measurable relative gain on the POPE benchmark is capped by inherited label noise. As illustrated in Figure A.3, POPE [14] evaluation relies on MS COCO annotations, which contain omissions and imprecise labels [25]. In these scenarios, the spatial entropy consensus selected by VISAGE conflicts with the noisy ground truth. For instance, when the ground truth asserts the presence of a toothbrush in a bathroom scene (top row), MMaDA hallucinates the object to satisfy the affirmative prompt. Because VISAGE demands concentrated visual probability mass, the framework refutes the object’s existence but is penalized as a false negative. Similarly, when the dataset loosely categorizes a white utility van as a “truck” (middle row), the baseline complies with the prompt. The re-ranking framework identifies the vehicle as a van and rejects the generic label, resulting in a dataset penalty. Furthermore, the spatial consensus allows VISAGE to discover valid, unannotated objects that the baseline misses, such as a bottle resting on a shower shelf (bottom row). These instances highlight that while confidence-based models overfit to flawed dataset priors, VISAGE requires token commitments to exhibit localized visual evidence. 
+
+C.4. Boundary Conditions: Temporal Dynamics 
+
+Because VISAGE derives the re-ranking penalty strictly from spatial attention distributions, the framework inherits the tem-poral boundaries of the underlying MDLLM. As shown in Figure A.4, evaluating temporally shuffled video sequences demon-strates this architectural boundary. When presented with out-of-order frames of a fighter moving around in a fighting ring (top row), both models lack a mechanism to verify chronological ordering. The baseline exhibits unstable decoding steps, shifting the output to an incorrect affirmative response. This shared limitation extends to a shuffled sequence of baseball players em-bracing (bottom row). Because the image-level spatial entropy remains localized on the subjects in each independent frame, VISAGE validates the spatial presence of the actors but does not penalize the sequence disorder. While the baseline outputs 3the correct final label (“NO”) for the prompt, the intermediate decoding steps rely on hallucinations, generating a non-existent “NO” text overlay to justify the decision. These instances confirm that while entropy-based re-ranking enforces strict spatial localization, integrating cross-frame temporal dynamics represents a structural boundary for current image-to-text parallel decoding frameworks. 
+
+## D. LLM-as-a-judge Evaluation 
+
+To evaluate the reasoning text generated by the MDLLM, we employ an LLM-as-a-judge framework with prompts tailored to each benchmark. For HallusionBench we adopt the evaluation prompt from [7] (P1). The evaluator acts as an “intelligent teacher” to assess whether the predicted answer conflicts with the ground truth, classifying the response as “correct,” “incor-rect,” or “unclear.” Conversely, the diverse multi-discipline questions in the MMMU benchmark require a targeted evaluator approach, for which we utilize the prompt design introduced in [9]. Because the MDLLM generates lengthy intermediate decoding steps, the P2 prompt instructs the judge to isolate the final answer and assign a binary score (1 or 0). The prompt is designed to handle multiple-choice and open-ended formats by accounting for semantic equivalence, numerical precision, and correct units, while ignoring superficial formatting differences. 
+
+P1: HallusionBench LLM-as-a-judge Prompt 
+
+Imagine you are an intelligent teacher. Thoroughly read the question, reference answer and the prediction answer to ensure a clear understanding of the information provided. Assess the correctness of the predictions. If the prediction answer does not conflict with the reference answer, please generate “correct”. If the prediction answer conflict with the reference answer, please generate “incorrect”. If the prediction answer is unclear about the answer, please generate ”unclear”. 
+
+P2: MMMU LLM-as-a-judge Prompt 
+
+You are a strict evaluator assessing answer correctness. You must output 1 for fully correct answers and 0 for any other case. # Input Question: {question }
+
+Ground Truth Answer: {answer }
+
+Model Prediction: {pred }
+
+# Evaluation Rules - The model prediction may contain the reasoning process, you should spot the final answer from it. - For multiple-choice questions: Score 1 if the predicted answer matches the ground truth answer, it can be directly in option letters or the content of the options. - For open-ended questions: * Score 1 if the prediction matches the answer semantically, it can be in different format. * Score 0 for partially correct answers or answers with extra incorrect information, even if the reasoning process is correct. - Ignore minor differences in formatting, capitalization, or spacing since the model may explain in a different way. - Treat numerical answers as correct if they match within reasonable precision - For questions requiring units, both value and unit must be correct # Strict Output format 0 or 1 4Prompt Generation 
+
+To determine if the two men in the images are the same height, we need to compare the silhouettes of the men ... This suggests that the men are the same height. Therefore, the answer is: Yes </think> Yes 
+
+Ground Truth: Yes, these two men are the same height. 
+
+Question: 
+
+Are these two men in the images the same height? Yes or No 
+
+Prompt Generation 
+
+Ground Truth: No, two circles are the same color. 
+
+Question: 
+
+The image shows a color illusion. Are two circles in the image different color? yes or no 
+
+VISAGE (Ours): 
+
+MMaDA: 
+
+To determine if the two men in the images are the same height … From the image, we can see that the man on the left is standing with his hands in his pockets, and the man on the right is standing with his arms at his sides ... Therefore, the two men are not the same height.</think> No 
+
+... The image shows a consistent pattern of blue and yellow circles … occurs when the colors are arranged in such a way that they appear to be the same color. Therefore, two circles in the image are the same color. </think> no 
+
+VISAGE (Ours): 
+
+MMaDA: 
+
+To determine if two circles in the image are different colors, we need to analyze the color illusion provided. The image shows two circles with different colors: blue and yellow … and the colors of the circles are distinct. Therefore, the answer is: yes </think> yes 
+
+Prompt Generation 
+
+Ground Truth: No, lines of blocks are not parallel 
+
+Question: 
+
+Whether lines of blocks are parallel? Yes or No 
+
+<think> To determine whether lines of blocks are parallel, we need to analyze the arrangement... The blocks are arranged in a grid-like pattern... This means that the lines of blocks are not parallel. Therefore, the answer is: No </think> no 
+
+VISAGE (Ours): 
+
+MMaDA: 
+
+<think>To determine whether lines of blocks are parallel, we need to consider the structure of a checkerboard pattern... In this pattern, each row is represented by a block, and each row is parallel to the previous row. Therefore, the lines of blocks are parallel. </think> yes Figure A.1. Qualitative comparison on HallusionBench. We present MMaDA (baseline) and VISAGE generations across three deceptive visual contexts. Top row: A perspective illusion where MMaDA hallucinates a height difference, while VISAGE correctly anchors its prediction on the actual silhouettes. Middle row: A color illusion where the baseline misinterprets uniform circles as distinct colors due to the background patterns. Bottom row: A geometric deception where MMaDA relies on a linguistic shortcut about checkerboards, whereas VISAGE correctly grounds its answer in the localized visual arrangement. In all cases, VISAGE successfully aligns with the ground truth by suppressing ungrounded language priors. 
+
+5Prompt Generation 
+
+<think> The term that refers to the adventure stories with a search motif is "quest Stories." </think> D 
+
+Ground Truth: D
+
+Question: 
+
+Refer to the figure <image 1>, which term refers to adventure stories with asearch motif? 
+
+Prompt Generation 
+
+Ground Truth: C
+
+VISAGE (Ours): 
+
+MMaDA: 
+
+<think> The term that refers to the adventure stories with a search motif is "Fable." The image shows a collection of adventure stories, so the correct answer is Fable. </think> A 
+
+<think> To determine which option best relates to the poem 'Dreams', let's analyze the content of each option…C. Keep hold of your dream: Holding your dream tight is a direct interpretation of the poem's message, which is to hold onto and not let go of your dreams. Based on this analysis, the correct answer is: C 
+
+VISAGE (Ours): 
+
+MMaDA: 
+
+<think> To determine which option best relates to the poem 'Dreams', let's analyze the content of each option… B. The danger of letting go of a dream: This option is relevant to the poem, as it directly addresses the poem's central theme…. Based on this analysis, the correct answer is B.</think> B 
+
+Prompt Generation 
+
+Ground Truth: A
+
+<think> To determine which characteristic represents the period 600-1450 C.E., let's analyze each option: Option A: "Japanese women exercised influence on society"- This statement is a significant fact in Japan during the period, Women had a significant role in society, despite the influence of men in other areas…Therefore, the correct answer is: A 
+
+VISAGE (Ours): 
+
+MMaDA: 
+
+<think> To determine which characteristic represents the period 600-1450 C.E., we need to analyze the image: 1. The image shows a statue of a woman, a well-known figure in Japan, sitting on a bench … the correct answer is: C. Japanese society was highly patriarchal, much like Chinese society. Therefore, the answer is: C </think>C   
+
+> A. Fable B. Humorous Tale C. Theme D. Quest Stories
+
+Options: 
+
+Question: 
+
+Which of the following options best relates to the poem 'Dreams' <image 1>? 
+
+> A. The father is compared to a gypsy. B. The danger of letting go of a dream. C. Keep hold of your dream. D. Let's celebrate bold women!
+
+Options: 
+
+Question: 
+
+The <image 1> represents which of the following characteristics of the period 600-1450 C.E.? 
+
+> A. Japanese women exercised influenc B. Japanese women had equality. C. Japanese society was patriarchal. D. Chinese views influenced Japan.
+
+Options: Figure A.2. Qualitative comparison on MMMU-val. We present MMaDA (baseline) and VISAGE generations on MMMU-val Bench-mark. Top row: A visual motif recognition task where MMaDA incorrectly classifies a Lord of the Rings poster as a generic “Fable,” while VISAGE correctly identifies it as a “Quest Story”. Middle row: A reading comprehension task where the baseline selects a loosely related thematic option for a Langston Hughes poem, whereas VISAGE maintains strict alignment with the text to extract the direct instructional message. Bottom row: A historical reasoning task where MMaDA hallucinates a bench and defaults to a broad regional prior (patriarchal society) rather than analyzing the specific visual and contextual cues that indicate Japanese women exercised societal influence during this period. In all three examples, VISAGE successfully anchors its reasoning in the provided evidence, avoiding the shallow linguistic shortcuts that mislead the baseline. 
+
+6Prompt Generation 
+
+<think> The image shows a bathroom with a toilet, a sink, and a mirror above the sink. The sink has a faucet and a soap dispenser. There is a black cabinet with a drawer below it. The wall is painted white, and there is a light switch on the wall. The door is open, and the floor is tiled.</think> no 
+
+Ground Truth: yes 
+
+Question: 
+
+Is there a toothbrush in the image? 
+
+Prompt Generation 
+
+Ground Truth: yes 
+
+Question: 
+
+Is there a truck in the image? 
+
+VISAGE (Ours): 
+
+MMaDA: 
+
+<think> The image shows a bathroom with a toilet, a sink, and a mirror above the sink. The sink has a faucet and a soap dispenser. There is a black cabinet with a drawer below it. The wall is painted white, and there is a light switch on the wall. The door is open, revealing a hallway. </think> yes, there is a toothbrush in the image. 
+
+<think> The image shows a white van with a satellite dish on top, parked in front of a red brick building. The van appears to be a mobile home or a utility vehicle, possibly used for communication or broadcasting purposes … </think> no, there is no truck in the image. 
+
+VISAGE (Ours): 
+
+MMaDA: 
+
+<think> The image shows a white van with a satellite dish on top, parked in front of a red brick building. The van appears to be a mobile home or a utility vehicle, possibly used for communication or broadcasting purposes … </think> yes, there is a truck in the image. 
+
+Prompt Generation 
+
+Ground Truth: no 
+
+Question: 
+
+Is there a bottle in the image? 
+
+<think> The image shows a bathroom with a green tiled wall, a sink, and a mirror. There is a glass shower enclosure with a silver handle, and a small shelf with a bottle on it. The floor is tiled, and there is a wooden chair in the foreground. The lighting is bright, and the overall setting appears clean and modern.</think> yes, there is a bottle in the image. 
+
+VISAGE (Ours): 
+
+MMaDA: 
+
+<think> The image shows a bathroom with a green tiled wall, a black bench, and a mirror above the sink. There is a shower area with a glass door, and the floor is tiled. The lighting is bright, and the overall setting appears to be a modern, clean bathroom. There is no visible bottle in the image.</think> no, there is no bottle in the image. Figure A.3. Ground-truth label noise in POPE. We present examples where VISAGE correctly grounds its generation in the visual evidence but is penalized as incorrect due to flawed or missing annotations inherited from the MS COCO dataset. Top row: The ground truth falsely asserts a toothbrush is present. MMaDA hallucinates the object to satisfy the prompt, while VISAGE correctly refutes its existence. Middle row: The ground truth loosely labels a white van as a “truck.” VISAGE precisely identifies the vehicle as a van and rejects the generic truck label, whereas the baseline complies. Bottom row: The ground truth fails to account for unannotated bottles resting on the shower shelf. VISAGE successfully discovers them through rigorous spatial grounding. These instances demonstrate issues with POPE’s annotation quality, thereby capping the measurable relative gains on the benchmark. 
+
+7Prompt 
+
+Generation 
+
+Ground Truth: The images are not in correct order 
+
+He is running counterclockwise. According to the positive sequence of the images, are they in the correct order? Answer in one sentence. 
+
+VISAGE (Ours): 
+
+MMaDA: 
+
+<think> The sequence of images appears to be counterclockwise, as indicated by the movement of the crowd and the direction of the camera. The sequence of images is counterclockwise. 
+
+<think> The sequence of images appears to be in the correct order, as the first image shows a crowd of people in a stadium, the second image shows a person on a track, and the third image shows a person on a track. This sequence suggests that the person is running counterclockwise, as indicated by the text provided.</think> Yes 
+
+Prompt 
+
+Generation 
+
+Ground Truth: The images are not in correct order 
+
+They are hugging. According to the positive sequence of the images, are they in the correct order? Answer in one sentence. 
+
+VISAGE (Ours): 
+
+MMaDA: 
+
+<think> The image shows two individuals embracing, with one person in the foreground and the other in the background … The text overlay indicates that the image is in the correct sequence, with the person in the foreground being the one in the correct order.</think> Yes, they are in the correct order. 
+
+<think> The image shows two individuals embracing, with one person in the foreground and the other in the background … The text overlay at the bottom of the image reads "NO." </think> NO Figure A.4. Temporal failure cases. We present examples where both the baseline (MMaDA) and VISAGE struggle to evaluate out-of-order video frames. Top row: Given a shuffled sequence of a fighter moving around in the fighting ring, both models erroneously confirm the chronological order, failing to capture the true motion dynamics. However, the baseline changes it’s answer to “Yes” in the end. Bottom row: For a shuffled sequence of baseball players hugging, VISAGE again fails to identify the temporal inconsistency. Notably, while the baseline outputs the correct final answer (“NO”), its intermediate reasoning reveals hallucinations. It falsely claims a non-existent text overlay that provided the answer. These cases demonstrate that without explicit spatio-temporal modeling, both methods remain vulnerable to temporal reasoning failures, even when the baseline occasionally outputs the correct label by chance. 
+
+8
