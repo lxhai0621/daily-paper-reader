@@ -1,0 +1,765 @@
+Title: Finding Memory Leaks in C/C++ Programs via Neuro-Symbolic Augmented Static Analysis
+
+URL Source: https://arxiv.org/pdf/2603.27224v1
+
+Published Time: Tue, 31 Mar 2026 00:34:40 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Finding Memory Leaks in C/C++ Programs via Neuro-Symbolic Augmented Static Analysis 
+
+# Huihui Huang 
+
+Singapore Management University Singapore hhhuang@smu.edu.sg 
+
+# Jieke Shi 
+
+Singapore Management University Singapore jiekeshi@smu.edu.sg 
+
+# Bo Wang 
+
+Beijing Jiaotong University Beijing, China wangbo_cs@bjtu.edu.cn 
+
+# Zhou Yang 
+
+University of Alberta Alberta Machine Intelligence Institute Alberta, Canada zy25@ualberta.ca 
+
+# David Lo 
+
+Singapore Management University Singapore davidlo@smu.edu.sg 
+
+## Abstract 
+
+Memory leaks remain prevalent in real-world C/C++ software. Static analyzers such as CodeQL provide scalable program anal-ysis but frequently miss such bugs because they cannot recog-nize project-specific custom memory-management functions and lack path-sensitive control-flow modeling. We present MemHint , a neuro-symbolic pipeline that addresses both limitations by combin-ing LLMs’ semantic understanding of code with Z3-based symbolic reasoning. MemHint parses the target codebase and applies an LLM to classify each function as a memory allocator, deallocator, or neither, producing function summaries that record which ar-gument or return value carries memory ownership, extending the analyzer’s built-in knowledge beyond standard primitives such as 
+
+malloc and free . A Z3-based validation step checks each summary against the function’s control-flow graph, discarding those whose claimed memory operation is unreachable on any feasible path. The validated summaries are injected into CodeQL and Infer via their respective extension mechanisms. Z3 path feasibility filtering then eliminates warnings on infeasible paths, and a final LLM-based vali-dation step confirms whether each remaining warning is a genuine bug. On seven real-world C/C++ projects totaling over 3.4M lines of code, MemHint detects 52 unique memory leaks (47 confirmed/-fixed, 4 CVEs submitted) at approximately $1.7 per detected bug, compared to 19 by vanilla CodeQL and 3 by vanilla Infer. 
+
+## Keywords 
+
+Memory Leak Detection, Static Analysis, Large Language Models, Neuro-Symbolic Analysis, Constraint Solving 
+
+ACM Reference Format: 
+
+Huihui Huang, Jieke Shi, Bo Wang, Zhou Yang, and David Lo. 2026. Finding Memory Leaks in C/C++ Programs via Neuro-Symbolic Augmented Static  
+
+> Permission to make digital or hard copies of all or part of this work for personal or classroom use is granted without fee provided that copies are not made or distributed for profit or commercial advantage and that copies bear this notice and the full citation on the first page. Copyrights for components of this work owned by others than the author(s) must be honored. Abstracting with credit is permitted. To copy otherwise, or republish, to post on servers or to redistribute to lists, requires prior specific permission and/or a fee. Request permissions from permissions@acm.org.
+> Conference acronym ’XX, Woodstock, NY
+> ©2026 Copyright held by the owner/author(s). Publication rights licensed to ACM. ACM ISBN 978-x-xxxx-xxxx-x/YYYY/MM https://doi.org/10.1145/nnnnnnn.nnnnnnn
+
+Analysis . In Proceedings of Conference Title (Conference acronym ’XX). ACM, New York, NY, USA, 12 pages. https://doi.org/10.1145/nnnnnnn.nnnnnnn 
+
+## 1 Introduction 
+
+C/C++, as programming languages with explicit memory man-agement, require developers to manually deallocate memory re-gions that are no longer needed. Failure to do so results in memory leaks : unreleased memory cannot be reclaimed by the operating system, gradually depleting system resources and potentially re-sulting in system failures [ 12 , 70 ] or exploitable security vulnerabil-ities [ 14 , 44 ]. Recent high-profile incidents in late 2025 underscore this risk: a memory leak in Windows 11’s update service led to unbounded RAM consumption of up to 20GB, rendering affected systems unresponsive [ 46 ], while a memory management flaw in MongoDB allowed unauthenticated attackers to extract cleartext credentials [ 54 ]. With over 1,700 CVEs (Common Vulnerabilities and Exposures) attributed to memory leaks as of March 2026 [ 50 ], effective automated detection of such defects remains a pressing need for software reliability and security. Memory leaks are notoriously difficult to detect. Dynamic anal-ysis approaches such as fuzzing [ 1, 21 , 32 , 67 ] can identify leaks along executed paths but impose substantial runtime overhead that limits scalability for large-scale or long-running software [ 58 , 69 ], and may fail to exercise the specific paths needed to trigger a leak within a practical time budget (as discussed in Section 2). Static analysis is a more attractive alternative, as it can reason over all program paths without requiring execution. Static analyzers such as CodeQL [ 17 ] and Infer [ 13 ] perform interprocedural dataflow analysis to trace how memory is allocated and deallocated, de-tecting mismatched or missing deallocations, and have seen wide industrial adoption [ 10 , 18 ]. However, these analyzers lack semantic understanding of custom memory management and path feasibility ,resulting in both missed detections and spurious warnings. In real-world C/C++ projects, developers often implement cus-tom variants of Memory Management (MM) functions rather than directly calling standard primitives such as malloc and free . This practice is especially prevalent in large open-source codebases that span many modules from diverse contributors [ 12 , 59 ], where a single project may define hundreds of custom memory allocation and deallocation functions (e.g., tree_init and policy_tree_free  
+
+> 1
+> arXiv:2603.27224v1 [cs.SE] 28 Mar 2026 Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Huihui Huang, Jieke Shi, Bo Wang, Zhou Yang, and David Lo
+
+in OpenSSL [ 51 ]). Effective leak detection thus requires identifying these custom functions and their allocation/deallocation pairings. Unfortunately, existing static analyzers such as CodeQL by de-fault operate with a fixed list of standard primitives, remaining blind to custom MM functions and silently missing leaks medi-ated by them. Prior work [ 4 , 12 , 38 , 42 , 65 ] resorts to heuristics or natural language processing (NLP) techniques that infer mem-ory management roles from function names or documentation, yet these heuristics do not check whether the inferred allocation or deallocation is reachable on any feasible intraprocedural path. A function may contain a syntactic call to free inside a branch that is never satisfiable; labeling such a function as a deallocator will cause the analyzer to wrongly assume the memory can be freed through it, suppressing genuine leak reports. Even when custom MM functions are correctly identified, the analyzers themselves remain path-insensitive: they often over-approximate program be-havior and report warnings along paths that are infeasible under actual runtime conditions, flooding developers with false alarms that demand costly manual triage [25, 31, 48]. Our key insight is that addressing the limitations above requires both semantic understanding and symbolic reasoning: identifying custom MM functions requires comprehending developer intent from code context, while validating those identifications and filter-ing false positives demands rigorous symbolic analysis of program control flow. We realize this insight in MemHint , which is a neuro-symbolic pipeline. For the neuro component, we leverage Large Language Models (LLMs), which have shown strong capabilities across programming tasks [ 24 , 28 , 60 ], to infer the memory man-agement roles of functions. However, LLMs are susceptible to hallu-cinations [ 27 , 72 ] and may produce incorrect annotations. We thus complement them with a symbolic component that validates each LLM-generated annotation and filters analyzer output against path feasibility constraints using the Z3 Satisfiability Modulo Theories (SMT) solver [ 8]. By composing the two, existing static analyzers can be augmented for more precise memory leak detection. Concretely, MemHint operates in three stages. It first parses the target codebase to extract functions along with their signatures, bodies, and callees, as well as macros. An LLM (Gemini 3 in our study) then analyzes each function and its callees to label it as a memory allocator, deallocator, or neither, producing a function sum-mary that records the function’s MM role and which argument or return value carries memory ownership. Since LLMs may produce incorrect annotations, MemHint further constructs a control-flow graph for each annotated function and encodes its path conditions into Z3 to check whether the claimed allocation or deallocation is reachable on any feasible path, discarding unsound annotations. In the second stage, the validated MM function summaries are injected into static analyzers (CodeQL and Infer in our study) via their respective extension mechanisms. In the final stage, MemHint 
+
+uses Z3 to check whether each reported leak path is feasible and discards warnings on infeasible paths; a final LLM-based validation step confirms whether each remaining warning is a genuine bug. We evaluate MemHint on seven widely-used open-source C/C++ projects totaling over 3.4 million lines of code. MemHint detects 52 unique memory leak bugs, of which 47 have been confirmed or fixed by project maintainers or through our submitted patches, and 4 have been submitted as CVE reports currently under review. In comparison, current open-source and industrial-strength static an-alyzers detect far fewer: the best-performing baseline, vanilla Cod-eQL, finds only 19, while vanilla Infer detects only 3, Semgrep [ 56 ]only 2, and the recent state-of-the-art academic tool LeakGuard [ 38 ]finds 20. We construct a human-labeled dataset of 1,532 functions; evaluation on it shows that MemHint achieves 100% precision and recall on reachable memory management function identification, substantially outperforming LeakGuard (36.8% precision, 58.7% re-call). An ablation study confirms that each pipeline component independently contributes to the overall effectiveness. Addition-ally, the total cost per detected bug is approximately $1.7, and the static analysis portion of the pipeline runs 2.3–2.6 × faster than LeakGuard. These results demonstrate that MemHint effectively bridges the gap between semantic understanding and symbolic reasoning, enabling precise and scalable memory leak detection in real-world C/C++ software. In summary, our paper makes the following contributions: 
+
+• We are the first to frame memory leak detection as a neuro-symbolic task: LLMs infer custom memory-management func-tions from code context, while Z3 validates the reachability of the inferred functions and filters infeasible leak warnings. 
+
+• We demonstrate that LLMs can produce MM function summaries that encode allocator/deallocator semantics, and that these sum-maries can be injected into static analyzers to boost their detec-tion performance. 
+
+• We implement MemHint , a neuro-symbolic pipeline that gener-ates and validates function summaries via LLM and Z3, injects them into CodeQL and Infer, and applies Z3-based path feasibility filtering and LLM-based validation to suppress false alarms. 
+
+• We evaluate MemHint on seven real-world C/C++ projects and detect 52 unique memory leak bugs (47 confirmed/fixed, 4 CVEs submitted), outperforming vanilla CodeQL (19), vanilla Infer (3), Semgrep (2), and LeakGuard (20). 
+
+## 2 Motivating Example 
+
+This section motivates MemHint by showing why current ap-proaches fall short of detecting memory leaks effectively. Prior work has explored dynamic analysis approaches [ 9 ], par-ticularly fuzzing [ 1, 21 , 32 , 67 ], for detecting memory leaks. These techniques combine coverage-guided input generation with run-time sanitizers (e.g., LeakSanitizer [ 6]) that monitor memory alloca-tion/deallocation events along executed paths. However, dynamic approaches can only detect leaks along paths that the fuzzer ac-tually exercises, and may silently miss leaks that require specific branch combinations that are difficult to reach through crafted in-puts. Figure 1 illustrates this limitation with a confirmed memory leak in OpenSSL (v3.6.1), one of the most widely used cryptographic libraries [ 51 ]. The function X509_policy_check() allocates a policy tree via tree_init (➊). When the tree is non-explicit and empty, the function correctly frees it before returning; yet when it is both  
+
+> EXPLICIT
+
+and EMPTY (➋), the function returns without freeing the tree, leaking the allocated memory. Triggering this path requires an input satisfying both conditions simultaneously, which a fuzzer may not systematically produce. OpenSSL has been continuously fuzzed by Google’s OSS-Fuzz [ 57 ]since 2016, yet this bug, along with all other bugs found by MemHint ,                                             
+
+> 2Finding Memory Leaks in C/C++ Programs via Neuro-Symbolic Augmented Static Analysis Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Finding Memory Leaks in C/C++ Programs via Neuro-Symbolic Augmented Static Analysis Conference acronym ’XX, June 03–05, 2018, Woodstock, NY
+> 1/* openssl/crypto/x509/pcy_tree.c (v3.6.1) */
+> 2int X509_policy_check(X509_POLICY_TREE **ptree,
+> 3int *pexplicit_policy, STACK_OF(X509) *certs, ...)
+> 4{
+> 5X509_POLICY_TREE *tree = NULL;
+> 6...
+> 7➊init_ret = tree_init(&tree, certs, flags);
+> 89if (init_ret <= 0)
+> 10 return init_ret;
+> 11 12 if ((init_ret & X509_PCY_TREE_EXPLICIT) == 0) {
+> 13 if (init_ret & X509_PCY_TREE_EMPTY) {
+> 14 X509_policy_tree_free(tree); /* tree freed */
+> 15 return X509_PCY_TREE_VALID;
+> 16 }
+> 17 }else {
+> 18 *pexplicit_policy = 1;
+> 19 ➋if (init_ret & X509_PCY_TREE_EMPTY)
+> 20 return X509_PCY_TREE_FAILURE; /* tree leaked! */
+> 21 }
+> 22 ...
+> 23 error:
+> 24 X509_policy_tree_free(tree);
+> 25 return X509_PCY_TREE_INTERNAL;
+> 26 }
+
+Figure 1: A memory leak in OpenSSL (v3.6.1) [ 51 ]. tree_init 
+
+allocates a policy tree ➊. The green path frees it correctly, but at ➋ the function returns without freeing tree (red). 24 hours of fuzzing with LeakSanitizer failed to trigger this path. 
+
+does not appear in its bug tracker. We further rebuilt OpenSSL with LibFuzzer [ 53 ] and LeakSanitizer [ 6] enabled and ran the fuzzer for 24 hours; it executed over 9.8 billion test cases yet failed to detect this bug, suggesting that such path-dependent leaks are difficult to reliably detect via dynamic analysis. Static analysis is therefore a natural complement, as it can reason over all program paths without requiring execution. However, current static analyzers still suffer from several limitations that MemHint is designed to address. The first and foremost limitation is that these tools cannot recog-nize custom memory management functions. Real-world software often implements project-specific MM functions that wrap stan-dard primitives such as malloc and free behind multiple layers of abstraction [ 12 , 59 ]. Although the underlying primitives are transi-tively reachable, static analyzers such as CodeQL [ 17 ], Clang Static Analyzer [ 41 ], and Infer [ 13 ] do not fully inline every function but instead rely on predefined function summaries, which are abstract descriptions of how a function affects memory (e.g., “ malloc takes a size argument and returns a heap-allocated pointer”), for a fixed set of standard primitives. For custom wrappers outside this set, the analyzer has no summary and thus cannot determine whether a call allocates or frees memory. Even if the analyzer attempted to look inside these wrappers for standard primitives, multi-layer del-egation and conditional logic would break dataflow tracking across call boundaries. As a result, the analyzer cannot establish that a wrapper’s return value carries heap ownership or that calling a wrapper constitutes a deallocation, leaving allocation/deallocation pairings invisible and memory leaks undetected. Figure 2 illustrates this limitation with a real-world memory leak in FreeRDP (v3.23.0), a widely used open-source Remote Desk-top Protocol implementation [ 52 ]. freerdp_certificate_clone (➊,
+
+➌) is a custom allocator that deep-copies a certificate into heap                                                          
+
+> 1/* FreeRDP/libfreerdp/core/settings.c (FreeRDP v3.23.0) */
+> 2static BOOL freerdp_settings_int_buffer_copy(rdpSettings* _settings, const rdpSettings* settings) ↩→
+> 3{
+> 4...
+> 5if (settings->RdpServerCertificate)
+> 6{
+> 7➊rdpCertificate* cert =
+> 8freerdp_certificate_clone (
+> 9settings->RdpServerCertificate);
+> 10 if (!cert)
+> 11 goto out_fail;
+> 12 ➋if (!freerdp_settings_set_pointer_len(
+> 13 _settings, FreeRDP_RdpServerCertificate, cert, 1))
+> 14 goto out_fail; /* cert leaked */
+> 15 }
+> 16 ...
+> 17 out_fail:
+> 18 return rc; /* cert is never freed here */
+> 19 }
+> 1/* FreeRDP/libfreerdp/crypto/certificate.c */
+> 2➌rdpCertificate* freerdp_certificate_clone (
+> 3const rdpCertificate* certificate)
+> 4{
+> 5rdpCertificate* _certificate = freerdp_certificate_new();
+> 6...
+> 7return _certificate; /* heap-allocated object */
+> 8}
+> 910 ➍void freerdp_certificate_free (rdpCertificate* cert)
+> 11 {
+> 12 if (!cert)
+> 13 return ;
+> 14 certificate_free_int(cert);
+> 15 free(cert);
+> 16 }
+
+Figure 2: A memory leak in FreeRDP (v3.23.0) [ 52 ]. If 
+
+freerdp_settings_set_pointer_len fails ( ➋), the object allocated by the custom allocator freerdp_certificate_clone (➊) is never freed. Static analyzers miss this bug as neither the allocator nor its paired deallocator ( ➍) is a known MM function. 
+
+memory. When freerdp_settings_set_pointer_len fails ( ➋), ex-ecution jumps to out_fail without calling the paired dealloca-tor freerdp_certificate_free (➍), leaking the certificate. Existing static analyzers miss this bug entirely: neither of the two MM func-tions, freerdp_certificate_clone and freerdp_certificate_free ,has a predefined summary in their memory model, and the multi-layer delegation within these wrappers prevents the analyzer from tracking the underlying primitives (e.g., freerdp_certificate_free 
+
+→ certificate_free_int → X509_free → free in one of FreeRDP’s deallocators) across call boundaries. Several studies have attempted to identify custom MM functions using heuristics, machine learning, or natural language processing (NLP) over function names, documentation, and usage patterns [ 12 ,38 –40 , 42 , 65 ]. However, these methods rely on surface-level signals such as naming conventions and comments, which are unreliable in practice: a function named cleanup may or may not free memory depending on its implementation, and the same name can carry different semantics across projects. Crucially, these methods do not validate whether the allocation or deallocation operation is actually 
+
+reachable under the function’s control flow. A function may contain a syntactic call to free inside a branch that is never satisfiable, yet a heuristic or NLP-based approach would incorrectly annotate it as a 
+
+Figure 1: A memory leak in OpenSSL (v3.6.1) [ 51 ]. tree_init 
+
+allocates a policy tree ➊. The green path frees it correctly, but at ➋ the function returns without freeing tree (red). 24 hours of fuzzing with LeakSanitizer failed to trigger this path. 
+
+does not appear in its bug tracker. We further rebuilt OpenSSL with LibFuzzer [ 53 ] and LeakSanitizer [ 6] enabled and ran the fuzzer for 24 hours; it executed over 9.8 billion test cases yet failed to detect this bug, suggesting that such path-dependent leaks are difficult to reliably detect via dynamic analysis. Static analysis is therefore a natural complement, as it can reason over all program paths without requiring execution. However, current static analyzers still suffer from several limitations that MemHint is designed to address. The first and foremost limitation is that these tools cannot recog-nize custom memory management functions. Real-world software often implements project-specific MM functions that wrap stan-dard primitives such as malloc and free behind multiple layers of abstraction [ 12 , 59 ]. Although the underlying primitives are transi-tively reachable, static analyzers such as CodeQL [ 17 ], Clang Static Analyzer [ 41 ], and Infer [ 13 ] do not fully inline every function but instead rely on predefined function summaries, which are abstract descriptions of how a function affects memory (e.g., “ malloc takes a size argument and returns a heap-allocated pointer”), for a fixed set of standard primitives. For custom wrappers outside this set, the analyzer has no summary and thus cannot determine whether a call allocates or frees memory. Even if the analyzer attempted to look inside these wrappers for standard primitives, multi-layer del-egation and conditional logic would break dataflow tracking across call boundaries. As a result, the analyzer cannot establish that a wrapper’s return value carries heap ownership or that calling a wrapper constitutes a deallocation, leaving allocation/deallocation pairings invisible and memory leaks undetected. Figure 2 illustrates this limitation with a real-world memory leak in FreeRDP (v3.23.0), a widely used open-source Remote Desk-top Protocol implementation [ 52 ]. freerdp_certificate_clone (➊,
+
+➌) is a custom allocator that deep-copies a certificate into heap Finding Memory Leaks in C/C++ Programs via Neuro-Symbolic Augmented Static Analysis Conference acronym ’XX, June 03–05, 2018, Woodstock, NY                                            
+
+> 1/* openssl/crypto/x509/pcy_tree.c (v3.6.1) */
+> 2int X509_policy_check(X509_POLICY_TREE **ptree,
+> 3int *pexplicit_policy, STACK_OF(X509) *certs, ...)
+> 4{
+> 5X509_POLICY_TREE *tree = NULL;
+> 6...
+> 7➊init_ret = tree_init(&tree, certs, flags);
+> 89if (init_ret <= 0)
+> 10 return init_ret;
+> 11 12 if ((init_ret & X509_PCY_TREE_EXPLICIT) == 0) {
+> 13 if (init_ret & X509_PCY_TREE_EMPTY) {
+> 14 X509_policy_tree_free(tree); /* tree freed */
+> 15 return X509_PCY_TREE_VALID;
+> 16 }
+> 17 }else {
+> 18 *pexplicit_policy = 1;
+> 19 ➋if (init_ret & X509_PCY_TREE_EMPTY)
+> 20 return X509_PCY_TREE_FAILURE; /* tree leaked! */
+> 21 }
+> 22 ...
+> 23 error:
+> 24 X509_policy_tree_free(tree);
+> 25 return X509_PCY_TREE_INTERNAL;
+> 26 }
+
+Figure 1: A memory leak in OpenSSL (v3.6.1) [ 51 ]. tree_init 
+
+allocates a policy tree ➊. The green path frees it correctly, but at ➋ the function returns without freeing tree (red). 24 hours of fuzzing with LeakSanitizer failed to trigger this path. 
+
+does not appear in its bug tracker. We further rebuilt OpenSSL with LibFuzzer [ 53 ] and LeakSanitizer [ 6] enabled and ran the fuzzer for 24 hours; it executed over 9.8 billion test cases yet failed to detect this bug, suggesting that such path-dependent leaks are difficult to reliably detect via dynamic analysis. Static analysis is therefore a natural complement, as it can reason over all program paths without requiring execution. However, current static analyzers still suffer from several limitations that MemHint is designed to address. The first and foremost limitation is that these tools cannot recog-nize custom memory management functions. Real-world software often implements project-specific MM functions that wrap stan-dard primitives such as malloc and free behind multiple layers of abstraction [ 12 , 59 ]. Although the underlying primitives are transi-tively reachable, static analyzers such as CodeQL [ 17 ], Clang Static Analyzer [ 41 ], and Infer [ 13 ] do not fully inline every function but instead rely on predefined function summaries, which are abstract descriptions of how a function affects memory (e.g., “ malloc takes a size argument and returns a heap-allocated pointer”), for a fixed set of standard primitives. For custom wrappers outside this set, the analyzer has no summary and thus cannot determine whether a call allocates or frees memory. Even if the analyzer attempted to look inside these wrappers for standard primitives, multi-layer del-egation and conditional logic would break dataflow tracking across call boundaries. As a result, the analyzer cannot establish that a wrapper’s return value carries heap ownership or that calling a wrapper constitutes a deallocation, leaving allocation/deallocation pairings invisible and memory leaks undetected. Figure 2 illustrates this limitation with a real-world memory leak in FreeRDP (v3.23.0), a widely used open-source Remote Desk-top Protocol implementation [ 52 ]. freerdp_certificate_clone (➊,
+
+➌) is a custom allocator that deep-copies a certificate into heap                                                          
+
+> 1/* FreeRDP/libfreerdp/core/settings.c (FreeRDP v3.23.0) */
+> 2static BOOL freerdp_settings_int_buffer_copy(rdpSettings* _settings, const rdpSettings* settings) ↩→
+> 3{
+> 4...
+> 5if (settings->RdpServerCertificate)
+> 6{
+> 7➊rdpCertificate* cert =
+> 8freerdp_certificate_clone (
+> 9settings->RdpServerCertificate);
+> 10 if (!cert)
+> 11 goto out_fail;
+> 12 ➋if (!freerdp_settings_set_pointer_len(
+> 13 _settings, FreeRDP_RdpServerCertificate, cert, 1))
+> 14 goto out_fail; /* cert leaked */
+> 15 }
+> 16 ...
+> 17 out_fail:
+> 18 return rc; /* cert is never freed here */
+> 19 }
+> 1/* FreeRDP/libfreerdp/crypto/certificate.c */
+> 2➌rdpCertificate* freerdp_certificate_clone (
+> 3const rdpCertificate* certificate)
+> 4{
+> 5rdpCertificate* _certificate = freerdp_certificate_new();
+> 6...
+> 7return _certificate; /* heap-allocated object */
+> 8}
+> 910 ➍void freerdp_certificate_free (rdpCertificate* cert)
+> 11 {
+> 12 if (!cert)
+> 13 return ;
+> 14 certificate_free_int(cert);
+> 15 free(cert);
+> 16 }
+
+Figure 2: A memory leak in FreeRDP (v3.23.0) [ 52 ]. If 
+
+freerdp_settings_set_pointer_len fails ( ➋), the object allocated by the custom allocator freerdp_certificate_clone (➊) is never freed. Static analyzers miss this bug as neither the allocator nor its paired deallocator ( ➍) is a known MM function. 
+
+memory. When freerdp_settings_set_pointer_len fails ( ➋), ex-ecution jumps to out_fail without calling the paired dealloca-tor freerdp_certificate_free (➍), leaking the certificate. Existing static analyzers miss this bug entirely: neither of the two MM func-tions, freerdp_certificate_clone and freerdp_certificate_free ,has a predefined summary in their memory model, and the multi-layer delegation within these wrappers prevents the analyzer from tracking the underlying primitives (e.g., freerdp_certificate_free 
+
+→ certificate_free_int → X509_free → free in one of FreeRDP’s deallocators) across call boundaries. Several studies have attempted to identify custom MM functions using heuristics, machine learning, or natural language processing (NLP) over function names, documentation, and usage patterns [ 12 ,38 –40 , 42 , 65 ]. However, these methods rely on surface-level signals such as naming conventions and comments, which are unreliable in practice: a function named cleanup may or may not free memory depending on its implementation, and the same name can carry different semantics across projects. Crucially, these methods do not validate whether the allocation or deallocation operation is actually 
+
+reachable under the function’s control flow. A function may contain a syntactic call to free inside a branch that is never satisfiable, yet a heuristic or NLP-based approach would incorrectly annotate it as a 
+
+Figure 2: A memory leak in FreeRDP (v3.23.0) [ 52 ]. If 
+
+freerdp_settings_set_pointer_len fails ( ➋), the object allocated by the custom allocator freerdp_certificate_clone (➊) is never freed. Static analyzers miss this bug as neither the allocator nor its paired deallocator ( ➍) is a known MM function. 
+
+memory. When freerdp_settings_set_pointer_len fails ( ➋), ex-ecution jumps to out_fail without calling the paired dealloca-tor freerdp_certificate_free (➍), leaking the certificate. Existing static analyzers miss this bug entirely: neither of the two MM func-tions, freerdp_certificate_clone and freerdp_certificate_free ,has a predefined summary in their memory model, and the multi-layer delegation within these wrappers prevents the analyzer from tracking the underlying primitives (e.g., freerdp_certificate_free 
+
+→ certificate_free_int → X509_free → free in one of FreeRDP’s deallocators) across call boundaries. Several studies have attempted to identify custom MM functions using heuristics, machine learning, or natural language processing (NLP) over function names, documentation, and usage patterns [ 12 ,38 –40 , 42 , 65 ]. However, these methods rely on surface-level signals such as naming conventions and comments, which are unreliable in practice: a function named cleanup may or may not free memory depending on its implementation, and the same name can carry different semantics across projects. Crucially, these methods do not validate whether the allocation or deallocation operation is actually 
+
+reachable under the function’s control flow. A function may contain a syntactic call to free inside a branch that is never satisfiable, yet a heuristic or NLP-based approach would incorrectly annotate it as a  
+
+> 3Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Huihui Huang, Jieke Shi, Bo Wang, Zhou Yang, and David Lo
+
+deallocator, introducing false annotations that mislead the analyzer rather than help it. Symbolic validation of MM function annotations is therefore necessary but absent from prior work. The final limitation lies in the static analyzers themselves. Even when a static analyzer is given an accurate memory model with comprehensive MM functions and their summaries, it may still report spurious warnings [ 20 , 25 , 31 , 48 ]. These tools are largely path-insensitive: they merge control-flow branches into a single abstract flow and cannot determine whether a reported warning is reachable under actual program semantics. A memory leak that appears along one branch may in fact be guarded by conditions that make the path infeasible at runtime, yet the tool reports it regard-less. For example, two branches may contain mutually exclusive conditions that the analyzer fails to recognize, causing it to report a leak on a path that can never execute. Without a mechanism to filter out such warnings with infeasible paths, users must manually triage a large number of false alarms, significantly reducing the practical utility of the tool [20, 35, 47]. 
+
+MemHint addresses these limitations by combining LLMs’ se-mantic understanding of code with symbolic reasoning through constraint solving. MemHint first uses an LLM to infer the mem-ory management roles of custom functions from their source code and callees, producing function summaries that extend the ana-lyzer’s built-in knowledge beyond the standard primitives. Each summary is then validated by Z3 against the function’s intraproce-dural control-flow graph, ensuring that the identified allocation or deallocation is reachable on a feasible path. Additionally, MemHint 
+
+encodes each analyzer warning as a path constraint and uses Z3 to discard those on infeasible paths, reducing false alarms before they reach the developer. Together, these steps form a neuro-symbolic pipeline in which semantic understanding and formal reasoning reinforce each other at every stage. 
+
+## 3 MemHint 
+
+As shown in Figure 3, MemHint operates in three stages. In Stage 1 (Summary Generation) , MemHint parses the target codebase to extract each function’s metadata (e.g., signature, body, callees), and filters functions via pointer-type heuristics. An LLM then classifies potential MM functions and produces structured function sum-maries that specify whether a function acts as a memory allocator or deallocator and which argument or return value carries own-ership. Each summary is validated with the Z3 SMT solver [ 8] to ensure the claimed allocation or deallocation is reachable on a fea-sible control-flow path. In Stage 2 (Summary-Augmented Analysis) ,the validated summaries are injected into CodeQL and Infer via their respective extension mechanisms, while in Stage 3 (Warning Validation) , MemHint applies Z3-based path feasibility checking and uses an LLM to filter false alarms and confirm genuine bugs. 
+
+## 3.1 Stage 1: Summary Generation 
+
+Phase 1: Code Extraction. MemHint begins by parsing the target codebase to extract metadata for each function. Specifically, we use Tree-sitter [ 2], a widely-used parsing library, to extract each function’s name, return type, parameter list with types, full source body, and the set of direct callee names appearing in call expressions. We also extract C preprocessor macros that expand to function-like constructs, converting them into the same record format so they can be analyzed for memory-management semantics. In addition, we collect pointer-typedef aliases, which are used in the subsequent pre-filtering step to recognize pointer types that do not contain an explicit * in the function signature. 
+
+Phase 2: LLM Summary Generation. In this phase, MemHint 
+
+classifies each candidate function as an allocator, a deallocator, or neither, and produces a structured function summary for each iden-tified MM function. A function summary is an analyzer-agnostic annotation that records the function’s MM role (allocator or deallo-cator) and which argument or return value carries memory own-ership; it can be directly translated into the extension formats of different static analyzers. To reduce LLM cost, we apply a light-weight pre-filter and retain only functions whose signatures in-volve pointer types (e.g., return type or parameters containing * or pointer-typedef aliases). Macros are always retained, as they may expand to pointer operations not visible in their signature. Entry-point and test functions (e.g., main , wmain , and functions whose names contain test ) are excluded. Each remaining function is analyzed by an LLM using its sig-nature, full source body, and the source code of up to five direct callees as context. Providing callee context is important because many project-specific memory-management functions delegate to helper functions, making their semantics non-local. Functions classified as neither are discarded. For each identified MM func-tion, the LLM produces a structured function summary contain-ing three fields: (1) name , the function’s name identifier; (2) role ,the function’s memory management role, either Allocator or 
+
+Deallocator ; and (3) target , which specifies return for allocators (indicating the return value carries heap ownership) or arg 𝑖 for deal-locators (indicating the 𝑖 -th argument is freed). For example, given  
+
+> freerdp_certificate_clone
+
+in Figure 2, the LLM produces {name: freerdp_certificate_clone, role: Allocator, target: return} ,as it calls freerdp_certificate_new and returns the newly allo-cated pointer. Conversely, freerdp_certificate_free yields {role: Deallocator, target: arg0} , as it frees its first argument. 
+
+Phase 3: Z3-Based Summary Validation. LLM-generated sum-maries require validation before use for two reasons. First, the LLM may misclassify functions; e.g., allocator-like names may not imply actual allocation, or control flow may obscure deallocation reachability. Second, operations such as malloc or free may occur only on infeasible paths, rendering the summary invalid. To ad-dress this, MemHint validates each summary using the Z3 SMT solver [ 8 ]. For each summary, MemHint constructs an intraproce-dural control-flow graph (CFG), encodes path conditions as con-straints, and checks whether a feasible path exists on which the claimed allocation or deallocation occurs in the MM function iden-tified by the summary. Summaries without such a feasible path are discarded, and the remaining ones are retained as validated sum-maries . Note that this step not only traverses the intraprocedural CFG but also leverages callee information from the previous phase, handling interprocedural cases by following transitive call chains up to a bounded depth to correctly validate summaries involving transitive delegation (e.g., a wrapper that calls another wrapper be-fore reaching malloc ), alias-based parameter passing (e.g., assigning  
+
+> 4Finding Memory Leaks in C/C++ Programs via Neuro-Symbolic Augmented Static Analysis Conference acronym ’XX, June 03–05, 2018, Woodstock, NY C/C++
+> Codebase
+> Code
+> Extraction
+> LLM Summary
+> Generation
+
+1 2 3
+
+> Z3 Summary
+> Validation
+> Stage I: Summary Generation
+
+4
+
+> Stage II: Summary -
+> Augmented Analysis
+
+5
+
+> Stage III: Warning Validation
+> Static Analysis
+
+6    
+
+> Z3 Path
+> Feasibility Filter
+> LLM Warning
+> Validation
+> Warning
+> Reports
+> CFG
+> Summaries Function
+> Body
+> Warning
+> Trace Code
+> CodeQL Infer
+> SAST Tools
+> Validated
+> Warnings
+> Functions
+> Macros
+> Pointer Typedef
+> Aliases
+> Summary CFG
+> Validated
+> Summary Feasible Warning
+> Reports
+
+Figure 3: Overview of the MemHint pipeline. Stage 1 (Summary Generation): extract metadata, generate summaries with an LLM, and validate with Z3 SMT solver. Stage 2 (Summary-Augmented Analysis): inject validated summaries into SAST tools (e.g., CodeQL, Infer). Stage 3 (Warning Validation): filter infeasible warnings with Z3 and validate remaining ones using an LLM. (a) Valid Allocator       
+
+> Entry
+> 𝑏 1
+> Alloc Ret null
+> Ret ptr
+> TF
+> Z3: Sat ✓
+
+(b) Rejected Allocator       
+
+> Entry
+> 𝑏 1
+> Alloc Ret null
+> Free
+> Ret null
+> TF
+> Z3: Unsat ✗
+
+(c) Valid Deallocator     
+
+> Entry
+> 𝑏 1
+> free(arg0) Return
+> Return
+> TF
+> Z3: Sat ✓
+
+(d) Rejected Deallocator        
+
+> Entry
+> 𝑏 1
+> free(arg0->f) Return
+> Return
+> TF
+> arg0->f ≠alias of arg0
+> Z3: Unsat ✗
+
+Figure 4: Z3-based Summary Validation. (a)–(b) Allocator: (a) SAT: memory allocated at return; (b) UNSAT: memory is freed on all paths. (c)–(d) Deallocator: (c) SAT: target argument is freed; (d) UNSAT: only internal fields (e.g., arg0->f ) are freed. 
+
+a parameter to a local variable before freeing it), and indirect pa-rameter derivation (e.g., freeing a field of a struct parameter rather than the parameter itself). We first describe how the CFG is constructed. For each func-tion to be validated, MemHint parses its source and builds an intraprocedural control-flow graph (CFG) with a designated En-try node and one or more Exit nodes, as illustrated in Figure 4. Each node is assigned a semantic type: Alloc for calls to allocation primitives (e.g., malloc , calloc , realloc , strdup ), Free for calls to deallocation primitives (e.g., free , delete ), Return for function exits, Branch for conditional control flow (e.g., if /else , switch ), 
+
+Assign for assignments, and Deref for pointer dereferences. Se-quential statements are connected by single-successor edges, while each Branch node has two outgoing edges corresponding to the 
+
+true and false outcomes, guarded by a Boolean variable 𝑏 𝑖 and its negation ¬𝑏 𝑖 , respectively. For a function labeled Allocator , MemHint checks whether there exists a feasible CFG path on which (i) a known allocation primitive (or a transitively identified allocator wrapper) is invoked, and (ii) the allocated value reaches the function’s return site without being overwritten or released. As illustrated in Figure 4 (a)–(b), a summary is retained only if such a feasible path exists. Let 𝐺 = (𝑉 , 𝐸 ) denote the intraprocedural CFG, where each branch node 𝑣 introduces a corresponding Boolean variable 𝑏 𝑣 . A path 𝜋 = (𝑛 0, 𝑛 1, . . . , 𝑛 𝑘 ) from Entry to a Return node is feasible 
+
+if its path condition 𝜑 (𝜋 ) = Ó𝑣 ∈branches (𝜋 ) 𝑙 𝑣 is satisfiable, where 
+
+𝑙 𝑣 = 𝑏 𝑣 if 𝜋 takes the true branch at 𝑣 and 𝑙 𝑣 = ¬𝑏 𝑣 otherwise. Let 
+
+𝐴 (𝜋 ) denote the set of Alloc nodes on 𝜋 , and let reaches (𝑎, 𝑟, 𝜋 )
+
+be true when the value allocated at node 𝑎 reaches the return site 𝑟 
+
+along 𝜋 without being overwritten or freed. An allocator summary is valid if and only if: 
+
+∃, 𝜋 ∈ Paths (𝐺 ), ; ∃, 𝑎 ∈ 𝐴 (𝜋 ) :; Sat  𝜑 (𝜋 ) ∧ reaches (𝑎, 𝑟, 𝜋 ) (1) If the constraint is satisfiable (SAT) for at least one path, the sum-mary is retained; if it is unsatisfiable (UNSAT) for all candidate paths, the summary is discarded. For a Deallocator summary associated with argument index 𝑖 ,
+
+MemHint checks whether there exists a feasible CFG path on which the value of parameter 𝑖 , or a value derived from it, is passed to a known deallocation primitive. As illustrated in Figure 4 (c)–(d), a summary is retained only if such a path frees the target value. To track such flows, MemHint uses a lightweight alias analysis that records variables and fields derived from parameter 𝑖 and propagates this information along Assign nodes. A Free node is considered a valid deallocation if its argument aliases parameter 𝑖 under this analysis. To handle delegation patterns, MemHint additionally follows transitive call chains using a call graph constructed from the codebase. If a callee has already been identified as a deallocator or is itself undergoing validation, the analysis recursively follows the chain up to a bounded depth. Let 𝐹 (𝜋 ) denote the set of Free nodes occurring on path 𝜋 , and let aliases (𝑓 , 𝑖, 𝜋 ) be true when the argument freed at node 𝑓 is an  
+
+> 5Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Huihui Huang, Jieke Shi, Bo Wang, Zhou Yang, and David Lo
+
+alias of parameter 𝑖 (or a value transitively derived from it) along 𝜋 .A deallocator summary is valid if and only if: 
+
+∃, 𝜋 ∈ Paths (𝐺 ), ; ∃, 𝑓 ∈ 𝐹 (𝜋 ) :; Sat  𝜑 (𝜋 ) ∧ aliases (𝑓 , 𝑖, 𝜋 ) (2) If the corresponding constraint is satisfiable (SAT), the summary is retained; otherwise (UNSAT), it is discarded. Summaries that pass these checks are retained as validated summaries and carried into Stage 2; the rest are discarded. 
+
+## 3.2 Stage 2: Summary-Augmented Analysis 
+
+This stage injects the validated summaries into CodeQL [ 17 ] and Infer [ 13 ] and runs both analyzers to detect memory leaks. The validated summaries are analyzer-agnostic : each summary specifies whether a function allocates or frees memory and which argument or return value carries ownership, without relying on any tool-specific representation. We select CodeQL and Infer due to their complementary analysis foundations (declarative interprocedural dataflow and bi-abduction). In both analyzers, the summaries ex-tend the memory model to support project-specific allocators and deallocators without modifying the underlying codebase. For CodeQL, a declarative dataflow analysis engine that traces value propagation across function boundaries, MemHint injects the validated summaries through its extension mechanism, pop-ulating allocationFunctionModel and deallocationFunctionModel ,which are CodeQL’s built-in extension points for registering cus-tom MM functions. With these extensions, CodeQL recognizes each function in an allocator summary as returning newly allocated memory and each function in a deallocator summary as freeing the specified argument. However, CodeQL’s default memory leak queries (e.g., MemoryNeverFreed , MemoryMayNotBeFreed ) are largely path-insensitive: they merge control-flow branches into a single abstract flow and check only whether a deallocation exists some-where after an allocation, without distinguishing which branch performs it. As a result, a leak that occurs on a specific branch, such as an error-handling path that returns early without freeing, may be missed if another branch does free the memory. To address this, 
+
+MemHint augments CodeQL with extended queries that (i) track deallocation on a per-branch basis, reporting a leak when any in-dividual branch fails to free the allocated memory; (ii) specifically model error-handling paths (e.g., goto cleanup labels and early re-turns after failed checks) as potential leak sites; and (iii) detect cases where deallocation is guarded by a condition that may not always hold, leaving the memory unfreed on the alternative path. For Infer, MemHint translates each validated summary into the configuration format of Infer’s Pulse engine [ 13 ], a memory and value analysis engine developed by Meta that is based on separation logic and tracks heap ownership along execution paths. Allocator summaries are registered via –pulse-model-alloc-pattern , so that Infer treats their return values as newly allocated heap objects with caller ownership; deallocator summaries are similarly registered so that calls to these functions are recognized as deallocation op-erations. With these summaries in place, Infer can track memory ownership through project-specific wrappers in the same way it handles standard primitives such as malloc and free . While Infer’s Pulse complements CodeQL’s declarative dataflow analysis, both analyzers may still report warnings on infeasible paths, which are addressed in Stage 3. 
+
+Function Code (FreeRDP) Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Huihui Huang, Jieke Shi, Bo Wang, Zhou Yang, and David Lo 
+
+alias of parameter 𝑖 (or a value transitively derived from it) along 𝜋 .A deallocator summary is valid if and only if: 
+
+∃, 𝜋 ∈ Paths (𝐺 ), ; ∃, 𝑓 ∈ 𝐹 (𝜋 ) :; Sat (𝜑 (𝜋 ) ∧ aliases (𝑓 , 𝑖, 𝜋 )) (2) If the corresponding constraint is satisfiable (SAT), the summary is retained; otherwise (UNSAT), it is discarded. Summaries that pass these checks are retained as validated summaries and carried into Stage 2; the rest are discarded. 
+
+## 3.2 Stage 2: Summary-Augmented Analysis 
+
+This stage injects the validated summaries into CodeQL [ 17 ] and Infer [ 13 ] and runs both analyzers to detect memory leaks. The validated summaries are analyzer-agnostic : each summary specifies whether a function allocates or frees memory and which argument or return value carries ownership, without relying on any tool-specific representation. We select CodeQL and Infer due to their complementary analysis foundations (declarative interprocedural dataflow and bi-abduction). In both analyzers, the summaries ex-tend the memory model to support project-specific allocators and deallocators without modifying the underlying codebase. For CodeQL, a declarative dataflow analysis engine that traces value propagation across function boundaries, MemHint injects the validated summaries through its extension mechanism, pop-ulating allocationFunctionModel and deallocationFunctionModel ,which are CodeQL’s built-in extension points for registering cus-tom MM functions. With these extensions, CodeQL recognizes each function in an allocator summary as returning newly allocated memory and each function in a deallocator summary as freeing the specified argument. However, CodeQL’s default memory leak queries (e.g., MemoryNeverFreed , MemoryMayNotBeFreed ) are largely path-insensitive: they merge control-flow branches into a single abstract flow and check only whether a deallocation exists some-where after an allocation, without distinguishing which branch performs it. As a result, a leak that occurs on a specific branch, such as an error-handling path that returns early without freeing, may be missed if another branch does free the memory. To address this, 
+
+MemHint augments CodeQL with extended queries that (i) track deallocation on a per-branch basis, reporting a leak when any in-dividual branch fails to free the allocated memory; (ii) specifically model error-handling paths (e.g., goto cleanup labels and early re-turns after failed checks) as potential leak sites; and (iii) detect cases where deallocation is guarded by a condition that may not always hold, leaving the memory unfreed on the alternative path. For Infer, MemHint translates each validated summary into the configuration format of Infer’s Pulse engine [ 13 ], a memory and value analysis engine developed by Meta that is based on separation logic and tracks heap ownership along execution paths. Allocator summaries are registered via –pulse-model-alloc-pattern , so that Infer treats their return values as newly allocated heap objects with caller ownership; deallocator summaries are similarly registered so that calls to these functions are recognized as deallocation op-erations. With these summaries in place, Infer can track memory ownership through project-specific wrappers in the same way it handles standard primitives such as malloc and free . While Infer’s Pulse complements CodeQL’s declarative dataflow analysis, both analyzers may still report warnings on infeasible paths, which are addressed in Stage 3. 
+
+Function Code (FreeRDP)                       
+
+> /* FreeRDP: freerdp_settings_int_buffer_copy */
+> if (settings->RdpServerCertificate) {
+> ➊rdpCertificate* cert = freerdp_certificate_clone(...);
+> ➋if (!cert)
+> goto out_fail;
+> ➌if (!freerdp_settings_set_pointer_len( _settings, ..., cert, 1)) goto out_fail; /* cert leaked */ }... out_fail:
+> ➍return rc; /* no free(cert) here */
+> Key nodes: ➊Alloc →➋Branch ( 𝑏 1:!cert )→
+> ➌Branch ( 𝑏 2:!set_ptr )→➍Return
+
+CFG with Z3 State Encoding               
+
+> Entry
+> ➊Alloc: cert
+> ➋𝑏 1➍Ret
+> ➌𝑏 2➍Ret
+> Ret
+> T
+> F
+> T
+> F
+> feasible path
+> ¬𝑏 1∧𝑏 2: Alloc →Ret (no free) alloc=T, freed=F, escaped=F Z3: Sat — feasible leak
+
+Figure 5: Z3-based memory-leak feasibility checking (Phase 5) on the FreeRDP bug in Figure 2. Left: flagged func-tion with key CFG nodes (allocation ➊, branches ➋, ➌, return 
+
+➍). Right: intra-procedural CFG with Z3 encoding. Along the dashed path, cert is allocated ( alloc = true ) but neither freed nor escaped; Z3 returns SAT , indicating a feasible leak. 
+
+## 3.3 Stage 3: Warning Validation 
+
+Phase 5: Z3-Based Path Feasibility Filtering. Static analyzers may report memory leaks along infeasible paths, i.e., paths that exist syntactically but are unreachable at runtime due to implicit invariants or mutually exclusive branch conditions. To address this, 
+
+MemHint performs an intraprocedural analysis for each flagged function and uses Z3 to check whether a feasible execution path exists that exhibits the reported leak. Warnings without such a feasible path are discarded. Concretely, for each warning, MemHint parses the flagged func-tion and constructs an intraprocedural control-flow graph (CFG), following the same node classification as in Phase 3. Allocation and deallocation operations include both standard primitives (e.g., 
+
+malloc , free ) and functions identified by validated summaries (e.g., 
+
+freerdp_certificate_clone in Figure 2). MemHint then encodes the CFG as a set of constraints that track three Boolean state vari-ables along each path for the tracked pointer 𝑝 :
+
+• alloc (𝑛 ): memory for 𝑝 has been allocated at or before node 𝑛 ;
+
+• freed (𝑛 ): memory for 𝑝 has been freed at or before node 𝑛 ;
+
+• escaped (𝑛 ): ownership of 𝑝 has been transferred at or before node 𝑛 (e.g., via return, global store, or ownership-sink call). Only allocation, deallocation, and escape-related nodes update these states; all other nodes propagate them unchanged, keeping the encoding lightweight. For each allocation site, MemHint checks whether there exists a feasible path from the allocation to a func-tion exit along which the pointer is neither freed nor ownership-transferred. As shown in Figure 5, such a path reaches a Return 
+
+node without encountering a matching deallocation. To enforce a single concrete path, MemHint introduces a Boolean edge variable 𝑒 (𝑢,𝑣 ) for each CFG edge and constrains each node to receive at most one incoming edge: 
+
+∀ 𝑛 ∈ 𝑉 : AtMost 1
+
+({𝑒 (𝑢,𝑛 ) | ( 𝑢, 𝑛 ) ∈ 𝐸 }) (3) Node reachability is defined as reach (𝑛 ) ⇔ Ô(𝑢,𝑛 ) ∈ 𝐸 𝑒 (𝑢,𝑛 ) , with 
+
+reach (Entry ) = ⊤. The three state variables are propagated along the selected path. At each non-special node, the state is inherited             
+
+> Key nodes: ➊Alloc →➋Branch ( 𝑏 1:!cert )→
+> ➌Branch ( 𝑏 2:!set_ptr )→➍Return
+
+CFG with Z3 State Encoding               
+
+> Entry
+> ➊Alloc: cert
+> ➋𝑏 1➍Ret
+> ➌𝑏 2➍Ret
+> Ret
+> T
+> F
+> T
+> F
+> feasible path
+> ¬𝑏 1∧𝑏 2: Alloc →Ret (no free) alloc=T, freed=F, escaped=F Z3: Sat — feasible leak
+
+Figure 5: Z3-based memory-leak feasibility checking (Phase 5) on the FreeRDP bug in Figure 2. Left: flagged func-tion with key CFG nodes (allocation ➊, branches ➋, ➌, return 
+
+➍). Right: intra-procedural CFG with Z3 encoding. Along the dashed path, cert is allocated ( alloc = true ) but neither freed nor escaped; Z3 returns SAT , indicating a feasible leak. 
+
+## 3.3 Stage 3: Warning Validation 
+
+Phase 5: Z3-Based Path Feasibility Filtering. Static analyzers may report memory leaks along infeasible paths, i.e., paths that exist syntactically but are unreachable at runtime due to implicit invariants or mutually exclusive branch conditions. To address this, 
+
+MemHint performs an intraprocedural analysis for each flagged function and uses Z3 to check whether a feasible execution path exists that exhibits the reported leak. Warnings without such a feasible path are discarded. Concretely, for each warning, MemHint parses the flagged func-tion and constructs an intraprocedural control-flow graph (CFG), following the same node classification as in Phase 3. Allocation and deallocation operations include both standard primitives (e.g., 
+
+malloc , free ) and functions identified by validated summaries (e.g., 
+
+freerdp_certificate_clone in Figure 2). MemHint then encodes the CFG as a set of constraints that track three Boolean state vari-ables along each path for the tracked pointer 𝑝 :
+
+• alloc (𝑛 ): memory for 𝑝 has been allocated at or before node 𝑛 ;
+
+• freed (𝑛 ): memory for 𝑝 has been freed at or before node 𝑛 ;
+
+• escaped (𝑛 ): ownership of 𝑝 has been transferred at or before node 𝑛 (e.g., via return, global store, or ownership-sink call). Only allocation, deallocation, and escape-related nodes update these states; all other nodes propagate them unchanged, keeping the encoding lightweight. For each allocation site, MemHint checks whether there exists a feasible path from the allocation to a func-tion exit along which the pointer is neither freed nor ownership-transferred. As shown in Figure 5, such a path reaches a Return 
+
+node without encountering a matching deallocation. To enforce a single concrete path, MemHint introduces a Boolean edge variable 𝑒 (𝑢,𝑣 ) for each CFG edge and constrains each node to receive at most one incoming edge: 
+
+∀ 𝑛 ∈ 𝑉 : AtMost 1
+
+ {𝑒 (𝑢,𝑛 ) | ( 𝑢, 𝑛 ) ∈ 𝐸 } (3) Node reachability is defined as reach (𝑛 ) ⇔ Ô(𝑢,𝑛 ) ∈ 𝐸 𝑒 (𝑢,𝑛 ) , with 
+
+reach (Entry ) = ⊤. The three state variables are propagated along the selected path. At each non-special node, the state is inherited  
+
+> 6Finding Memory Leaks in C/C++ Programs via Neuro-Symbolic Augmented Static Analysis Conference acronym ’XX, June 03–05, 2018, Woodstock, NY
+
+from the chosen predecessor: 
+
+state (𝑛 ) =
+
+Ü
+
+> (𝑢,𝑛 ) ∈ 𝐸
+
+ 𝑒 (𝑢,𝑛 ) ∧ state (𝑢 ) (4) Since at most one incoming edge is active (Equation 3), the disjunc-tion effectively selects the state from the unique chosen predecessor. At Alloc , Free , and escape nodes, the corresponding state variable is additionally set to true when the node is reachable. A memory leak is feasible if and only if: 
+
+∃𝑟 ∈ Exits (𝐺 ) :
+
+Sat  reach (𝑟 ) ∧ alloc (𝑟 ) ∧ ¬ freed (𝑟 ) ∧ ¬ escaped (𝑟 ) (5) If Z3 returns Sat , the warning is retained; otherwise ( Unsat ), it is discarded as a false alarm. 
+
+Phase 6: LLM-Based Warning Validation. After Z3-based fea-sibility filtering, the remaining warnings correspond to feasible execution paths but may still include residual false positives that intraprocedural symbolic analysis alone cannot eliminate. In par-ticular, Z3-based reasoning lacks sufficient semantic knowledge to model complex program behaviors such as callback-based dealloca-tion and project-specific conventions (e.g., borrowed pointers or non-owning references). For instance, in systems like Redis, certain functions may return pointers to internally managed data struc-tures, where ownership is retained by the callee and the caller is not responsible for deallocation; static analyzers may therefore incorrectly report a missing free as a memory leak. Such cases rely on implicit API usage conventions and program context that are difficult to capture precisely in constraint-based analysis. For each candidate warning, MemHint constructs a prompt that includes (i) the full source code of the function, (ii) the warning type (memory leak) together with the warning message and location, and (iii) the warning trace produced by the SAST tool, including code snippets at each step. The LLM is asked to determine whether the reported issue is a genuine bug or a false alarm, together with a brief justification. Warnings classified as false alarm are discarded, and the remaining ones are reported as the final output. The full prompt template is included in our replication package. 
+
+## 4 Evaluation 
+
+We evaluate MemHint on seven real-world C/C++ projects to iden-tify previously unreported memory-leak bugs. All warnings re-ported by the tool are manually inspected to determine whether they correspond to real bugs, and confirmed cases are reported to the respective repositories. Our research questions are: 
+
+RQ1 (Effectiveness): How many memory-leak bugs does MemHint 
+
+detect, and how does it compare with existing tools? 
+
+RQ2 (Summary Quality): How accurate is the summary genera-tion in Stage 1? 
+
+RQ3 (Component Contribution): How does each component of the pipeline contribute to overall bug detection performance? 
+
+RQ4 (Efficiency): What is the runtime and computational cost of 
+
+MemHint ?
+
+## 4.1 Experiment Setup 
+
+In Phase 2 (LLM summary generation), we use Gemini 3 Flash, while in Phase 6 (LLM warning validation), we use Gemini 3.1 Pro. We choose a lightweight model for summary generation because it needs to process a large number of functions, where efficiency and cost are critical, whereas warning validation requires higher accuracy and thus benefits from a stronger model. When invoking the LLM, we follow the batching strategy of Li et al.’s work [ 37 ] to reduce latency. Specifically, we batch multiple queries into a single prompt, using a batch size of 20 functions per call for summary generation (Phase 2). For LLM-based validation (Phase 6), we vali-date one function per call. We discuss the potential internal threats introduced by batching in Section 5. We use CodeQL CLI version 2.23.9, Infer version 1.2.0, and Z3 version 4.15.4. We evaluate MemHint on seven widely used open-source C/C++ projects: Vim, tmux, OpenSSL, Redis, FreeRDP, curl, and FFmpeg. For each project, we run the full MemHint pipeline (Stages 1–3) on the entire codebase. 
+
+## 4.2 RQ1: Effectiveness 
+
+Table 1 summarizes the bug detection results of MemHint across all seven projects. In total, MemHint detects 52 unique memory-safety bugs, of which 47 have been confirmed or fixed by project maintainers or through our submitted patches, and 4 have been sub-mitted as CVE reports currently under review. As CodeQL and Infer both receive the same validated summaries, they share 21 overlap-ping findings that both analyzers can detect once project-specific memory models are provided. However, CodeQL contributes 42 findings and Infer contributes 31, leaving 21 bugs found only by CodeQL and 10 found only by Infer. These non-overlapping cases arise from differences in analysis strategies: CodeQL’s declarative dataflow queries capture patterns that Infer’s bi-abduction misses, while Infer’s interprocedural path-sensitive reasoning detects cases beyond CodeQL’s scope. 
+
+Comparison with Baselines. We compare MemHint against four baselines: vanilla CodeQL [ 17 ], vanilla Infer [ 13 ], LeakGuard [ 38 ], and Semgrep [ 56 ]. Vanilla CodeQL and vanilla Infer serve as the most direct baselines, representing what off-the-shelf compilation-level SAST tools can detect without custom memory-model an-notations. LeakGuard is a state-of-the-art memory-leak detection approach that infers paired memory-management functions and integrates them into static analysis. We use the authors’ released implementation, and discuss replication correctness in Section 5. Semgrep is a widely used source-level SAST tool that does not require compilation; we include it to provide a comparison with a pattern-based approach operating at a different abstraction level. We use Semgrep version 1.156.0 with the Pro engine enabled. Table 2 reports the number of detected bugs per project for each tool. All bugs found by the baseline tools are strict subsets of those found by MemHint , and 18 bugs are uniquely found by MemHint .Vanilla CodeQL detects 19 bugs; notably, running CodeQL with our extended queries but without summary injection produces the same 19 bugs (marked with ∗ in Table 2), indicating that the addi-tional detections are attributable to the summaries rather than the enhanced queries alone. Vanilla Infer detects only 3 bugs. Without summaries, neither tool can track object lifetimes through project-specific allocators and deallocators, missing a substantial number of leaks. LeakGuard detects 20 bugs; although it identifies custom memory-management functions, it misses leaks that require deeper  
+
+> 7Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Huihui Huang, Jieke Shi, Bo Wang, Zhou Yang, and David Lo
+
+Table 1: Bugs found by MemHint across programs. 
+
+MemHint 
+
+Program Type Version SLOC #Func. CodeQL Infer Overlap Detected Confirmed 
+
+Vim Text Editor 9.2.0015 429K 10.9K 18 15 11 22 21 Tmux Terminal Tool 3.6a 75K 2.5K 9 6 5 10 10 OpenSSL Crypto Library 3.6.1 725K 20.7K 4 6 1 9 9Redis Database System 8.6-rc1 241K 5.2K 3 0 0 3 0FreeRDP Remote Desktop 3.23.0 436K 13.2K 5 2 2 5 5curl Network Tool 8.19.0-rc3 201K 5.0K 1 1 1 1 1FFmpeg Multimedia Tool n8.1-dev 1.3M 31.1K 2 1 1 2 1
+
+Total – – 3.4M 88.6K 42 31 21 52 47      
+
+> SLOC : source lines of code (excluding blanks/comments). #Func. : number of functions. CodeQL /Infer : bugs detected by each summary-augmented analyzer. Overlap : bugs found by both. Detected : union of validated bugs. Confirmed : bugs confirmed by maintainers.
+
+Table 2: Comparison of bugs detected per program between 
+
+MemHint and baseline tools. 
+
+Program CodeQL ∗ Infer LeakGuard Semgrep MemHint 
+
+Vim 10 3 9 0 22 Tmux 7 0 4 1 10 OpenSSL 0 0 4 1 9Redis 0 0 2 0 3FreeRDP 2 0 1 0 5curl 0 0 0 0 1FFmpeg 0 0 0 0 2
+
+Total 19 3 20 2 52  
+
+> ∗identical bugs (same count and functions) detected with and without extended queries.
+
+interprocedural reasoning or that arise from complex control-flow patterns. Semgrep detects only 2 bugs, as its purely syntactic anal-ysis lacks the data-flow and path-sensitive reasoning required to detect interprocedural memory leaks involving custom allocators. Overall, MemHint outperforms all baselines in terms of con-firmed bugs while maintaining competitive precision, highlighting the benefit of combining LLM-assisted summary generation with Z3-based symbolic validation. 
+
+## 4.3 RQ2: Summary Quality 
+
+To evaluate summary generation, we construct a human-labeled dataset of functions drawn from the subject projects, partitioned into three ground-truth categories: (1) MM + Reachable : custom MM functions whose allocation or deallocation is on a feasible control-flow path; (2) MM + Not Reachable : custom MM functions that contain allocation or deallocation calls, but the call site lies on an infeasible path (e.g., guarded by an unsatisfiable condition); and (3) Not MM : functions that are not memory-management functions. This three-way split allows us to evaluate the LLM and Z3 compo-nents separately: the LLM should classify both MM categories as MM functions and reject Not MM; Z3 should retain MM + Reachable summaries and discard MM + Not Reachable summaries. 
+
+Dataset Construction. The full candidate pool comprises 81,448 functions that pass the pointer-type pre-filter (Phase 1 in Stage 1) across the seven subject projects. We apply the standard sample-size 
+
+Table 3: Evaluation of MM identification and vali-dation. 
+
+MM Validated MM Precision Recall Precision Recall 
+
+LeakGuard 79.4% 63.4% 36.8% 58.7% 
+
+MemHint 91.0% 100.0% 100.0% 100.0%  
+
+> MM : MM vs. non-MM classification. Validated MM : reachable MM functions on feasible paths.
+
+formula for finite populations [7]: 
+
+𝑛 = 𝑍 2, 𝑝, (1 − 𝑝 )
+
+𝑒 2 , 𝑛 adj = 𝑛 
+
+1 + ( 𝑛 − 1)/ 𝑁 
+
+where 𝑍 = 1.96 (95% confidence level), 𝑝 = 0.5 (worst-case propor-tion), 𝑒 = 0.05 (5% margin of error), and 𝑁 = 81 ,448 is the total pop-ulation size. The second formula applies the finite population cor-rection, yielding 𝑛 adj = 383 samples per comparison side. Because our evaluation involves two comparisons, (i) MM vs. Not MM (eval-uating the LLM) and (ii) MM + Reachable vs. MM + Not Reachable (evaluating Z3), we sample 383 functions from each of the three classes, with Not MM doubled ( 383 × 2 = 766 ) to balance against the combined MM pool. Within each class, samples are allocated equally across the seven projects (approximately 55 functions per project per class) to ensure uniform and fair representation. This procedure yields 383 MM + Reachable, 383 MM + Not Reachable, and 766 Not MM functions (1,532 total). To mitigate potential bias, each function was independently reviewed by two authors to en-sure consistency in labeling. The two authors achieved an “almost perfect” level of agreement [ 64 ], with a Cohen’s 𝜅 of 0.94; disagree-ments were resolved through discussion and consensus. 
+
+Results and Analysis. We evaluate using precision and recall, and compare against LeakGuard [ 38 ], a state-of-the-art approach that infers custom MM functions by mining allocation–deallocation usage patterns from the codebase. However, such pattern-based inference relies on observable usage and may miss implicit or less frequent MM behaviors. We run LeakGuard on the same seven repositories to obtain its inferred MM functions, and evaluate its precision and recall on the same set of 1,532 sampled functions alongside MemHint .Table 3 reports precision and recall under two evaluation criteria. 
+
+MM evaluates whether each approach correctly classifies functions  
+
+> 8Finding Memory Leaks in C/C++ Programs via Neuro-Symbolic Augmented Static Analysis Conference acronym ’XX, June 03–05, 2018, Woodstock, NY
+
+Table 4: Contribution of each Stage 1 phase to candidate reduction and summary validation. 
+
+Program #Extr. #Cand. #Summaries #Valid. 
+
+Vim 11,071 8,539 ↓22.9% 2,539 ↓70.3% 688 ↓72.9% 
+
+Tmux 2,612 2,528 ↓3.2% 790 ↓68.8% 467 ↓40.9% 
+
+OpenSSL 24,068 20,996 ↓12.8% 3,454 ↓83.5% 1,740 ↓49.6% 
+
+Redis 5,660 4,882 ↓13.7% 1,308 ↓73.2% 493 ↓62.3% 
+
+FreeRDP 13,940 12,160 ↓12.8% 2,256 ↓81.4% 1,161 ↓48.5% 
+
+curl 4,978 4,413 ↓11.4% 736 ↓83.3% 219 ↓70.2% 
+
+FFmpeg 29,705 27,930 ↓6.0% 3,596 ↓87.1% 494 ↓86.3% 
+
+Total 92,034 81,448 ↓11.5% 14,679 ↓82.0% 5,262 ↓64.2%    
+
+> #Extr. : parsed functions/macros. #Cand. : after pre-filtering. #Summaries : LLM-generated summaries. #Valid. : Z3-validated summaries. Red percentages show reduction per step.
+
+as memory-management vs. non-MM: a true positive is a ground-truth MM function (MM + Reachable or MM + Not Reachable) cor-rectly identified as MM; a false positive is a Not MM function misla-beled as MM; a false negative is an MM function the approach fails to identify. Validated MM evaluates a stricter criterion: whether each approach correctly identifies MM functions whose allocation or deallocation is on a feasible path. For LeakGuard, both crite-ria are evaluated directly on its classification output, as it relies solely on NLP-based classification without symbolic path validation. For MemHint , the MM criterion evaluates the LLM component alone (Phase 2), while the Validated MM criterion evaluates the full LLM + Z3 pipeline (Phases 2–3). The results confirm that MemHint achieves 91.0% MM precision with 100% recall, significantly outperforming LeakGuard (79.4% precision, 63.4% recall). After Z3 validation, MemHint achieves 100% precision and recall on Validated MM, demonstrating that Z3 effectively filters the LLM’s false positives while preserving all true MM functions with feasible allocation paths. 
+
+## 4.4 RQ3: Component Contribution 
+
+Tables 4 and 5 quantify how each component contributes to the overall pipeline by tracking the item count at each stage. 
+
+Stage 1: Summary Generation (Table 4). The pipeline progres-sively narrows from 92,034 extracted functions to 5,262 validated summaries of MM functions, achieving a 94.3% overall reduction. Pre-filtering removes 11.5% of functions that lack pointer types in their signatures. The LLM then classifies the remaining 81,448 candidates, rejecting 82.0% as non-MM functions and producing 14,679 summaries. Z3 validation further eliminates 64.2% of these summaries that lack feasible allocation or deallocation paths, retain-ing only validated summaries. Overall, this staged filtering process effectively identifies high-quality summaries while aggressively pruning irrelevant candidates. 
+
+Stages 2–3: Bug Detection (Table 5). SAST analysis with injected summaries produces over 4,500 warnings per analyzer. Z3 feasibility filtering eliminates 86.3% (CodeQL) and 83.9% (Infer) of these warn-ings by discarding those on infeasible paths. LLM-based validation further reduces the remaining warnings by approximately 89–91%, retaining 72 (CodeQL) and 64 (Infer) validated warnings. Among these LLM-validated warnings, manual validation confirms 42 true 
+
+Table 5: Contributions of Stages 2–3 to warning filtering and validation. 
+
+Program #Warn. #Z3 Kept #Valid. #Detected 
+
+Vim CodeQL 1,011 86 ↓91.5% 24 ↓72.1% 18 (75.0%) 
+
+Infer 1,032 147 ↓85.8% 25 ↓83.0% 15 (60.0%) 
+
+Tmux CodeQL 291 70 ↓75.9% 13 ↓81.4% 9 (69.2%) 
+
+Infer 304 36 ↓88.2% 7 ↓80.6% 6 (85.7%) 
+
+OpenSSL CodeQL 891 118 ↓86.8% 14 ↓88.1% 4 (28.6%) 
+
+Infer 2,078 351 ↓83.1% 27 ↓92.3% 6 (22.2%) 
+
+Redis CodeQL 705 89 ↓87.4% 8 ↓91.0% 3 (37.5%) 
+
+Infer 198 33 ↓83.3% 0 ↓100% 0 (–) 
+
+FreeRDP CodeQL 890 141 ↓84.2% 6 ↓95.7% 5 (83.3%) 
+
+Infer 541 82 ↓84.8% 3 ↓96.3% 2 (66.7%) 
+
+curl CodeQL 403 47 ↓88.3% 5 ↓89.4% 1 (20.0%) 
+
+Infer 195 37 ↓81.0% 1 ↓97.3% 1 (100%) 
+
+FFmpeg CodeQL 404 80 ↓80.2% 2 ↓97.5% 2 (100%) 
+
+Infer 184 42 ↓77.2% 1 ↓97.6% 1 (100%) 
+
+Total CodeQL 4,595 631 ↓86.3% 72 ↓88.6% 42 (58.3%) 
+
+Infer 4,532 728 ↓83.9% 64 ↓91.2% 31 (48.4%)    
+
+> #Warn. : SAST tool output warnings. #Z3 Kept : after Z3 filtering. #Valid. : LLM-validated warn-ings. #Detected : human-validated bugs (precision). Red percentages show reduction per step.
+
+Table 6: Cost and runtime breakdown of MemHint 
+
+across programs. 
+
+Program Gen ($) Vrf ($) Static LeakGuard 
+
+Vim CodeQL 10.20 0.46 56m 1.4h Infer 0.65 57m Tmux CodeQL 2.27 0.29 3m 31m Infer 0.17 3m OpenSSL CodeQL 17.00 0.49 1.7h 7.1h Infer 1.52 1.9h Redis CodeQL 5.83 0.44 8m 38m Infer 0.14 10m FreeRDP CodeQL 14.11 0.52 32m 1.1h Infer 0.36 27m curl CodeQL 4.86 0.21 10m 13m Infer 0.17 8m FFmpeg CodeQL 26.09 0.30 48m 18m Infer 0.17 1.1h 
+
+Total CodeQL 80.36 2.71 4.3h 11.2h 
+
+Infer 3.18 4.8h    
+
+> Gen ($) : LLM cost for summary generation. Vrf ($) : LLM cost for warning validation.
+> Static :MemHint static-phase runtime (Phases 1, 3, 4, and 5).
+
+bugs for CodeQL and 31 for Infer, corresponding to precisions of 58.3% and 48.4%, respectively. In summary, the false alarm reduction rate exceeds 98% for both analyzers, with Z3 filtering removing most false alarms before LLM invocation, significantly reducing unnecessary cost. To assess whether the LLM incorrectly filters out real bugs, we randomly sampled 50 warnings classified as non-bugs; none were true bugs upon manual inspection, suggesting that LLM filtering is unlikely to discard genuine vulnerabilities, consistent with prior work [ 11 ].  
+
+> 9Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Huihui Huang, Jieke Shi, Bo Wang, Zhou Yang, and David Lo
+
+## 4.5 RQ4: Efficiency 
+
+Table 6 presents the cost and runtime breakdown of MemHint .Summary generation dominates both cost and runtime ($80.36 in total, approximately $11.5 per program, and about 2.1 hours per program), as it must process all candidate functions across the codebase. Warning validation for each analyzer’s output incurs minimal overhead ($2.71 for CodeQL and $3.18 for Infer), due to the aggressive filtering performed by Z3 in earlier stages. A key advantage of this design is that summary generation is a one-time cost; once generated and validated, summaries can be reused across multiple analyzers, project versions, and repeated analyses without regeneration. In practice, summaries only need to be regenerated when significant code changes occur (e.g., new custom allocators or major API refactoring); incremental updates between releases require no re-generation. This design amortizes the upfront LLM cost over all downstream uses. The static analysis phases (Phases 1, 3, 4, and 5) require only 37 minutes per program for CodeQL and 41 minutes for Infer on average, confirming that the pipeline’s recurring cost is modest. Compared to LeakGuard, which averages 96 minutes per program, MemHint achieves a 2.3-2.6 × speedup in the static analysis phase. Overall, MemHint demonstrates high efficiency: the most expensive step, summary generation, is shared and reusable, while all downstream stages are fast and inexpensive. 
+
+## 5 Threats to Validity 
+
+Threats to Internal Validity. Incorrect usage or misconfiguration of baseline tools (i.e., LeakGuard [ 38 ]) may lead to unfair compar-isons. We adopt the authors’ released implementation and evalu-ate it on six overlapping repositories (Vim, tmux, OpenSSL, Redis, FreeRDP, and FFmpeg) using the same versions as in the origi-nal study. Overall, we reproduce 34 out of 45 (76%) reported bugs. In particular, we achieve 100% reproduction for Redis and tmux, demonstrating faithful replication of LeakGuard’s results. In addi-tion, our batching strategy (multiple functions per prompt) may introduce context interference and affect LLM outputs. We miti-gate this by applying subsequent Z3-based validation to filter out infeasible cases, reducing the impact. 
+
+Threats to Construct Validity. Our evaluation relies on the num-ber of detected and confirmed bugs. All detected bugs are manually verified and reported to the corresponding repositories via issues or pull requests. However, confirmed bugs depend on maintainers’ responses, which may be delayed or incomplete, potentially under-estimating effectiveness. To mitigate this, we report both detected and confirmed bugs. In addition, the evaluation of summary quality depends on the construction of the human-labeled dataset, which may not fully represent all allocation and deallocation patterns. To reduce this risk, we select a substantial and balanced set of func-tions across projects, using a similar number of samples from each. Furthermore, human labeling may introduce subjective bias. We mitigate this by involving two annotators who discuss and resolve disagreements to improve consistency. The two authors achieved an “almost perfect” level of agreement [ 64 ], with a Cohen’s 𝜅 of 0.94, demonstrating that the impact of subjective bias is negligible. 
+
+Threats to External Validity. Our evaluation is conducted on seven C/C++ projects, which may limit the generalizability of the re-sults to other projects or programming languages. To mitigate this, we select a diverse set of widely-used projects spanning different sizes and application domains, thereby enhancing the representa-tiveness of our evaluation. 
+
+## 6 Related Work 
+
+Memory Leak Bug Detection The detection of memory leaks has evolved through various static and dynamic methodologies. Static approaches encompass abstract interpretation and model checking in tools like Sparrow [ 30 ] and Infer [ 13 ], Boolean satisfia-bility modeling in SATURN [ 68 ], and symbolic execution engines like KLEE [ 3] that track dynamic object lifecycles along program paths. A significant research direction simplifies leak detection to graph reachability on sparse value-flow graphs (SVFG), as demon-strated by Saber [ 62 ], FastCheck [ 5 ], Pinpoint [ 61 ], LeakFix [ 16 ], and SMOKE [ 14 ]. Specialized static frameworks further address spe-cific defect patterns, including partial call-path analysis in PCA [ 36 ], intra-procedural inconsistencies in error-handling code via Hec-tor [ 55 ], and practical memory ownership models in Clouseau [ 23 ]. Complementing these are dynamic monitors such as Purify [ 22 ], AddressSanitizer [ 58 ], and Valgrind’s memcheck [ 49 ], which in-strument code to track memory states during execution, as well as hardware-assisted instruction sampling in Sniper [ 29 ]. There are also studies focused on identifying project-specific custom memory management (MM) functions using heuristics, NLP, or usage-aware rules, as seen in Goshawk [ 42 ], K-MELD [ 12 ], our baseline Leak-Guard [ 38 ], and others [ 4, 39 , 40 , 65 ]. However, these approaches rely on surface-level signals and do not leverage LLMs’ semantic understanding of code. In contrast, MemHint combines LLM-based annotation with Z3-based symbolic validation to verify the reacha-bility of inferred annotations and filter infeasible leak paths. 
+
+LLM-assisted Static Analysis Large Language Models (LLMs) have been integrated into static analysis to bridge the semantic gap between code structures and developer intent. A primary applica-tion is the automated inference of specifications and annotations, where frameworks like IRIS [ 37 ] and LAMeD [ 59 ] extract source and sink metadata to guide external analyzers and reduce path explosion. Beyond specification generation, LLMs are utilized for contextual warning triage to mitigate the high false discovery rates of classical tools, exemplified by post-refinement systems like BU-GLENS [ 34 ] and ZeroFalse [ 26 ]. The research frontier has further shifted toward autonomous agentic auditing, where agents such as RepoAudit [ 19 ] and QRS [ 63 ] mimic human code auditors by navigating repositories on-demand to track data-flow facts across feasible program paths. SpecGen [ 43 ] and AutoSpec [ 66 ] lever-age LLMs to generate general specifications. Unlike these tools, 
+
+MemHint frames memory leak detection as a multi-stage neuro-symbolic pipeline where LLM-generated function summaries are formally validated by the Z3 SMT solver for reachability before being injected into industrial analyzers like CodeQL and Infer. 
+
+## 7 Conclusion and Future Work 
+
+This paper presents MemHint , a neuro-symbolic pipeline for detect-ing memory leaks in C/C++ programs. MemHint uses an LLM to in-fer the memory-management roles of custom functions, producing function summaries that extend the analyzer’s built-in knowledge beyond standard primitives. Each summary is validated by Z3 to 
+
+> 10
+
+Finding Memory Leaks in C/C++ Programs via Neuro-Symbolic Augmented Static Analysis Conference acronym ’XX, June 03–05, 2018, Woodstock, NY 
+
+ensure the claimed allocation or deallocation is reachable on a fea-sible path. The validated summaries are injected into CodeQL and Infer, and Z3-based path feasibility filtering combined with LLM-based validation suppresses false positives. Evaluated on seven widely used open-source projects totaling over 3.4M lines of code, 
+
+MemHint discovers 52 unique memory leaks (47 confirmed/fixed, 4 CVEs submitted), substantially outperforming vanilla CodeQL (19), vanilla Infer (3), Semgrep (2), and LeakGuard (20). For future work, we plan to generalize the pipeline to other languages with resource-management defects, and to explore Au-tomated Program Repair (APR) techniques [ 15 , 33 , 45 , 71 ] to auto-matically generate patches for the identified leaks. 
+
+## Data Availability 
+
+A replication package, including the implementation of MemHint 
+
+and detailed instructions for running it, is available at: https:// github.com/jiekeshi/MemHint. 
+
+## References 
+
+[1] Jinsheng Ba, Gregory J. Duck, and Abhik Roychoudhury. 2023. Efficient Greybox Fuzzing to Detect Memory Errors. In Proceedings of the 37th IEEE/ACM Inter-national Conference on Automated Software Engineering (Rochester, MI, USA) 
+
+(ASE ’22) . Association for Computing Machinery, New York, NY, USA, Article 37, 12 pages. doi:10.1145/3551349.3561161 [2] Max Brunsfeld and Tree sitter contributors. [n. d.]. Tree-sitter: An incremental parsing system for programming tools. https://tree-sitter.github.io/tree-sitter/. Accessed: 2026. [3] Cristian Cadar, Daniel Dunbar, Dawson R Engler, et al . 2008. Klee: unassisted and automatic generation of high-coverage tests for complex systems programs.. In OSDI , Vol. 8. 209–224. [4] Xi Chen, Asia Slowinska, and Herbert Bos. 2013. MemBrush: A practical tool to detect custom memory allocators in C binaries. In 2013 20th Working Conference on Reverse Engineering (WCRE) . 477–478. doi:10.1109/WCRE.2013.6671326 [5] Sigmund Cherem, Lonnie Princehouse, and Radu Rugina. 2007. Practical memory leak detection using guarded value-flow analysis. In Proceedings of the 28th ACM SIGPLAN Conference on Programming Language Design and Implementation . 480– 491. [6] Clang. Accessed 2026. LeakSanitizer: a run-time memory leak detector. https: //clang.llvm.org/docs/LeakSanitizer.html. [7] William G. Cochran. 1977. Sampling Techniques, 3rd Edition . John Wiley. [8] Leonardo De Moura and Nikolaj Bjørner. 2008. Z3: an efficient SMT solver. In 
+
+Proceedings of the Theory and Practice of Software, 14th International Conference on Tools and Algorithms for the Construction and Analysis of Systems (Budapest, Hungary) (TACAS’08/ETAPS’08) . Springer-Verlag, Berlin, Heidelberg, 337–340. [9] Guilherme Otávio de Sena and Rivalino Matias. 2018. A Systematic Map-ping Review of Memory Leak Detection Techniques. In 2018 IEEE International Symposium on Software Reliability Engineering Workshops (ISSREW) . 264–270. doi:10.1109/ISSREW.2018.00017 [10] Dino Distefano, Manuel Fähndrich, Francesco Logozzo, and Peter W. O’Hearn. 2019. Scaling static analyses at Facebook. Commun. ACM 62, 8 (July 2019), 62–70. doi:10.1145/3338112 [11] Xueying Du, Jiayi Feng, Yi Zou, Wei Xu, Jie Ma, Wei Zhang, Sisi Liu, Xin Peng, and Yiling Lou. 2026. Reducing False Positives in Static Bug Detection with LLMs: An Empirical Study in Industry. arXiv preprint arXiv:2601.18844 (2026). [12] Navid Emamdoost, Qiushi Wu, Kangjie Lu, and Stephen McCamant. 2021. Detect-ing kernel memory leaks in specialized modules with ownership reasoning. In 
+
+The 2021 Annual Network and Distributed System Security Symposium (NDSS’21) .[13] Facebook. 2026. Infer Static Analyzer. https://fbinfer.com. [Accessed 23-03-2026]. [14] Gang Fan, Rongxin Wu, Qingkai Shi, Xiao Xiao, Jinguo Zhou, and Charles Zhang. 2019. SMOKE: Scalable Path-Sensitive Memory Leak Detection for Millions of Lines of Code. In 2019 IEEE/ACM 41st International Conference on Software Engineering (ICSE) . 72–82. doi:10.1109/ICSE.2019.00025 [15] Zhiyu Fan, Xiang Gao, Martin Mirchev, Abhik Roychoudhury, and Shin Hwei Tan. 2023. Automated repair of programs from large language models. In 2023 IEEE/ACM 45th International Conference on Software Engineering (ICSE) . IEEE, 1469–1481. [16] Qing Gao, Yingfei Xiong, Yaqing Mi, Lu Zhang, Weikun Yang, Zhaoping Zhou, Bing Xie, and Hong Mei. 2015. Safe memory-leak fixing for c programs. In 2015 IEEE/ACM 37th IEEE International Conference on Software Engineering , Vol. 1. IEEE, 459–470. [17] GitHub. 2026. CodeQL. https://codeql.github.com/. [Accessed 23-03-2026]. [18] GitHub. 2026. GitHub Actions workflow security analysis with CodeQL is now generally available. https://github.blog/changelog/2025-04-22-github-actions-workflow-security-analysis-with-codeql-is-now-generally-available/. [Ac-cessed 23-03-2026]. [19] Jinyao Guo, Chengpeng Wang, Xiangzhe Xu, Zian Su, and Xiangyu Zhang. 2025. Repoaudit: An autonomous llm-agent for repository-level code auditing. arXiv preprint arXiv:2501.18160 (2025). [20] Zhaoqiang Guo, Tingting Tan, Shiran Liu, Xutong Liu, Wei Lai, Yibiao Yang, Yanhui Li, Lin Chen, Wei Dong, and Yuming Zhou. 2023. Mitigating false pos-itive static analysis warnings: Progress, challenges, and opportunities. IEEE Transactions on Software Engineering 49, 12 (2023), 5154–5188. [21] Wookhyun Han, Byunggill Joe, Byoungyoung Lee, Chengyu Song, and Insik Shin. 2018. Enhancing memory error detection for large-scale applications and fuzz testing. In Network and Distributed Systems Security (NDSS) Symposium 2018 .[22] Reed Hastings. 1992. Purify: Fast detection of memory leaks and access errors. In Proceedings of the USENIX Winter’92 Conference . 125–136. [23] David L Heine and Monica S Lam. 2003. A practical flow-sensitive and context-sensitive C and C++ memory leak detector. In Proceedings of the ACM SIGPLAN 2003 conference on Programming language design and implementation . 168–181. [24] Xinyi Hou, Yanjie Zhao, Yue Liu, Zhou Yang, Kailong Wang, Li Li, Xiapu Luo, David Lo, John Grundy, and Haoyu Wang. 2024. Large Language Models for Software Engineering: A Systematic Literature Review. ACM Trans. Softw. Eng. Methodol. 33, 8, Article 220 (Dec. 2024), 79 pages. doi:10.1145/3695988 [25] Huimin Hu, Yingying Wang, Julia Rubin, and Michael Pradel. 2025. An Empirical Study of Suppressed Static Analysis Warnings. Proc. ACM Softw. Eng. 2, FSE, Article FSE014 (June 2025), 22 pages. doi:10.1145/3715729 [26] Mohsen Iranmanesh, Sina Moradi Sabet, Sina Marefat, Ali Javidi Ghasr, Allison Wilson, Iman Sharafaldin, and Mohammad A Tayebi. 2025. ZeroFalse: Improving Precision in Static Analysis with LLMs. arXiv preprint arXiv:2510.02534 (2025). [27] Nihal Jain, Robert Kwiatkowski, Baishakhi Ray, Murali Krishna Ramanathan, and Varun Kumar. 2025. On Mitigating Code LLM Hallucinations with API Documentation. In 2025 IEEE/ACM 47th International Conference on Software Engineering: Software Engineering in Practice (ICSE-SEIP) . 237–248. doi:10.1109/ ICSE-SEIP66354.2025.00027 [28] Juyong Jiang, Fan Wang, Jiasi Shen, Sungju Kim, and Sunghun Kim. 2026. A Survey on Large Language Models for Code Generation. ACM Trans. Softw. Eng. Methodol. 35, 2, Article 58 (Jan. 2026), 72 pages. doi:10.1145/3747588 [29] Changhee Jung, Sangho Lee, Easwaran Raman, and Santosh Pande. 2014. Au-tomated memory leak detection for production use. In Proceedings of the 36th International Conference on Software Engineering . 825–836. [30] Yungbum Jung and Kwangkeun Yi. 2008. Practical memory leak detector based on parameterized procedural summaries. In Proceedings of the 7th international symposium on Memory management . 131–140. [31] Hong Jin Kang, Khai Loong Aw, and David Lo. 2022. Detecting false alarms from automatic static analysis tools: how far are we?. In Proceedings of the 44th International Conference on Software Engineering (Pittsburgh, Pennsylvania) (ICSE ’22) . Association for Computing Machinery, New York, NY, USA, 698–709. doi:10. 1145/3510003.3510214 [32] Giyeol Kim, Dohyun Ryu, Seungjin Bae, Changyul Lee, and Taegyu Kim. 2025. Fuzzing Acceleration for Memory Safety Bug Discovery with Slicer. In 2025 IEEE Annual Computer Security Applications Conference (ACSAC) . 46–59. doi:10.1109/ ACSAC67867.2025.00020 [33] Claire Le Goues, Michael Pradel, and Abhik Roychoudhury. 2019. Automated program repair. Commun. ACM 62, 12 (2019), 56–65. [34] Haonan Li, Hang Zhang, Kexin Pei, and Zhiyun Qian. 2025. Towards More Accurate Static Analysis for Taint-Style Bug Detection in Linux Kernel. In 2025 40th IEEE/ACM International Conference on Automated Software Engineering (ASE) .IEEE, 380–392. [35] Kaixuan Li, Sen Chen, Lingling Fan, Ruitao Feng, Han Liu, Chengwei Liu, Yang Liu, and Yixiang Chen. 2023. Comparison and evaluation on static application security testing (sast) tools for java. In Proceedings of the 31st ACM Joint European Software Engineering Conference and Symposium on the Foundations of Software Engineering . 921–933. [36] Wen Li, Haipeng Cai, Yulei Sui, and David Manz. 2020. PCA: memory leak detection using partial call-path analysis. In Proceedings of the 28th ACM Joint Meeting on European Software Engineering Conference and Symposium on the Foundations of Software Engineering . 1621–1625. [37] Ziyang Li, Saikat Dutta, and Mayur Naik. 2024. IRIS: LLM-assisted static analysis for detecting security vulnerabilities. arXiv preprint arXiv:2405.17238 (2024). [38] Hongliang Liang, Luming Yin, Guohao Wu, Yuxiang Li, Qiuping Yi, and Lei Wang. 2025. LeakGuard: Detecting Memory Leaks Accurately and Scalably. 
+
+arXiv preprint arXiv:2504.04422 (2025). [39] Huqiu Liu, Yuping Wang, Lingbo Jiang, and Shimin Hu. 2014. PF-Miner: A new paired functions mining method for Android kernel in error paths. In 2014 IEEE 38th Annual Computer Software and Applications Conference . IEEE, 33–42. [40] Hu-Qiu Liu, Jia-Ju Bai, Yu-Ping Wang, Zhe Bian, and Shi-Min Hu. 2015. Pairminer: mining for paired functions in Kernel extensions. In 2015 IEEE International 
+
+11 Conference acronym ’XX, June 03–05, 2018, Woodstock, NY Huihui Huang, Jieke Shi, Bo Wang, Zhou Yang, and David Lo 
+
+Symposium on Performance Analysis of Systems and Software (ISPASS) . IEEE, 93–101. [41] LLVM Project. 2026. Clang Static Analyzer. https://clang-analyzer.llvm.org/. [Accessed 23-03-2026]. [42] Yunlong Lyu, Yi Fang, Yiwei Zhang, Qibin Sun, Siqi Ma, Elisa Bertino, Kangjie Lu, and Juanru Li. 2022. Goshawk: Hunting Memory Corruptions via Structure-Aware and Object-Centric Memory Operation Synopsis. In 43rd IEEE Symposium on Security and Privacy, SP 2022, San Francisco, CA, USA, May 22-26, 2022 . IEEE, 2096–2113. doi:10.1109/SP46214.2022.9833613 [43] Lezhi Ma, Shangqing Liu, Yi Li, Xiaofei Xie, and Lei Bu. 2025. Specgen: Automated generation of formal program specifications via large language models. In 2025 IEEE/ACM 47th International Conference on Software Engineering (ICSE) . IEEE, 16–28. [44] MITRE. 2026. CWE-401: Missing Release of Memory after Effective Lifetime (4.19.1). https://cwe.mitre.org/data/definitions/401.html. [Accessed 23-03-2026]. [45] Aniruddhan Murali, Mahmoud Alfadel, Meiyappan Nagappan, Meng Xu, and Chengnian Sun. 2024. AddressWatcher: Sanitizer-Based Localization of Memory Leak Fixes. IEEE Transactions on Software Engineering 50, 9 (2024), 2398–2411. doi:10.1109/TSE.2024.3438119 [46] Darragh Murphy. 2025. This hidden Windows 11 setting might be quietly draining your RAM. https://tech.yahoo.com/computing/articles/hidden-windows-11-setting-might-121538216.html. [Accessed 23-03-2026]. [47] Tukaram Muske and Alexander Serebrenik. 2016. Survey of approaches for handling static analysis alarms. In 2016 IEEE 16th International Working Conference on Source Code Analysis and Manipulation (SCAM) . IEEE, 157–166. [48] Tukaram Muske and Alexander Serebrenik. 2022. Survey of Approaches for Postprocessing of Static Analysis Alarms. ACM Comput. Surv. 55, 3, Article 48 (Feb. 2022), 39 pages. doi:10.1145/3494521 [49] Nicholas Nethercote and Julian Seward. 2007. Valgrind: a framework for heavy-weight dynamic binary instrumentation. ACM Sigplan notices 42, 6 (2007), 89–100. [50] OpenCVE. 2026. CVEs and Security Vulnerabilities. https://app.opencve.io/cve/ ?weakness=CWE-401. [Accessed 23-03-2026]. [51] OpenSSL. 2026. openssl/openssl: TLS/SSL and crypto library. https://github.com/ openssl/openssl. [Accessed 23-03-2026]. [52] FreeRDP Project. Accessed 2026. FreeRDP: A Remote Desktop Protocol Imple-mentation. https://www.freerdp.com. [53] LLVM Project. Accessed 2026. libFuzzer: a library for coverage-guided fuzz testing. https://llvm.org/docs/LibFuzzer.html. [54] Rapid7. 2025. MongoBleed CVE-2025-1484: Critical Memory Leak in MongoDB Allowing Attackers to Extract Sensitive Data. https: //www.rapid7.com/blog/post/etr-mongobleed-cve-2025-1484-critical-memory-leak-in-mongodb-allowing-attackers-to-extract-sensitive-data/. [Accessed 23-03-2026]. [55] Suman Saha, Jean-Pierre Lozi, Gaël Thomas, Julia L Lawall, and Gilles Muller. 2013. Hector: Detecting resource-release omission faults in error-handling code for systems software. In 2013 43rd Annual IEEE/IFIP International Conference on Dependable Systems and Networks (DSN) . IEEE, 1–12. [56] Semgrep Inc. Accessed 2026. Semgrep. https://semgrep.dev [57] Kostya Serebryany. 2017. OSS-Fuzz - Google’s continuous fuzzing service for open source software. USENIX Association, Vancouver, BC. [58] Konstantin Serebryany, Derek Bruening, Alexander Potapenko, and Dmitry Vyukov. 2012. AddressSanitizer: a fast address sanity checker. In Proceedings of the 2012 USENIX Conference on Annual Technical Conference (Boston, MA) 
+
+(USENIX ATC’12) . USENIX Association, USA, 28. [59] Ekaterina Shemetova, Ivan Smirnov, Anton Alekseev, Ilya Shenbin, Alexey Rukhovich, Sergey Nikolenko, Vadim Lomshakov, and Irina Piontkovskaya. 2025. LAMeD: LLM-generated Annotations for Memory Leak Detection. In Proceedings of the 29th International Conference on Evaluation and Assessment in Software Engineering (EASE ’25) . Association for Computing Machinery, New York, NY, USA, 1024–1034. doi:10.1145/3756681.3756999 [60] Jieke Shi, Zhou Yang, and David Lo. 2025. Efficient and Green Large Language Models for Software Engineering: Literature Review, Vision, and the Road Ahead. 
+
+ACM Trans. Softw. Eng. Methodol. 34, 5, Article 137 (May 2025), 22 pages. doi:10. 1145/3708525 [61] Qingkai Shi, Xiao Xiao, Rongxin Wu, Jinguo Zhou, Gang Fan, and Charles Zhang. 2018. Pinpoint: Fast and precise sparse value flow analysis for million lines of code. In Proceedings of the 39th ACM SIGPLAN Conference on Programming Language Design and Implementation . 693–706. [62] Yulei Sui, Ding Ye, and Jingling Xue. 2014. Detecting Memory Leaks Statically with Full-Sparse Value-Flow Analysis. IEEE Trans. Software Eng. 40, 2 (2014), 107–122. doi:10.1109/TSE.2014.2302311 [63] George Tsigkourakos and Constantinos Patsakis. 2026. QRS: A Rule-Synthesizing Neuro-Symbolic Triad for Autonomous Vulnerability Discovery. arXiv preprint arXiv:2602.09774 (2026). [64] Anthony J Viera, Joanne M Garrett, et al . 2005. Understanding interobserver agreement: the kappa statistic. Fam med 37, 5 (2005), 360–363. [65] Jianqiang Wang, Siqi Ma, Yuanyuan Zhang, Juanru Li, Zheyu Ma, Long Mai, Tiancheng Chen, and Dawu Gu. 2019. NLP-EYE: Detecting Memory Cor-ruptions via Semantic-Aware Memory Operation Function Identification. In 
+
+22nd International Symposium on Research in Attacks, Intrusions and Defenses (RAID 2019) . USENIX Association, Chaoyang District, Beijing, 309–321. https: //www.usenix.org/conference/raid2019/presentation/wang-0 [66] Cheng Wen, Jialun Cao, Jie Su, Zhiwu Xu, Shengchao Qin, Mengda He, Haokun Li, Shing-Chi Cheung, and Cong Tian. 2024. Enchanting program specification synthesis by large language models using static analysis and program verification. In International Conference on Computer Aided Verification . Springer, 302–328. [67] Cheng Wen, Haijun Wang, Yuekang Li, Shengchao Qin, Yang Liu, Zhiwu Xu, Hongxu Chen, Xiaofei Xie, Geguang Pu, and Ting Liu. 2020. MemLock: memory usage guided fuzzing. In Proceedings of the ACM/IEEE 42nd International Confer-ence on Software Engineering (Seoul, South Korea) (ICSE ’20) . Association for Com-puting Machinery, New York, NY, USA, 765–777. doi:10.1145/3377811.3380396 [68] Yichen Xie and Alex Aiken. 2005. Context-and path-sensitive memory leak detection. In Proceedings of the 10th European software engineering conference held jointly with 13th ACM SIGSOFT international symposium on Foundations of software engineering . 115–125. [69] Wen Xu, Sanidhya Kashyap, Changwoo Min, and Taesoo Kim. 2017. Designing New Operating Primitives to Improve Fuzzing Performance. In Proceedings of the 2017 ACM SIGSAC Conference on Computer and Communications Security (Dallas, Texas, USA) (CCS ’17) . Association for Computing Machinery, New York, NY, USA, 2313–2328. doi:10.1145/3133956.3134046 [70] Duo Zhang, Om Rameshwar Gatla, Wei Xu, and Mai Zheng. 2021. A study of persistent memory bugs in the Linux kernel. In Proceedings of the 14th ACM International Conference on Systems and Storage (Haifa, Israel) (SYSTOR ’21) .Association for Computing Machinery, New York, NY, USA, Article 6, 6 pages. doi:10.1145/3456727.3463783 [71] Yuntong Zhang, Haifeng Ruan, Zhiyu Fan, and Abhik Roychoudhury. 2024. Au-tocoderover: Autonomous program improvement. In Proceedings of the 33rd ACM SIGSOFT International Symposium on Software Testing and Analysis . 1592–1604. [72] Ziyao Zhang, Chong Wang, Yanlin Wang, Ensheng Shi, Yuchi Ma, Wanjun Zhong, Jiachi Chen, Mingzhi Mao, and Zibin Zheng. 2025. LLM Hallucinations in Practical Code Generation: Phenomena, Mechanism, and Mitigation. Proc. ACM Softw. Eng. 2, ISSTA, Article ISSTA022 (June 2025), 23 pages. doi:10.1145/3728894 12
