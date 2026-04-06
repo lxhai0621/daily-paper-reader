@@ -1,0 +1,475 @@
+Title: Domain-Adapted Retrieval for In-Context Annotation of Pedagogical Dialogue Acts
+
+URL Source: https://arxiv.org/pdf/2604.03127v1
+
+Published Time: Mon, 06 Apr 2026 00:55:08 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+Preprint. Under review. 
+
+# Domain-Adapted Retrieval for In-Context Annotation of Ped-agogical Dialogue Acts 
+
+Jinsook Lee, Kirk Vanacore, Zhuqian Zhou, Bakhtawar Ahtisham & Rene F. Kizilcec 
+
+Cornell University Ithaca, NY, 14850, USA 
+
+{jl3369, kpv27, zz968, ba453, kizilcec }@cornell.edu 
+
+## Abstract 
+
+Automated annotation of pedagogical dialogue is a high-stakes task where LLMs often fail without sufficient domain grounding.We present a domain-adapted RAG pipeline for tutoring move annotation. Rather than fine-tuning the generative model, we adapt retrieval by fine-tuning a lightweight embedding model on tutoring corpora and indexing dialogues at the utter-ance level to retrieve labeled few-shot demonstrations. Evaluated across two real tutoring dialogue datasets (TalkMoves and Eedi) and three LLM backbones (GPT-5.2, Claude Sonnet 4.6, Qwen3-32b), our best configuration achieves Cohen’s κ of 0.526-0.580 on TalkMoves and 0.659-0.743 on Eedi, substantially outperforming no-retrieval baselines ( κ = 0.275-0.413 and 0.160-0.410). An ablation study reveals that utterance-level indexing, rather than embedding quality alone, is the primary driver of these gains, with top-1 label match rates improving from 39.7% to 62.0% on TalkMoves and 52.9% to 73.1% on Eedi under domain-adapted retrieval. Retrieval also corrects systematic label biases present in zero-shot prompting and yields the largest improvements for rare and context-dependent labels. These findings suggest that adapting the retrieval component alone is a practical and effective path toward expert-level pedagogical dialogue annotation while keeping the generative model frozen. 
+
+## 1 Introduction 
+
+Large language models (LLMs) are increasingly deployed across educational technology for diverse applications, from generating instructional materials and supporting assessment design to real-time tutoring (Scarlatos et al., 2025). While prior work has examined how to adapt or optimize models for specific educational tasks, far less is known about how well LLMs perform when interpreting authentic pedagogical interactions (Chiang & Lee, 2023; He et al., 2024; Anagnostopoulou et al., 2025). This gap is particularly important because educational applications often require understanding nuanced, context-dependent concepts that differ fundamentally from general-purpose language understanding tasks. For example, tutoring moves capture the communicative intent behind tutor and student utterances in educational interactions. A tutor might scaffold a student’s reasoning through guided questions, directly provide an answer, press for deeper justification, or manage the conversational flow. Studies demonstrate that certain tutoring moves, such as scaffolding, correlate with deeper conceptual understanding, while excessive telling does not (Michaels et al., 2008; Michaels & O’Connor, 2015; Litman & Forbes-Riley, 2005). Therefore identifying these moves reliably is essential for evaluating tutoring quality at scale, providing formative feedback to human instructors, and training the reward models that support intelligent tutoring systems. However, tutoring move annotation remains a manual, expert-intensive process. Codebooks such as the TalkMoves framework (Suresh et al., 2022) require trained annotators who understand pedagogical theory, and achieving acceptable inter-rater relia-bility demands extensive calibration sessions (Vail & Boyer, 2014). This bottleneck limits the scale at which tutoring interactions can be analyzed, a constraint that grows increasingly untenable as online tutoring platforms generate millions of dialogue sessions per year. The 1
+
+> arXiv:2604.03127v1 [cs.CL] 3 Apr 2026
+
+Preprint. Under review. challenge is that tutoring moves are abstract and inherently contextual. The distinction between those dialogue acts depends on surrounding conversational context, the student’s prior responses, and the tutor’s pedagogical intent rather than the surface form of a single utterance. While LLMs can classify general dialogue acts with reasonable accuracy (Shan et al., 2023; Tan et al., 2023), general-purpose schemas do not capture the pedagogical subtlety required for educational dialogue. We address these limitations with a three-stage approach that decouples domain adaptation from generation. In the first stage, we fine-tune a lightweight sentence embedding model on tutoring dialogue corpora with Multiple Nega-tives Ranking Loss (MNRL), adapting the representation space so that utterances serving similar pedagogical functions cluster together regardless of surface lexical variation, and use these embeddings to segment dialogues into coherent chunks for FAISS indexing. In the second stage, we retrieve the most semantically similar labeled examples from the index. In the third stage, retrieved examples are presented as few-shot demonstrations alongside the annotation codebook to a general-purpose LLM, which performs classification through in-context learning (ICL) (Lewis et al., 2020; Chen et al., 2024). All domain adaptation resides in the retriever that makes the pipeline portable across LLM backbones and reusable as new models become available. Our contributions are as follows. 1. A three-stage retrieval-augmented annotation pipeline that combines domain-adapted embedding, utterance-level indexing with parent chunk context, and codebook-grounded in-context learning with a frozen LLM. Our experiments show 81% relative improvement in Cohen’s κ over zero-shot baselines across three LLM backbones. 2. An utterance-level indexing strategy that preserves label-specific signal during search while returning parent chunks as few-shot demonstrations, paired with a dynamic semantic chunking algorithm calibrated against sparse ground truth boundaries. 3. A comprehensive ablation study across retrieval conditions, retrieval depth, and LLM backbones on two tutoring dialogue datasets, demonstrating that domain adaptation on the retriever side alone accounts for the majority of the performance gain over codebook-only prompting. 
+
+## 2 Related Work 
+
+2.1 Dialogue Act Annotation in Educational Settings 
+
+Dialogue act annotation has a long history in educational research. The Accountable Talk framework (Michaels et al., 2008) established the theoretical foundation for analyzing class-room discourse through the lens of talk moves that promote productive discussion. Suresh et al. (2022) operationalized this framework computationally by releasing the TalkMoves dataset, which contains K-12 mathematics lesson transcripts annotated at the utterance level for teacher and student discursive moves. Early computational approaches relied on super-vised models trained on these labeled corpora (Jensen et al., 2021), with subsequent work addressing class imbalance through AUC optimization (Yang et al., 2023) and integrating multiple annotation perspectives to capture the multi-functionality of tutoring utterances (Naim et al., 2025). A consistent finding is that inter-rater reliability remains a bottleneck, requiring extensive calibration even with refined codebooks (Vail & Boyer, 2014). 
+
+2.2 Annotating Dialogue Acts with LLMs 
+
+Researchers increasingly rely on LLMs to scale annotation, though performance relative to human experts varies by task complexity and workflow design (Su & Ye, 2025; Yu et al., 2024). While LLMs perform well in constrained settings, complex discourse annotation typically requires structured pipelines to accommodate real-world taxonomies and multi-label cases (Ostyakova et al., 2023). A growing body of work frames LLM annotation as a 
+
+process design problem, improving robustness through ensembling and orchestration (Na & Feng, 2025; Ahtisham et al., 2025). Particularly in education, some approaches range 2Preprint. Under review. from using GPT-family models as crowdsourced annotators (He et al., 2024) to generating synthetic tutoring dialogue data to improve coverage of rare codes (Shan et al., 2023) and applying active learning to reduce annotation costs (Tan et al., 2023). Frameworks like EduDCM further improve reliability by decomposing constructs into discrete components such as acts and events, enforcing consistency checks across multiple LLMs (Qi et al., 2024). Despite these advances, LLMs still struggle with multi-party and goal-oriented dialogue act classification where overlapping interactional threads and complex schemas exceed current capabilities (Qamar et al., 2025; Labruna et al., 2023). Comparisons of human and LLM assessment find that models struggle with pedagogically nuanced distinctions without domain-specific guidance (Anagnostopoulou et al., 2025), motivating human-in-the-loop pipelines that integrate verification steps (Tavakoli & Zamani, 2025; Shah et al., 2025). 
+
+2.3 Retrieval-Based In-Context Learning and Domain Adaptation 
+
+Retrieval-augmented generation (RAG), introduced by Lewis et al. (2020), grounds model outputs in retrieved external evidence at inference time rather than relying solely on para-metric knowledge. This is especially consequential for annotation tasks involving rare or fine-grained categories, where Li et al. (2024b) showed selective retrieval yields the largest gains. Chen et al. (2024) extended this to classification via retrieval databases of labeled demonstrations, while Agarwal et al. (2024) and Dong et al. (2024) both highlight that demonstration selection is among the most consequential design choices in ICL. How documents are segmented into retrieval units further shapes performance (Wang et al., 2025), and in tutoring dialogue this is particularly high-stakes since fixed-size windows routinely fragment coherent instructional exchanges. The effectiveness of RAG also depends on the quality of the retrieval embedding space. General-purpose embeddings often fail to capture domain-specific semantic similarity, returning examples that are lexically similar but functionally irrelevant. Adapting the retriever to the target domain through unsupervised LLM adaptation (Li et al., 2024a; BehnamGhader et al., 2024) or self-training (Xu et al., 2025) is often more impactful than adapting the generator. 
+
+## 3 Method FAISS Index 
+
+> Top-k Retrieved Chunks
+> Tutoring Dialogue Corpus
+> Sentence Transformer
+> Fine-tuned Transformer (MNRL)
+> Boundary Detection
+> [Tutor]
+> [Student]
+> [Tutor]
+> [Student]
+> [Tutor]
+> [Student]
+> [Tutor]
+> [Student]
+> Semantic Chunks
+> ...
+> Threshold Calibration
+
+...
+
+> Semantic Chunks
+> Semantic Chunks
+> RAG w/ General Embedding
+> RAG w/ Fine-tuned Embeddings
+> [Tutor]
+> [Student]
+> Utterances
+> Query
+> Unseen Dialogue Corpus
+> …[Tutor] How do we find 10 less than A number? Do we add or subtract? [Student ] subtract. [Tutor] <<< TARGET >>> Utterance [Student] … …
+
+? [Tutor] Can you explain why you think it’s A? [Tutor] Ok, so which number is in the tens column? [Tutor] Do you know why they wrote 3a + 4b in that block? 
+
+...
+
+> Prompt Construtor
+> Task & Codebook
+> ACC: Pressing for Accuracy REA: Pressing for Reasoning REV: Revoicing RES: Restating SCF: Scaffolding …
+> Few-shot Examples
+> [Tutor] Can you explain why you think it’s A? [Tutor] Ok, so which number is in the tens column? [Tutor] Do you know why they wrote 3a + 4b in that block?
+> ...
+> REA
+> ACC
+> REA
+> Query
+> …[Tutor] How do we find 10 less than A number? Do we add or subtract? [Student ] subtract. [Tutor] <<< TARTGET >>> Utterance [Student] …
+
+LLM Annotation 
+
+> Predicted Label
+> {“Label”: “REA”, “Confidence”: 0.92, }
+> (1) SEMANTIC CHUNKING & INDEXING
+> (2) RETRIEVAL
+> (3) LLM INFERENCE
+> REA
+> ACC
+> REA
+> Index Search
+
+Figure 1: Overview of the proposed RAG-based annotation pipeline. 
+
+3.1 Task Formulation 
+
+Figure 1 shows the overview of the proposed annotation pipeline. Each utterance in a tutoring dialogue has associated text ti, a speaker role (tutor or student), and optionally a sparse ground-truth label from a predefined codebook. The label set follows the TalkMoves 3Preprint. Under review. taxonomy with six categories (Suresh et al., 2022), namely Keeping Everyone Together (KET), Getting Students to Relate (GSR), Restating (RES), Pressing for Accuracy (ACC), Revoicing (REV), and Pressing for Reasoning (REA). The task is to predict the label for each tutor utterance by constructing a retrieval index from the corpus, dynamically building context windows around target utterances, and passing both local context and retrieved examples to a frozen LLM for in-context classification. 
+
+3.2 Dynamic Semantic Chunking 
+
+When applying RAG, setting proper chunking boundaries is important (Wang et al., 2025; Bhat et al., 2025). If a chunk is too small, not enough information would be retrieved and if a chunk is too big, the information would be diluted. Our approach begins by partitioning the dialogue corpus into semantically coherent chunks that preserve label homogeneity while respecting session boundaries. We embed all utterances using a sentence transformer model 
+
+ϕ such that ei = ϕ(ti) where ei ∈ Rd, L2-normalized to enable cosine similarity as a dot product. Semantic boundaries are detected by computing the smoothed cosine similarity between overlapping context windows. For each position i in the dialogue, we compute sim (i) = cos 1
+
+w
+
+> i−1
+
+# ∑
+
+> j=i−w
+
+ej, 1
+
+w
+
+> i+w−1
+
+# ∑
+
+> j=i
+
+ej
+
+!
+
+(1) where w is the window size (default w = 2). A low similarity score at position i indicates a candidate semantic boundary where the topic or pedagogical function shifts. To determine the boundary threshold τ, we leverage sparse ground truth annotations. We identify true boundaries as positions where consecutive labeled utterances have differing labels, and non-boundaries as positions where consecutive labeled utterances share the same label. We then sweep τ over [0.3, 1.0 ) in increments of 0.01 and select the threshold that maximizes F1 on this boundary classification problem. We additionally impose a safety cap where τ cannot exceed the median of all observed similarity scores, preventing over-segmentation when fine-tuned embeddings exhibit representation collapse. Chunks are created by splitting at positions where sim (i) < τ, respecting a minimum size of 2 and maximum of 20 utterances. 
+
+3.3 Domain-Adapted Embeddings 
+
+To improve semantic separation of tutoring dialogue labels in the embedding space, we fine-tune BGE-large-en-v1.5 on labeled utterances from the TalkMoves and Eedi training sets combined. We combine both datasets because they share the same label taxonomy, and pooling increases the diversity of in-batch negatives for MNRL while improving coverage of rare labels that are underrepresented in either dataset alone. Training on both classroom and dyadic chat data also encourages the embedding space to capture pedagogical function across interaction formats rather than surface patterns specific to one setting. To prevent data leakage through the embedding geometry, we use only training-split utterances for fine-tuning. Training data consists of (anchor, positive) pairs sampled within each label group, capped at 3,000 pairs per label to prevent frequent labels from dominating the gradient. We optimize with MNRL (Henderson et al., 2017), where all other in-batch examples serve as implicit negatives. For a batch of B pairs, the loss for pair i is 
+
+Li = − log exp (sim (ai, pi)/T)
+
+∑Bj=1 exp (sim (ai, pj)/T) (2) where sim is cosine similarity and T is a temperature parameter. Training proceeds for 3 epochs with batch size 64 and we saved the best checkpoint by evaluation Spearman correlation. 
+
+3.4 RAG Index Construction 
+
+We construct two types of FAISS indexes (Johnson et al., 2021) depending on the embedding condition. We construct three indexes. A chunk-level index using Cohere embeddings, 4Preprint. Under review. and two BGE-based indexes. The first BGE index operates at the chunk level; the second embeds each labeled utterance individually, retrieving the parent chunk at query time. At query time, we retrieve the top k most similar utterances and return their parent chunks as few-shot demonstrations. MNRL optimizes same-label similarity but does not explicitly enforce separation between different labels, which can cause representation collapse where all embeddings cluster into a narrow cone with pathologically high pairwise similarity. To address this, we apply mean-centering by subtracting the mean embedding vector from all stored embeddings before indexing. The same mean vector is subtracted from query embeddings at search time. 
+
+3.5 Query Construction and Prompting 
+
+At inference time, we construct a context window for each target utterance that adapts to the dialogue structure. Given a target utterance at position t, we expand backward and forward from t, stopping at positions where sim (i) < τ or at session boundaries, up to a maximum of 10 utterances in each direction. For chunk-level indexes, we embed the full context window as the query vector. For utterance-level indexes, we embed only the target utterance itself. Given the query, we search the FAISS index for the top k entries (default 
+
+k = 3). For utterance-level indexes, each retrieved utterance’s parent chunk is returned as the demonstration, providing the LLM with full surrounding dialogue context. To avoid data leakage, we exclude the target utterance’s own session from retrieval results. The LLM prompt consists of a system message specifying the annotator role, task definition, and full codebook with label definitions, followed by a user message presenting retrieved chunks as labeled examples and the current dialogue context with the target utterance marked by 
+
+<<<TARGET>>> . The model outputs a JSON object with the predicted label and confidence score. Full prompt templates are provided in Appendix A. 
+
+## 4 Experimental Setup 
+
+4.1 Datasets TalkMoves. The TalkMoves dataset 1 contains human-transcribed K-12 mathematics class-room transcripts drawn from whole-class discussions, small-group problem-solving, and online lesson contexts (Suresh et al., 2022). Utterances are annotated with six talk moves organized into three dimensions: Learning Community (KET, GSR, RES), Content Knowledge 
+
+(ACC), and Rigorous Thinking (REV, REA). We focus exclusively on teacher talk moves. After removing 2 sessions with fewer than 10 human labels, we retain 61 sessions split into 49 training and 12 test (Table 1). The label distribution is heavily imbalanced, with ACC (41%) and KET (27%) dominating while REA and GSR each comprise fewer than 6%. 
+
+Eedi. The Eedi dataset (Zent et al., 2025) 2 is drawn from a UK-based online tutoring platform deployed in over 19,000 schools worldwide. Conversations are initiated when a student requests help from an on-demand expert tutor while working on a math lesson, producing dyadic chat-based dialogues anchored to a specific question. The data were collected from November 2021 to February 2025 and annotated with the same six TalkMoves categories used for annotation.                   
+
+> Dataset Sessions Utterances Avg. Utt Annotated (%) Train Test TalkMoves 61 31,171 511 8,407 (27%) 49 12 Eedi 1,965 46,147 23 30,001 (65%) 1,570 395
+
+Table 1: Dataset statistics. Annotated counts and percentages reflect ground-truth labels across the full dataset (train and test combined). Avg. Utt is the mean utterances per session. 
+
+> 1https://github.com/SumnerLab/TalkMoves/tree/main
+> 2https://huggingface.co/datasets/Eedi/Question-Anchored-Tutoring-Dialogues-2k
+
+5Preprint. Under review. 
+
+4.2 Conditions and Implementation 
+
+We compare four retrieval conditions (Table 2). The NO RAG condition provides only the codebook and local dialogue context. The RAG NO FINETUNE condition uses Cohere embed-english-v3 for semantic chunking and chunk-level retrieval. The RAG FINETUNED CHUNK condition replaces the embedding model with our fine-tuned BGE while retaining chunk-level indexing, isolating the effect of embedding quality from in-dex granularity. The RAG FINETUNED UTT condition uses the same fine-tuned BGE model but indexes at the utterance level with parent chunk retrieval. We additionally evaluate fixed-window chunking baselines (Appendix D). To test the generality of the pipeline across 
+
+Condition Chunking Retrieval Index Returned  
+
+> NO RAG
+
+None None (codebook only) – –RAG NO FINETUNE Semantic (Cohere) Cohere embed-english-v3 Chunk Chunk RAG FINETUNED CHUNK Semantic (FT-BGE) Fine-tuned BGE (MNRL) Chunk Chunk RAG FINETUNED UTT Semantic (FT-BGE) Fine-tuned BGE (MNRL) Utt. Chunk 
+
+Table 2: Experimental conditions. Index denotes the granularity of FAISS entries. Returned denotes what is passed to the LLM as a few-shot demonstration. RAG FINETUNED CHUNK 
+
+and RAG FINETUNED UTT share the same embedding model, isolating the effect of index granularity. Additional ablation conditions are reported in Appendix D. LLM backbones, we evaluate the three main conditions with three models: GPT-5.2, Claude Sonnet 4.6, and Qwen3-32b. All models are accessed via LiteLLM’s unified interface with temperature 1.0, which we retain as the default to avoid artificially constraining the model’s output distribution. Lower temperatures may improve consistency but risk suppressing valid alternative predictions for ambiguous utterances. The default retrieval depth is k = 3, with ablation over k ∈ { 0, 1, 3, 5 } for all three models. Our primary metric is Cohen’s κ, com-puted only on utterances with human labels, excluding null predictions. We additionally report per-label precision, recall, and F1. Statistical significance is assessed via permutation tests ( n = 2, 000) for κ and McNemar’s test for accuracy. For embedding fine-tuning, we use 
+
+BGE-large-en-v1.5 (Xiao et al., 2023) with batch size 64 for 3 epochs. 
+
+## 5 Results 
+
+5.1 Domain-Adapted Retrieval Consistently Improves Annotation Quality Across All Models and Datasets 
+
+Model Condition TM κ TM Acc Eedi κ Eedi Acc GPT-5.2 NO RAG 0.315 0.500 0.351 0.575 GPT-5.2 RAG NO FINETUNE 0.479 0.639 0.505 0.709 GPT-5.2 RAG FINETUNED CHUNK 0.454 0.620 0.530 0.740 GPT-5.2 RAG FINETUNED UTT 0.539 0.688 0.659 0.810 Sonnet 4.6 NO RAG 0.413 0.578 0.410 0.714 Sonnet 4.6 RAG NO FINETUNE 0.498 0.653 0.632 0.797 Sonnet 4.6 RAG FINETUNED CHUNK 0.501 0.647 0.632 0.780 Sonnet 4.6 RAG FINETUNED UTT 0.580 0.708 0.743 0.847 
+
+Qwen3-32b NO RAG 0.275 0.404 0.160 0.354 Qwen3-32b RAG NO FINETUNE 0.442 0.617 0.590 0.769 Qwen3-32b RAG FINETUNED CHUNK 0.428 0.585 0.545 0.725 Qwen3-32b RAG FINETUNED UTT 0.526 0.667 0.694 0.818 
+
+Table 3: Cohen’s κ and accuracy across three LLM backbones on both test sets ( k = 3). Bold indicates the best result per metric. All RAG vs. NO RAG differences are signifi-cant at p < .001 (permutation test, n = 2 , 000) except Qwen3-32b κ on TalkMoves for RAG NO FINETUNE (p < .01). 6Preprint. Under review. Table 3 presents Cohen’s κ and accuracy across all three models and retrieval conditions on both test sets with k = 3. Across all models, retrieval-augmented prompting sub-stantially improves annotation quality over the codebook-only baseline, and domain-adapted retrieval (RAG FINETUNED UTT ) consistently outperforms general-purpose re-trieval (RAG NO FINETUNE ). This pattern holds regardless of the underlying LLM’s base-line capability: Qwen3-32b, despite the weakest no-retrieval performance ( κ = 0.275 on TalkMoves, 0.160 on Eedi), reaches κ = 0.526 and 0.694 with domain-adapted retrieval, competitive with GPT-5.2’s retrieval-augmented results. Claude Sonnet 4.6 achieves the highest overall performance at κ = 0.580 on TalkMoves and 0.743 on Eedi. The gains on Eedi are notably larger across all models, likely because the one-on-one tutoring format produces more focused exchanges where utterance-level retrieval can find closer semantic matches. 
+
+5.2 Retrieval Precision Is the Mechanistic Driver of Annotation Gains                    
+
+> TalkMoves Eedi Condition Top-1 Any-kTop-1 Any-k
+> RAG NO FINETUNE 39.7% 63.4% 52.9% 75.6% RAG FINETUNED UTT 62.0% 83.4% 73.1% 89.9%
+> ∆+22.3pp +20.0pp +20.2pp +14.3pp
+
+Table 4: Retrieval label match rate. Top-1 measures whether the nearest retrieved example shares the target’s gold label. Any-k (k = 3) measures whether at least one of the top-k
+
+retrieved examples matches. Domain-adapted embeddings produce substantially more label-relevant demonstrations. To verify that annotation gains stem from improved retrieval quality, Table 4 reports the label match rate between retrieved demonstrations and the target utterance’s gold label. With RAG FINETUNED UTT , the top-1 match rate reaches 62.0% on TalkMoves and 73.1% on Eedi, compared to 39.7% and 52.9% for RAG NO FINETUNE . The effect is most pronounced for rare labels: on TalkMoves, the match rate for ACC jumps from 29% to 79%. Conversely, labels where retrieval quality remains low (e.g., RES on Eedi at 0% for both conditions) correspond directly to near-zero annotation κ, confirming that retrieval precision drives annotation quality. Detailed per-label analysis is in Appendix E. 
+
+5.3 Utterance-Level Indexing, Not Embedding Quality, Drives Performance Gains 
+
+Because RAG NO FINETUNE and RAG FINETUNED UTT differ in both embedding model and index granularity, we introduce RAG FINETUNED CHUNK to isolate each factor. Using the same fine-tuned BGE embeddings but chunk-level indexing, RAG FINETUNED CHUNK 
+
+achieves κ = 0.454 on TalkMoves and 0.530 on Eedi with GPT-5.2, nearly identical to RAG NO FINETUNE (0.479 and 0.505). The large jump to RAG FINETUNED UTT (0.539 and 0.659) therefore comes predominantly from utterance-level indexing ( +0.085 and +0.129 respectively), with embedding quality contributing negligibly ( ∆κ ≈ 0). This pattern holds across all three LLM backbones (Appendix H), and performance improves monotonically with retrieval depth through k = 5, with the gap between conditions widening as k increases (Appendix G). 
+
+5.4 Retrieval Improves Rare and Context-Dependent Annotation Performance 
+
+Figure 2 presents normalized confusion matrices for Claude Sonnet 4.6, the best-performing backbone. Without retrieval, the model exhibits a strong bias toward REA on Eedi, as-signing it to a substantial fraction of utterances from nearly every other category (e.g., 0.32 of GSR and 0.14 of ACC), while on TalkMoves it over-predicts ACC and shows scat-tered misclassifications across rare labels. Retrieval largely eliminates these biases, with RAG FINETUNED UTT strengthening diagonal entries across all labels, most notably for REV on Eedi (0.51 to 0.81) and KET on TalkMoves (0.52 to 0.74). The largest absolute gains appear 7Preprint. Under review. 
+
+Figure 2: Normalized confusion matrices for TalkMoves test (top) and Eedi test (bottom) with Claude Sonnet 4.6. Domain-adapted retrieval (RAG FINETUNED UTT , right) concentrates mass along the diagonal for all labels. Without retrieval, REA is systematically over-predicted on Eedi. for rare and context-dependent labels: ACC improves from 0.85 to 0.92 and GSR jumps from 0.32 to 0.44 on Eedi, while GSR rises from 0.44 to 0.58 on TalkMoves. These patterns suggest that retrieval helps by providing disambiguating context rather than merely compensating for label scarcity. Despite these gains, the most persistent confusion on TalkMoves is ACC predicted when the ground truth is KET (0.14 of KET utterances misclassified even with RAG FINETUNED UTT ), occurring when organizational utterances include question-like forms that superficially resemble accuracy checks. Rare labels also remain challenging, with REA accounting for fewer than 5% of annotations in both datasets. Per-label κ values and full classification reports are in Appendix B. 
+
+## 6 Discussion 
+
+Utterance-level indexing as the primary lever for improvement. Our confound isolation analysis reveals that the dominant performance gain comes from utterance-level indexing rather than embedding quality. When the fine-tuned BGE model is used with chunk-level indexing (RAG FINETUNED CHUNK ), κ is nearly identical to RAG NO FINETUNE (∆κ ≈ 0on both datasets). The large jump to RAG FINETUNED UTT (+0.085 on TalkMoves, +0.129 on Eedi for GPT-5.2) comes from switching the index granularity from chunks to individual utterances. Chunk-level embeddings average over multiple utterances and dialogue acts, diluting the label-specific signal that drives accurate retrieval. Utterance-level indexing preserves this signal, enabling the retriever to find demonstrations that share the target’s pedagogical function rather than its surface topic. This finding aligns with the broader principle that adapting the retriever is more impactful than adapting the generator (Xu et al., 2025; Li et al., 2024a), and refines it by showing that the indexing granularity matters more than the embedding model itself. 
+
+Robustness across LLM backbones. The consistent improvement pattern across GPT-5.2, Claude Sonnet 4.6, and Qwen3-32b confirms that our pipeline’s gains are not an artifact of a particular model’s strengths. Notably, Qwen3-32b has the weakest no-retrieval baseline but benefits the most from domain-adapted retrieval in relative terms, with κ improving by over 4× on Eedi (from 0.160 to 0.694). This suggests that the pipeline is particularly valuable for models with weaker zero-shot classification capabilities, effectively compensating for limited parametric knowledge through high-quality retrieved demonstrations. Since all 8Preprint. Under review. domain adaptation resides in the 335M-parameter embedding model and FAISS index, the pipeline can be paired with any LLM backend without retraining. 
+
+Chunking strategy is secondary to index granularity. The fixed-window ablation (Ap-pendix D) shows that the chunking algorithm itself has limited impact on downstream annotation quality. When the same retrieval model is used, fixed windows of w = 3 match or slightly outperform semantic chunking. This further supports the finding that index granularity is the primary design choice. Returning the parent chunk at inference time still provides the LLM with surrounding conversational context, bridging retrieval precision and contextual richness. 
+
+Limitations. Our evaluation is restricted to two mathematics tutoring datasets annotated with the same taxonomy, though TalkMoves captures multi-party classroom discussions while Eedi consists of dyadic online chat, and some categories (e.g., Getting Students to Relate) may function differently across these settings. Future work should evaluate generalization across different annotation taxonomies (e.g., STEM tutoring acts, Socratic dialogue codes) and subject domains beyond mathematics to determine whether domain-adapted retrieval transfers or requires taxonomy-specific re-training. We note that sample sizes vary across models and conditions due to differences in valid prediction rates. Because each condition is evaluated only on the subset of utterances for which it produced a valid prediction, conditions that fail on harder examples may report inflated metrics on the remaining easier subset. 
+
+## 7 Conclusion 
+
+We presented a retrieval-augmented pipeline for annotating pedagogical dialogue acts at scale. By combining domain-adapted embeddings, dynamic semantic chunking, and codebook-grounded prompting, our system achieves Cohen’s κ of up to 0.580 on TalkMoves and 0.743 on Eedi across three LLM backbones, substantially outperforming codebook-only baselines without task-specific LLM fine-tuning. Domain adaptation on the retriever side accounts for the majority of this gain, and the improvement pattern holds across models of varying capability. Utterance-level indexing with parent chunk retrieval consistently outperforms chunk-level indexing by preserving label-specific signal while providing rich conversational context. Future directions include extending to non-mathematical tutoring domains, integrating active learning for iterative index improvement, multi-turn annotation that captures dialogue-level pedagogical strategies, and alternative training objectives that enforce inter-label separation without post-hoc corrections. 
+
+## 8 Ethics Statement 
+
+We analyze de-identified tutoring dialogue datasets in accordance with our Institutional Review Board (IRB)-approved protocol [BLIND FOR REVIEW] . The TalkMoves dataset was de-identified by humans before it was open sourced, and the Eedi dataset was de-identified by the tutoring provider with participant consent for research use. We follow IRB-approved procedures for data storage and access and use these data solely to understand and improve dialogue annotation workflows. Re-identification attempts, user profiling, or any use that could enable harm to individual participants is prohibited. Although the data are de-identified, conversational text can carry residual privacy risk. We therefore minimize verbatim excerpts, avoid reporting sensitive attributes, and present results in aggregate wherever possible. Automated annotation of tutoring moves is intended to augment rather than replace expert human judgment. The confidence scores produced by our pipeline support a human-in-the-loop workflow in which uncertain predictions are flagged for manual review. We caution against deploying automated labels as ground truth without such verification, particularly for high-stakes decisions such as teacher evaluation or student assessment. Our system relies on commercial and open-weight LLMs accessed via API, which introduces dependence on external services and associated cost, latency, and data-handling considerations. Researchers applying this pipeline should ensure that any data 9Preprint. Under review. sent to external APIs complies with applicable data governance policies. Finally, the label taxonomy was developed for mathematics tutoring in English and may not transfer to other languages, subject areas, or cultural contexts without careful adaptation and validation. We used Claude for editorial assistance in drafting and revising portions of this manuscript. 
+
+## References 
+
+Rishabh Agarwal, Avi Singh, Lei Zhang, Bernd Bohnet, Luis Rosias, Stephanie Chan, Biao Zhang, Ankesh Anand, Zaheer Abbas, Azade Nova, John D. Co-Reyes, Eric Chu, Feryal Behbahani, Aleksandra Faust, and Hugo Larochelle. Many-shot in-context learning. In 
+
+Advances in Neural Information Processing Systems , 2024. Bakhtawar Ahtisham, Kirk Vanacore, Jinsook Lee, Zhuqian Zhou, Doug Pietrzak, and Rene F. Kizilcec. Ai annotation orchestration: Evaluating llm verifiers to improve the quality of llm annotations in learning analytics, 2025. URL https://arxiv.org/abs/2511.09785 .Aliki Anagnostopoulou, Nils Feldhus, Yi-Sheng Hsu, Milad Alshomary, Henning Wachsmuth, and Daniel Sonntag. Human and llm-based assessment of teaching acts in expert-led explanatory dialogues. In Proceedings of the 6th Workshop on Computational Approaches to Discourse , pp. 166–181, 2025. Parishad BehnamGhader, Vaibhav Adlakha, Marius Mosbach, Dzmitry Bahdanau, Nicolas Chapados, and Siva Reddy. Llm2vec: Large language models are secretly powerful text encoders. In Proceedings of the 1st Conference on Language Modeling , 2024. Sinchana Ramakanth Bhat, Max Rudat, Jannis Spiekermann, and Nicolas Flores-Herr. Re-thinking chunk size for long-document retrieval: A multi-dataset analysis. arXiv preprint arXiv:2505.21700 , 2025. Huiyao Chen, Yu Zhao, Zulong Chen, Mengjia Wang, Liangyue Li, Meishan Zhang, and Min Zhang. Retrieval-style in-context learning for few-shot hierarchical text classification, 2024. URL https://arxiv.org/abs/2406.17534 .Cheng-Han Chiang and Hung-yi Lee. Can large language models be an alternative to human evaluations? In Proceedings of the 61st Annual Meeting of the Association for Compu-tational Linguistics (Volume 1: Long Papers) , pp. 15607–15631, Toronto, Canada, July 2023. Association for Computational Linguistics. doi: 10.18653/v1/2023.acl-long.870. URL 
+
+https://aclanthology.org/2023.acl-long.870/ .Qingxiu Dong, Lei Li, Damai Dai, Ce Zheng, Jingyuan Ma, Rui Li, Heming Xia, Jingjing Xu, Zhiyong Wu, Baobao Chang, Xu Sun, Lei Li, and Zhifang Sui. A survey on in-context learning. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , 2024. Xingwei He, Zhenghao Lin, Yeyun Gong, A-Long Jin, Hang Zhang, Chen Lin, Jian Jiao, Siu Ming Yiu, Nan Duan, and Weizhu Chen. Annollm: Making large language models to be better crowdsourced annotators. In Proceedings of the 2024 Conference of the North Ameri-can Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 6: Industry Track) , pp. 165–190, Mexico City, Mexico, June 2024. Association for Computational Linguistics. URL https://aclanthology.org/2024.naacl-industry.15/ .Matthew Henderson, Rami Al-Rfou, Brian Strope, Yun-Hsuan Sung, L ´aszl ´o Luk ´acs, Ruiqi Guo, Sanjiv Kumar, Balint Miklos, and Ray Kurzweil. Efficient natural language response suggestion for smart reply. 2017. URL https://arxiv.org/abs/1705.00652 .Emily Jensen, Samuel L. Pugh, and Sidney K. D’Mello. A deep transfer learning approach to modeling teacher discourse in the classroom. In Proceedings of the 11th International Learning Analytics and Knowledge Conference , pp. 302–312, 2021. Jeff Johnson, Matthijs Douze, and Herv ´e J ´egou. Billion-scale similarity search with GPUs. 
+
+IEEE Transactions on Big Data , 7(3):535–547, 2021. 10 Preprint. Under review. Tiziano Labruna, Sofia Brenna, Andrea Zaninello, and Bernardo Magnini. Unraveling chatgpt: A critical analysis of ai-generated goal-oriented dialogues and annotations. In International Conference of the Italian Association for Artificial Intelligence , pp. 151–171. Springer, 2023. Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich K ¨uttler, Mike Lewis, Wen-tau Yih, Tim Rockt ¨aschel, Sebastian Riedel, and Douwe Kiela. Retrieval-augmented generation for knowledge-intensive nlp tasks. In 
+
+Advances in Neural Information Processing Systems , volume 33, pp. 9459–9474, 2020. Chaofan Li, Zheng Liu, Shitao Xiao, Yingxia Shao, and Defu Lian. Llama2vec: Unsupervised adaptation of large language models for dense retrieval. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics , 2024a. Dongyang Li, Junbing Yan, Taolin Zhang, Cheng Wang, Xiaofeng He, Longtao Huang, Hui Xue, and Jun Huang. On the role of long-tail knowledge in retrieval augmented large language models. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Short Papers) , 2024b. Diane Litman and Kate Forbes-Riley. Correlating student acoustic-prosodic profiles with student learning in spoken tutoring dialogues. In Proceedings of the 12th International Conference on Artificial Intelligence in Education , pp. 1–8, 2005. S. Michaels and C. O’Connor. Conceptualizing talk moves as tools: Professional develop-ment approaches for academically productive discussions. In Lauren B. Resnick, Christa Asterhan, and Sherice N. Clarke (eds.), Socializing Intelligence through Talk and Dialogue , pp. 333–347. American Educational Research Association, Washington DC, 2015. Sarah Michaels, Catherine O’Connor, and Lauren B. Resnick. Deliberative discourse ideal-ized and realized: Accountable talk in the classroom and in civic life. Studies in Philosophy and Education , 27(4):283–297, 2008. doi: 10.1007/s11217-007-9071-1. Ying Na and Shihui Feng. Llm-assisted automated deductive coding of dialogue data: leveraging dialogue-specific characteristics to enhance contextual understanding. In 
+
+International Conference on Artificial Intelligence in Education , pp. 248–262. Springer, 2025. Jannatun Naim, Jie Cao, Fareen Tasneem, Jennifer Jacobs, Brent Milne, James Martin, and Tamara Sumner. Towards actionable pedagogical feedback: A multi-perspective analysis of mathematics teaching and tutoring dialogue. In Proceedings of the 18th International Conference on Educational Data Mining , 2025. Lidiia Ostyakova, Veronika Smilga, Kseniia Petukhova, Maria Molchanova, and Daniel Kornev. Chatgpt vs. crowdsourcing vs. experts: Annotating open-domain conversations with speech functions. In Proceedings of the 24th Annual Meeting of the Special Interest Group on Discourse and Dialogue , pp. 242–254, 2023. Ayesha Qamar, Jonathan Tong, and Ruihong Huang. Do LLMs understand dialogues? a case study on dialogue acts. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 26219–26237, Vienna, Austria, jul 2025. Association for Computational Linguistics. doi: 10.18653/v1/2025.acl-long.1271. URL https://aclanthology.org/2025.acl-long.1271/ .Changyong Qi, Longwei Zheng, Yuang Wei, Haoxin Xu, Peiji Chen, and Xiaoqing Gu. Edudcm: a novel framework for automatic educational dialogue classification dataset construction via distant supervision and large language models. Applied Sciences , 15(1): 154, 2024. Alexander Scarlatos, Ryan S. Baker, and Andrew Lan. Exploring knowledge tracing in tutor-student dialogues using llms. In Proceedings of the 15th International Learning Analytics and Knowledge Conference , pp. 1–10, 2025. 11 Preprint. Under review. Chirag Shah, Ryen White, Reid Andersen, Georg Buscher, Scott Counts, Sarkar Das, Ali Montazer, Sathish Manivannan, Jennifer Neville, Nagu Rangan, et al. Using large lan-guage models to generate, validate, and apply user intent taxonomies. ACM Transactions on the Web , 19(3):1–29, 2025. Dou Shan, Dong Wang, Chen Zhang, Kimberly Britt Kao, and Carol Ka Yuk Chan. An-notating educational dialog act with data augmentation in online one-on-one tutoring. In Proceedings of the 24th International Conference on Artificial Intelligence in Education , pp. 473–486, 2023. Hang Su and Jun Ye. Large language models for automating fine-grained speech act annotation: A critical evaluation of gpt-4o and deepseek. Corpus Pragmatics , pp. 1–20, 2025. Abhijit Suresh, Jennifer Jacobs, Charis Harty, Margaret Perkoff, James H. Martin, and Tamara Sumner. The talkmoves dataset: K-12 mathematics lesson transcripts annotated for teacher and student discursive moves. In Proceedings of the Thirteenth Language Resources and Evaluation Conference , pp. 4654–4662, Marseille, France, June 2022. European Language Resources Association. URL https://aclanthology.org/2022.lrec-1.497/ .Wei Tan et al. Does informativeness matter? active learning for educational dialogue act classification. In Proceedings of the 24th International Conference on Artificial Intelligence in Education , pp. 115–127, 2023. Leila Tavakoli and Hamed Zamani. Reliable annotations with less effort: Evaluating llm-human collaboration in search clarifications. In Proceedings of the 2025 International ACM SIGIR Conference on Innovative Concepts and Theories in Information Retrieval (ICTIR) ,ICTIR ’25, pp. 92–102. Association for Computing Machinery, 2025. doi: 10.1145/3731120. 3744574. Andrew K. Vail and Kristy Elizabeth Boyer. Identifying effective moves in tutoring: On the refinement of dialogue act annotation schemes. In Proceedings of the 12th International Conference on Intelligent Tutoring Systems , pp. 199–209, 2014. Zhitong Wang, Cheng Gao, Chaojun Xiao, et al. Document segmentation matters for retrieval-augmented generation. In Findings of the Association for Computational Linguistics: ACL 2025 , 2025. Shitao Xiao, Zheng Liu, Peitian Zhang, and Niklas Muennighoff. C-pack: Packaged re-sources to advance general chinese embedding. arXiv preprint arXiv:2309.07597 , 2023. Ran Xu, Hui Liu, Sreyashi Nag, Zhenwei Dai, Yaochen Xie, Xianfeng Tang, Chen Luo, Yang Li, Joyce C. Ho, Carl Yang, and Qi He. Simrag: Self-improving retrieval-augmented generation for adapting large language models to specialized domains. In Proceedings of the 2025 Conference of the North American Chapter of the Association for Computational Linguistics , 2025. Linjuan Yang, Philipp Christmann, and Dragan Gasevic. Robust educational dialogue act classifiers with low-resource and imbalanced datasets. In Proceedings of the 24th International Conference on Artificial Intelligence in Education , pp. 114–126, 2023. Danni Yu, Luyang Li, Hang Su, and Matteo Fuoli. Assessing the potential of llm-assisted annotation for corpus-based pragmatics and discourse analysis: The case of apology. 
+
+International Journal of Corpus Linguistics , 29(4):534–561, 2024. Matthew Zent, Digory Smith, and Simon Woodhead. Question-anchored tutoring dialogues. 
+
+https://huggingface.co/datasets/Eedi/Question-Anchored-Tutoring-Dialogues-2k ,2025. Eedi dataset. Accessed: 2026-03-29. 12 Preprint. Under review. 
+
+## A Prompt Templates 
+
+This section presents the full annotation prompt used in our pipeline. The prompt consists of a system message defining the annotator role, codebook, and output format, followed by a user message presenting retrieved examples and the target dialogue context. 
+
+A.1 System Message 
+
+You are an expert educational discourse analyst. Your task is to label each teacher utterance with one move from the allowed moves list. 
+
+Workflow 
+
+1. Read the dialogue carefully. 2. For each teacher utterance, assign exactly ONE Move from the Allowed Moves list. 3. If an utterance could fit multiple moves, choose the one that best represents the communicative function in context. 4. If no Move applies (e.g., the utterance is off-topic, evaluative, unclear, or unrelated to the lesson), do not label it and leave it as None. 
+
+Allowed Moves & Definitions 
+
+• Keeping Everyone Together – Teacher prompts students to be active listeners and orienting students to each other. • Getting Students to Relate to Another’s Ideas – Teacher prompts students to react to what a classmate said. • Restating – Teacher repeats all or part of what a student said word for word. • Pressing for Accuracy – Teacher prompts students to make a mathematical contribution or use mathematical language. • Revoicing – Teacher repeats what a student said but adding on or changing the wording. • Pressing for Reasoning – Teacher prompts students to explain, provide evi-dence, share their thinking behind a decision, or connect ideas or representa-tions. 
+
+Rules 
+
+• Annotate ONLY the utterance marked with <<<TARGET>>> .• Consider the surrounding context to understand the utterance’s function. • If example annotations from similar dialogues are provided, use them as reference. • Respond with ONLY a JSON object: {"label": "<label or null>", "confidence": <0.0-1.0> }
+
+• If no Move applies, use null for label. • Do not include any other text outside the JSON. 
+
+A.2 User Message 
+
+For retrieval-augmented conditions, the user message begins with k retrieved examples, each showing the chunk text and its majority label. For NO RAG , this section is omitted. 
+
+Similar annotated examples from the corpus 
+
+Example 1 (labeled: <majority label>) <chunk text> [... up to k examples ...] 
+
+Current dialogue context <dynamic context> Annotate the utterance marked 
+
+<<<TARGET>>> by [<target speaker>] .Respond with only the JSON object. 
+
+The <dynamic context> field contains the context window from Section 3.5, with the target utterance marked by <<<TARGET>>> . Each utterance is formatted as [speaker] utterance text .13 Preprint. Under review. 
+
+## B Additional Results 
+
+B.1 Per-Label Cohen’s κ (GPT-5.2) 
+
+Tables 5 and 6 report per-label Cohen’s κ for all three conditions with GPT-5.2, with labels ordered by frequency. 
+
+ACC KET REV RES REA GSR  
+
+> NO RAG
+
+0.250 0.472 0.205 0.198 0.232 0.367 RAG NO FINETUNE 0.473 0.562 0.362 0.386 0.416 0.459 RAG FINETUNED UTT 0.552 0.591 0.442 0.479 0.445 0.540 
+
+Support ( n) 1,921 1,829 367 288 198 145 
+
+Table 5: Per-label Cohen’s κ on TalkMoves test ( k = 3, GPT-5.2). 
+
+ACC KET REV REA GSR RES  
+
+> NO RAG
+
+0.344 0.584 0.334 0.104 0.106 0.006 RAG NO FINETUNE 0.551 0.671 0.263 0.250 0.213 0.020 RAG FINETUNED UTT 0.662 0.739 0.642 0.380 0.418 0.444 
+
+Support ( n) 5,286 2,779 1,531 157 81 9
+
+Table 6: Per-label Cohen’s κ on Eedi test ( k = 3, GPT-5.2). RES has only 9 support instances. RAG NO FINETUNE underperforms NO RAG on REV (0.263 vs. 0.334). 
+
+B.2 Classification Reports (GPT-5.2) 
+
+Precision Recall F1 Support KET 0.68 0.66 0.67 1,829 GSR 0.55 0.29 0.38 145 RES 0.22 0.30 0.25 287 ACC 0.62 0.41 0.49 1,921 REV 0.56 0.14 0.23 366 REA 0.17 0.96 0.29 198 Accuracy 0.50 4,746 Macro avg 0.47 0.46 0.39 4,746 Weighted avg 0.59 0.50 0.52 4,746 Cohen’s κ = 0.315 
+
+Table 7: NO RAG classification report on TalkMoves test (GPT-5.2). 
+
+## C Model Comparison Per-Label Results 
+
+Tables 13 and 14 report per-label Cohen’s κ for all three LLM backbones under each retrieval condition ( k = 3). 
+
+## D Fixed-Window Chunking Ablation 
+
+To isolate the contribution of semantic boundary detection from other components of the pipeline, we compare our calibrated semantic chunking against naive fixed-window baselines. Fixed-window chunking partitions each dialogue into non-overlapping segments of exactly w utterances, with no boundary detection or similarity computation. We test 14 Preprint. Under review.                                        
+
+> Precision Recall F1 Support KET 0.77 0.66 0.71 701 GSR 0.70 0.36 0.47 73 RES 0.46 0.39 0.42 111 ACC 0.68 0.71 0.69 774 REV 0.61 0.29 0.39 147 REA 0.30 0.99 0.46 84 Accuracy 0.64 1,890 Macro avg 0.59 0.57 0.52 1,890 Weighted avg 0.68 0.64 0.64 1,890 Cohen’s κ
+
+= 0.479 
+
+Table 8: RAG NO FINETUNE classification report on TalkMoves test (GPT-5.2).                                        
+
+> Precision Recall F1 Support KET 0.83 0.65 0.73 534 GSR 0.64 0.49 0.55 43 RES 0.53 0.48 0.50 69 ACC 0.72 0.78 0.75 589 REV 0.68 0.36 0.47 90 REA 0.32 0.97 0.48 62 Accuracy 0.69 1,387 Macro avg 0.62 0.62 0.58 1,387 Weighted avg 0.73 0.69 0.69 1,387 Cohen’s κ
+
+= 0.539 
+
+Table 9: RAG FINETUNED UTT classification report on TalkMoves test (GPT-5.2). 
+
+w = 3 and w = 5, both using Cohere embeddings for chunk-level retrieval to match the RAG NO FINETUNE condition. 
+
+D.1 Overall Results 
+
+Table 15 presents Cohen’s κ across all chunking conditions on both test sets with k = 3and GPT-5.2. Several observations emerge. First, fixed-window chunking with w = 3matches or slightly outperforms semantic chunking when the same retrieval model (Cohere) is used. On TalkMoves, RAG FIXED W 3 ( κ = 0.500) exceeds RAG NO FINETUNE (0.474). On Eedi, the same pattern holds (0.571 vs. 0.505). This suggests that for chunk-level retrieval with general-purpose embeddings, shorter fixed windows may actually produce better retrieval units than semantic chunking, possibly because smaller chunks reduce the dilution effect discussed in Section 3.4. Second, w = 3 consistently outperforms w = 5on both datasets, reinforcing that shorter chunks produce more focused retrieval matches when using chunk-level indexing. Third, and most importantly, RAG FINETUNED UTT 
+
+outperforms all other conditions by a substantial margin despite using semantic rather than fixed-window chunking. This confirms that the dominant performance driver is the combination of domain-adapted embeddings with utterance-level indexing, not the chunking strategy itself. The chunking strategy matters at the margin when all else is held equal, but the choice of embedding model and index granularity accounts for the majority of the performance gap. 
+
+D.2 Per-Label κ for Fixed-Window Conditions 
+
+Tables 16 and 17 break down the fixed-window results by label. An interesting pattern is that RAG FIXED W 3 achieves notably high κ on RES (0.731) and REV (0.549) on TalkMoves, outperforming even RAG FINETUNED UTT on those two labels. This may reflect that Restating and Revoicing are highly localized acts (a tutor repeating or rephrasing what a 15 Preprint. Under review.                                        
+
+> Precision Recall F1 Support KET 0.79 0.59 0.67 2,335 GSR 0.21 0.07 0.11 81 RES 0.00 0.17 0.01 6ACC 0.75 0.65 0.69 5,265 REV 0.95 0.23 0.37 1,334 REA 0.07 0.99 0.13 157 Accuracy 0.57 9,178 Macro avg 0.46 0.45 0.33 9,178 Weighted avg 0.77 0.57 0.63 9,178 Cohen’s κ
+
+= 0.351 
+
+Table 10: NO RAG classification report on Eedi test (GPT-5.2).                                        
+
+> Precision Recall F1 Support KET 0.86 0.67 0.75 1,788 GSR 0.40 0.15 0.22 54 RES 0.01 0.50 0.02 4ACC 0.78 0.86 0.81 3,522 REV 0.94 0.17 0.29 842 REA 0.16 1.00 0.27 105 Accuracy 0.71 6,315 Macro avg 0.52 0.56 0.39 6,315 Weighted avg 0.81 0.71 0.71 6,315 Cohen’s κ
+
+= 0.505 
+
+Table 11: RAG NO FINETUNE classification report on Eedi test (GPT-5.2). student just said), making short fixed windows effective retrieval units for these specific categories. However, RAG FINETUNED UTT achieves more balanced performance across all labels and substantially higher κ on the labels that require broader contextual understanding (GSR, ACC, REA). On Eedi, RAG FINETUNED UTT dominates on every label. 
+
+## E Retrieval Label Match Rate 
+
+To directly evaluate whether domain-adapted embeddings improve retrieval quality inde-pendently of LLM annotation, we measure the label match rate between retrieved demon-strations and the target utterance’s gold label. For each target utterance, we check whether the top-1 retrieved example shares the same gold label (Top-1) and whether any of the top-k
+
+retrieved examples share the label (Any-k, with k = 3). Domain-adapted retrieval produces a 14 to 22 percentage point improvement in label match rate across both datasets and both metrics. The gains are especially pronounced for labels that are rare or context-dependent. On TalkMoves, the any-k match rate for ACC jumps from 29% to 79% with fine-tuned embeddings, directly explaining the large annotation κ
+
+improvement for that label. KET, the most frequent label, achieves near-perfect retrieval (96–97% any-k) under both conditions, consistent with its high annotation κ across all models. Conversely, labels where retrieval quality remains low correspond to persistently low annotation performance. RES on Eedi has a 0% match rate for both conditions, reflecting its extreme rarity in the training index (9 labeled instances). Neither embedding model can retrieve relevant RES demonstrations, which directly explains the near-zero κ for this label. GSR and REV both remain below 45% any-k match rate, consistent with their lower support and higher chunk impurity. These patterns confirm that retrieval precision is the mechanistic bottleneck for annotation quality and that the pipeline degrades predictably for labels that are underrepresented in the training index. 16 Preprint. Under review. 
+
+Precision Recall F1 Support KET 0.96 0.69 0.80 852 GSR 0.44 0.41 0.42 27 RES 0.29 1.00 0.44 2ACC 0.82 0.93 0.87 1,753 REV 0.95 0.52 0.67 359 REA 0.25 1.00 0.40 52 Accuracy 0.81 3,045 Macro avg 0.62 0.76 0.60 3,045 Weighted avg 0.86 0.81 0.81 3,045 Cohen’s κ = 0.659 
+
+Table 12: RAG FINETUNED UTT classification report on Eedi test (GPT-5.2). 
+
+Model Condition KET GSR RES ACC REV REA GPT-5.2 NO RAG 0.472 0.367 0.198 0.250 0.205 0.232 GPT-5.2 RAG NO FINETUNE 0.562 0.459 0.386 0.473 0.362 0.416 GPT-5.2 RAG FINETUNED UTT 0.591 0.540 0.479 0.552 0.442 0.445 Sonnet 4.6 NO RAG 0.421 0.506 0.410 0.397 0.548 0.353 Sonnet 4.6 RAG NO FINETUNE 0.577 0.464 0.461 0.480 0.522 0.360 Sonnet 4.6 RAG FINETUNED UTT 0.631 0.528 0.542 0.594 0.566 0.448 
+
+Qwen3-32b NO RAG 0.393 0.406 0.366 0.090 0.630 0.224 Qwen3-32b RAG NO FINETUNE 0.490 0.327 0.380 0.440 0.359 0.427 Qwen3-32b RAG FINETUNED UTT 0.584 0.411 0.367 0.584 0.405 0.426 
+
+Table 13: Per-label Cohen’s κ on TalkMoves test across three LLM backbones ( k = 3). Bold indicates the best RAG FINETUNED UTT result per label. 
+
+Model Condition KET GSR RES ACC REV REA GPT-5.2 NO RAG 0.584 0.106 0.006 0.344 0.334 0.104 GPT-5.2 RAG NO FINETUNE 0.671 0.213 0.020 0.551 0.263 0.250 GPT-5.2 RAG FINETUNED UTT 0.739 0.418 0.444 † 0.662 0.642 0.380 Sonnet 4.6 NO RAG 0.303 0.300 — 0.478 0.643 0.207 Sonnet 4.6 RAG NO FINETUNE 0.683 0.292 — 0.670 0.653 0.330 Sonnet 4.6 RAG FINETUNED UTT 0.749 0.387 0.104 0.775 0.855 0.361 Qwen3-32b NO RAG 0.201 0.275 — 0.129 0.571 0.088 Qwen3-32b RAG NO FINETUNE 0.690 0.273 — 0.630 0.356 0.443 Qwen3-32b RAG FINETUNED UTT 0.764 0.368 0.092 0.734 0.665 0.400 
+
+Table 14: Per-label Cohen’s κ on Eedi test across three LLM backbones ( k = 3). Bold indicates the best RAG FINETUNED UTT result per label. †RES has only 9 support instances 
+
+## F Confidence Calibration Analysis 
+
+Our pipeline produces a confidence score alongside each predicted label. We analyze whether these scores are informative by examining (1) how confidence distributions shift across retrieval conditions and (2) whether high-confidence predictions are reliably correct. Figure 3 shows that retrieval shifts the confidence distribution rightward for all three models. With RAG FINETUNED UTT , predictions concentrate in the 0.8–1.0 range, consistent with the high retrieval label match rates reported in Appendix E. Without retrieval, confidence scores are more dispersed, and for GPT-5.2 a notable mass appears near zero, indicating frequent uncertainty. To assess whether confidence scores support reliable triage, we compute Cohen’s κ and coverage on the subset of predictions with confidence ≥ 0.9 (Table 18). Two patterns emerge. First, RAG FINETUNED UTT substantially improves the reliability of high-confidence predictions across all models. GPT-5.2 with RAG FINETUNED UTT achieves 17 Preprint. Under review. 
+
+Condition Chunking Retrieval TM κ Eedi κ 
+
+> NO RAG
+
+None None 0.313 0.351 RAG NO FINETUNE Semantic (Cohere) Cohere 0.474 0.505 
+
+> RAG FIXED W
+
+3 Fixed ( w=3) Cohere 0.500 0.571 
+
+> RAG FIXED W
+
+5 Fixed ( w=5) Cohere 0.475 0.519 RAG FINETUNED UTT Fine-tuned BGE Fine-tuned BGE 0.539 0.659 
+
+Table 15: Fixed-window vs. semantic chunking ablation on test sets ( k = 3, GPT-5.2). All conditions except NO RAG and RAG FINETUNED UTT use Cohere for retrieval. Sample sizes differ across conditions due to index coverage. 
+
+KET GSR RES ACC REV REA 
+
+> RAG FIXED W
+
+3 0.554 0.254 0.731 0.470 0.549 0.350 
+
+> RAG FIXED W
+
+5 0.537 0.396 0.691 0.447 0.553 0.293 RAG FINETUNED UTT 0.591 0.540 0.479 0.552 0.442 0.445 
+
+Table 16: Per-label κ on TalkMoves test for fixed-window conditions vs. RAG FINETUNED UTT .
+
+KET GSR RES ACC REV REA 
+
+> RAG FIXED W
+
+3 0.676 0.195 -0.000 0.599 0.534 0.256 
+
+> RAG FIXED W
+
+5 0.607 0.069 0.166 0.552 0.592 0.187 RAG FINETUNED UTT 0.739 0.418 0.444 0.662 0.642 0.380 
+
+Table 17: Per-label κ on Eedi test for fixed-window conditions vs. RAG FINETUNED UTT .
+
+Figure 3: Confidence score distributions by model and retrieval condition on the combined test sets. Domain-adapted retrieval (RAG FINETUNED UTT ) concentrates prediction mass at higher confidence levels across all three models. 
+
+κ = 0.939 on its confident subset, compared to 0.086 without retrieval, indicating that domain-adapted retrieval nearly eliminates errors among predictions the model is most certain about. Second, models differ in how they distribute confidence. Sonnet 4.6 with RAG FINETUNED UTT achieves both high κ (0.896) and high coverage (34.3%), making it the strongest candidate for a human-in-the-loop workflow where confident predictions are auto-accepted and uncertain ones are flagged for manual review. Qwen3-32b produces the highest coverage (68.3%) but at lower κ (0.685), suggesting it is overconfident relative to its actual accuracy. These results support using confidence scores as a practical triage mechanism in deployment, though the coverage-accuracy tradeoff varies across models and should be calibrated for specific use cases. 18 Preprint. Under review. 
+
+Model Condition κ (≥ 0.9) Coverage GPT-5.2 NO RAG 0.086 19.1% GPT-5.2 RAG NO FINETUNE 0.412 23.8% GPT-5.2 RAG FINETUNED UTT 0.939 11.6% Sonnet 4.6 NO RAG 0.594 3.9% Sonnet 4.6 RAG NO FINETUNE 0.838 24.3% Sonnet 4.6 RAG FINETUNED UTT 0.896 34.3% Qwen3-32b NO RAG 0.212 17.0% Qwen3-32b RAG NO FINETUNE 0.611 59.8% Qwen3-32b RAG FINETUNED UTT 0.685 68.3% 
+
+Table 18: Cohen’s κ and coverage for predictions with confidence ≥ 0.9. Coverage is the fraction of test utterances where the model’s confidence exceeds the threshold. GPT-5.2 with RAG FINETUNED UTT achieves near-perfect agreement ( κ = 0.939) on its high-confidence subset, though coverage is limited to 11.6%. 
+
+Figure 4: Cohen’s κ as a function of retrieval depth k across three LLM backbones on TalkMoves test (top) and Eedi test (bottom). Left panels show RAG NO FINETUNE , right panels show RAG FINETUNED UTT . Domain-adapted retrieval consistently outperforms general-purpose retrieval at every k for all models. 
+
+## G Effect of Retrieval Depth 
+
+Figure 4 shows annotation quality as a function of retrieval depth k across all three models. RAG FINETUNED UTT outperforms RAG NO FINETUNE at every value of k for all models, confirming that domain-adapted retrieval consistently produces more informative demon-strations regardless of the LLM backbone. A single retrieved example ( k = 1) is clearly insufficient across all conditions. Performance continues to improve through k = 5 on Eedi for all models, with Sonnet 4.6 reaching κ = 0.782. On TalkMoves, κ also improves through k = 5 under RAG FINETUNED UTT for all models, while RAG NO FINETUNE 
+
+plateaus or slightly declines after k = 3, possibly because additional chunks from a general-purpose index introduce noise. The widening gap between RAG FINETUNED UTT and RAG NO FINETUNE as k increases suggests that domain-adapted embeddings become increasingly important as retrieval depth grows. 
+
+## H Confound Isolation Analysis 
+
+The comparison between RAG NO FINETUNE and RAG FINETUNED UTT conflates two changes: embedding model (Cohere vs. fine-tuned BGE) and index granularity (chunk vs. utterance). To disentangle these factors, we evaluate RAG FINETUNED CHUNK , which uses the fine-tuned BGE model with chunk-level indexing. Each step changes exactly one variable, and we report results for all three LLM backbones (Tables 19 and 20). Across all six model-dataset combinations, switching the embedding model from Cohere to fine-tuned BGE while retaining chunk-level indexing yields negligible or slightly negative ∆κ (range: 
+
+−0.045 to +0.025). In contrast, switching from chunk-level to utterance-level indexing with 19 Preprint. Under review. 
+
+Model Condition κ Emb ∆κ Gran ∆κ
+
+GPT-5.2 RAG NO FINETUNE 0.479 GPT-5.2 RAG FINETUNED CHUNK 0.454 −0.025 GPT-5.2 RAG FINETUNED UTT 0.539 +0.085 Sonnet 4.6 RAG NO FINETUNE 0.498 Sonnet 4.6 RAG FINETUNED CHUNK 0.501 +0.003 Sonnet 4.6 RAG FINETUNED UTT 0.580 +0.079 Qwen3-32b RAG NO FINETUNE 0.442 Qwen3-32b RAG FINETUNED CHUNK 0.428 −0.014 Qwen3-32b RAG FINETUNED UTT 0.526 +0.098 
+
+Table 19: Confound isolation on TalkMoves test ( k = 3). Emb ∆κ is the effect of switching embeddings (Cohere → FT-BGE) at chunk-level granularity. Gran ∆κ is the effect of switch-ing granularity (chunk → utterance) with FT-BGE. 
+
+Model Condition κ Emb ∆κ Gran ∆κ
+
+GPT-5.2 RAG NO FINETUNE 0.505 GPT-5.2 RAG FINETUNED CHUNK 0.530 +0.025 GPT-5.2 RAG FINETUNED UTT 0.659 +0.129 Sonnet 4.6 RAG NO FINETUNE 0.632 Sonnet 4.6 RAG FINETUNED CHUNK 0.632 † +0.000 Sonnet 4.6 RAG FINETUNED UTT 0.743 +0.111 Qwen3-32b RAG NO FINETUNE 0.590 Qwen3-32b RAG FINETUNED CHUNK 0.545 −0.045 Qwen3-32b RAG FINETUNED UTT 0.694 +0.149 
+
+Table 20: Confound isolation on Eedi test ( k = 3). †Sonnet RAG FINETUNED CHUNK is based on an incomplete run ( ∼253 records short). Embedding model effect (Emb ∆κ) ranges from −0.045 to +0.025. Granularity effect (Gran ∆κ) ranges from +0.079 to +0.149. the same fine-tuned BGE model consistently produces large gains (range: +0.079 to +0.149). This confirms that utterance-level indexing is the primary driver of annotation improvement across all LLM backbones. Chunk-level embeddings average over multiple utterances that may serve different pedagogical functions, diluting the label-specific signal needed for accurate retrieval. Utterance-level indexing preserves this signal while still returning the full parent chunk as context for the LLM. 20

@@ -1,0 +1,793 @@
+Title: Opal: Private Memory for Personal AI
+
+URL Source: https://arxiv.org/pdf/2604.02522v1
+
+Published Time: Mon, 06 Apr 2026 00:10:46 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# Opal: Private Memory for Personal AI 
+
+## Darya Kaviani 
+
+UC Berkeley 
+
+## Alp Eren Ozdarendeli 
+
+UC Berkeley 
+
+## Jinhao Zhu 
+
+UC Berkeley 
+
+## Yu Ding 
+
+Google DeepMind 
+
+## Raluca Ada Popa 
+
+UC Berkeley, Google DeepMind 
+
+## Abstract 
+
+Personal AI systems increasingly retain long-term memory of user activity, including documents, emails, messages, meet-ings, and ambient recordings. Trusted hardware can keep this data private, but struggles to scale with a growing datas-tore. This pushes the data to external storage, which exposes retrieval access patterns that leak private information to the application provider. Oblivious RAM (ORAM) is a crypto-graphic primitive that can hide these patterns, but it requires a fixed access budget, precluding the query-dependent tra-versals that agentic memory systems rely on for accuracy. We present Opal, a private memory system for personal AI. Our key insight is to decouple all data-dependent rea-soning from the bulk of personal data, confining it to the trusted enclave. Untrusted disk then sees only fixed, oblivi-ous memory accesses. This enclave-resident component uses a lightweight knowledge graph to capture personal context that semantic search alone misses and handles continuous ingestion by piggybacking reindexing and capacity manage-ment on every ORAM access. Evaluated on a comprehensive synthetic personal-data pipeline driven by stochastic com-munication models, Opal improves retrieval accuracy by 13 percentage points over semantic search and achieves 29 ×
+
+higher throughput with 15 × lower infrastructure cost than a secure baseline. Opal is under consideration for deployment to millions of users at a major AI provider. 
+
+## 1 Introduction 
+
+Users increasingly share sensitive, personal information with AI systems in their daily interactions [ 60 , 100 , 183 , 187 ]. This trend is accelerating: Microsoft Recall continuously screenshots user activity [ 13 ], Google Gemini ingests emails and photos [ 240 ], and AI memory tools capture notes, meet-ings, and conversations [ 5 , 7 , 123 ]. Looking ahead, embod-ied AI agents in robotics and wearable devices are begin-ning to capture even richer streams of ambient data (con-tinuous audio, video, and sensor recordings) from everyday life [1, 3, 10, 201]. The result is an unprecedented concentration of personal data at providers whose profiles of user behavior can be shared with third parties, retained for AI training, or com-pelled by governments [ 71 , 133 , 152 ]. End-to-end encrypted messaging has established private communication as a base-line user expectation [ 9, 12 , 14 ], yet personal AI systems, which accumulate far richer portraits of their users than any ery 
+
+Data Answer 
+
+Disk Client  Data  Data 
+
+TEEs 
+
+Serve 
+
+Search 
+
+Figure 1. System model. The client sends queries and inges-tion data to TEEs that run search and model serving while storing encrypted state on untrusted disk. messaging app [ 60 , 100 , 133 , 183 , 187 ], offer no comparable guarantee. Indeed, outsourced workers were recently found reviewing sensitive videos captured by Meta’s Ray-Ban smart glasses [ 30 ]. Worse, compromising the application provider’s infrastructure could expose this data in its entirety. In response, AI providers including Apple [ 27 ], Google [ 253 ], and Anthropic [ 25 ] have begun deploying trusted hardware, the most practical approach for keeping inference queries hidden from the provider at scale. Yet LLM context windows and trusted hardware memory are finite and expensive, driving personal AI systems toward persistent long-term memory that retains information across sessions and tailors responses over time [ 151 ]. However, no existing system provides end-to-end privacy for personal AI memory. The obvious solutions are limited: 
+
+• Trusted hardware suffices for private inference, but not for private memory. One approach is to keep data on un-trusted storage and fetch selectively into the enclave, but this exposes which records are accessed for each query. Even when individual memories are encrypted, observing which memories a system retrieves is nearly as revealing as seeing the query text itself, since retrieved items are se-mantically similar to the query [ 115 , 145 , 192 ]. Loading the entire data store into the enclave on every access avoids this leakage but limits scalability to what fits in encrypted RAM and incurs excessive bandwidth cost. 
+
+• Client-local memory stores personal data on the user’s de-vice and re-uploads relevant context on every request [ 27 ,99 ], yet personal corpora quickly outgrow a single de-vice [ 66 , 78 ], local storage lacks the durability required for a long-lived memory store [ 169 , 179 , 244 , 260 ], and multi-device access demands a unified backend [ 63 , 258 ]. Thus, assistant providers maintain memory cloud-natively [ 27 ,151 , 240 ], so Opal is designed for this cloud-hosted setting. 
+
+> 1
+> arXiv:2604.02522v1 [cs.CR] 2 Apr 2026
+
+What is needed, then, is a way to keep search and model serving inside trusted hardware while storing personal data on untrusted cloud storage (Figure 1), hiding both content and access patterns from the provider. Agentic memory sys-tems retrieve relevant context via semantic search over em-beddings [ 51 , 122 , 155 , 157 , 176 ]. The natural tool for hid-ing these access patterns is oblivious RAM (ORAM) [ 153 ,154 , 171 , 184 , 194 ], a cryptographic memory abstraction that hides data access patterns at a per-access cost logarithmic in database size. Compass [ 271 ] co-designs approximate nearest neighbor (ANN) search with ORAM, showing that semantic search can be made access-pattern-hiding. However, agentic memory systems achieve high accuracy precisely because they augment semantic search with query-dependent traversals, using knowledge graphs (KGs), tem-poral filters, and multi-hop lookups to strategically narrow results [ 51 , 87 , 122 , 155 , 166 , 195 , 247 ]. Oblivious ANN search does not support this: it enforces a fixed number of ORAM reads per query, as any variation leaks information about what is being retrieved. Padding ORAM accesses to a fixed budget appears incompatible with these traversals, since supporting them naively requires either additional ORAM round-trips or a larger fixed budget that increases overhead for every query. The problem is compounded by continu-ous ingestion: prior oblivious ANN work assumes a fixed or rarely changing database, but data-dependently decid-ing when to perform insertions, re-indexing, and garbage collection leaks information about recent activity. In short, efficient obliviousness and accuracy appear fundamentally at odds for personal AI memory. To resolve this tension, we design Opal 1, a private mem-ory system for personal AI that is efficient and accurate. Opal adds a privacy-preserving storage and retrieval layer to trusted-hardware inference enclaves, enabling users to persist and query their personal data (documents, emails, messages, meetings, and ambient recordings) without reveal-ing content or access patterns to the application provider. Opal splits storage between trusted enclave memory and an untrusted ORAM-backed disk (§2). Two ORAM databases on disk hold embedding vectors and raw data chunks, while compact index metadata and a personal knowledge graph remain inside the enclave. The key insight is that all data-dependent reasoning can run entirely inside an enclave, so that the storage provider only ever sees fixed-size, oblivi-ous ORAM accesses. Opal realizes this insight through three novel contributions: First, knowledge-graph-filtered search (§3.2). Pure se-mantic search is often insufficient for personal data: queries like “what did Alice say in last Monday’s meeting?” depend     
+
+> 1Like the gemstone, Oblivious Personal AILongterm memory accumulates pieces over time, and remains opaque to the eye.
+
+on temporal context and entity relationships that embed-ding similarity alone cannot capture. Structured agent mem-ory systems address this by augmenting vector search with knowledge graphs, structured representations of entities and their relationships [ 67 , 85 , 87 , 97 , 166 ]. However, these systems build heavyweight, content-rich graphs whose data-dependent traversals are incompatible with ORAM’s fixed access budget. Our key observation is that personal data is in-herently structured: it involves particular people, times, and projects. This structure can be factored out of the content itself. Opal exploits this by building a compact, metadata-only graph of normalized identifiers (people, sources, time ranges) that fits entirely inside the enclave and stores no con-tent. An LLM extracts structured predicates from the query, graph traversal narrows the candidate set in trusted memory, and the ANN scores only within that admissible set before a single fixed-budget ORAM fetch. All query-dependent rea-soning stays inside the enclave, so the storage provider sees only a fixed-size, oblivious access pattern. Yet retrieval cap-tures the same personal context that prior work requires data-dependent traversals to obtain. Second, oblivious dreaming (§3.3). Agentic memory sys-tems routinely perform heavy maintenance (compaction, conflict resolution, index repair, summarization) [ 51 , 67 , 122 ,155 , 157 , 166 , 176 ] whose access patterns would leak infor-mation about the user’s data. A fixed maintenance schedule is not viable either, since it must either scan the entire store, incurring significant overhead, or leave stale state lingering. By nature of the cryptographic protocol, every ORAM access brings additional data into the enclave, including dummy blocks and unrelated real chunks. Like biological memory consolidating during sleep, oblivious dreaming uses this op-portunity to perform maintenance on the incidentally res-ident data, inspecting and repairing it without issuing any extra access or breaking the security guarantee. This enables expiring old items, repairing the search index, and summa-rizing past activity, all at steady-state capacity behind a fixed access pattern. Third, a synthetic personal-data pipeline (§4). Evaluat-ing a personal memory system requires realistic multi-modal corpora spanning months or years, but real personal data is too sensitive to collect or share at scale. Existing synthetic benchmarks [ 197 ] generate isolated personal artifacts but lack the temporal dynamics essential for memory evaluation: messages arrive in bursty threads, meetings spawn follow-up emails, and projects evolve over weeks. We address this gap with a Hawkes-process [ 88 , 89 ] arrival model that reproduces correlated, bursty communication patterns. Paired with an LLM-driven scenario planner, the pipeline produces years of realistic personal data. We expect this to be of independent interest beyond privacy. 
+
+Evaluation summary. Opal achieves 29 × higher through-put and 15 × lower infrastructure cost than a secure baseline 
+
+> 2
+
+that reflects prior enclave-backed designs [ 16 , 74 , 164 ]. KG-filtered search improves accuracy by 13 pp over plain ANN, matching Graphiti [ 166 ], a plaintext agentic memory system. Oblivious dreaming tracks the accuracy of state-of-the-art insecure ANN rebalancing while keeping active entries within a fixed capacity budget. Opal answers queries in 2.32 s and ingests a new memory in 0.94 s, 2.92 × and 9.05 ×
+
+faster than the secure baseline, respectively. A major AI provider has evaluated Opal and is considering deploying its techniques in their production memory system, serving millions of users. 
+
+## 2 System Overview 
+
+2.1 System Model 
+
+An Opal instance consists of three components: the client, a set of trusted enclaves, and an untrusted disk. All private computation takes place inside the enclaves, which hold compact client-side state in memory, while the untrusted disk stores encrypted ORAM state. There are three enclaves, each with a distinct role: 
+
+• Enclave Opal (controller): orchestrates Opal’s query and in-gestion operations, and maintains the knowledge graph, ANN index metadata, and ORAM client state. 
+
+• Enclave Emb (embedding): serves an embedding model. 
+
+• Enclave LLM (LLM): serves an LLM model. The untrusted disk stores two ORAM databases: ORAM ANN 
+
+holds vector embeddings used to find relevant matches, and 
+
+ORAM Data holds the raw data chunks passed to the LLM for answer generation. Opal exposes two operations: 
+
+• Enclave Opal .Query (𝑞 ): retrieve and synthesize an answer from personal memory for a natural-language query 𝑞 .
+
+• Enclave Opal .Ingest (𝑑 ): ingest a new fixed-size data chunk 𝑑 
+
+into the memory store. Unlike client-local memory, where the device must store and search all personal data itself [ 13 ], Opal keeps minimal state on the client (a secret key 𝑘 and a monotonic counter ctr ; see §3.4): the logical client only submits pre-chunked fixed-size items to Enclave Opal , which handles storage and retrieval on ORAM-backed disk. An alternative deployment could place a normalized ingestion pipeline at the application provider, as is common in production systems [ 29 , 34 , 46 ]. 2 A single enclave serves multiple users’ Enclave Opal controllers, each with their own separate ORAM databases. 
+
+2.2 Threat Model & Security Guarantees 2.2.1 Adversary Model. We adopt an established threat model of a malicious host with an enclave that is assumed to be uncompromised, as in prior TEE-backed and confidential-VM systems (e.g., Signal’s SVR3 [ 56 ], Occlum [ 182 ], and Gramine-TDX [ 108 ]; see also [ 16 , 35 , 74 , 77 , 140 , 164 , 190 ]), 
+
+> 2This would require a different freshness mechanism (e.g., a verifiable ran-domness beacon [105]) in place of the monotonic counter in §3.4.
+
+and industry confidential AI systems from Apple [ 27 ], Google [ 253 ], and Anthropic [ 25 ]. In particular, the attacker cannot view or tamper with the data and computation in-side the enclave, but it can observe, drop, replay, reorder, and tamper with all communication, data and computation outside of the enclave. Since network-level traffic already reveals which user is contacting the service, we focus on hiding what the user is doing, not that the user is present. Opal does not protect against DoS attacks from the server. It is particularly important to protect access patterns to storage outside of the enclave because, in standard confiden-tial VM deployments, persistent state resides on provider-managed remote storage [ 84 ] accessed through host- or hypervisor-mediated I/O paths that lie outside the trust boundary [ 55 , 94 , 140 , 182 , 205 ]. The host can therefore log every storage access without attacking the TEE [ 84 , 94 ]; prior systems treat this channel as a primary threat [ 55 , 140 , 205 ]. Opal ensures that off-enclave storage accesses are indepen-dent of query and data contents. We model each enclave as an instance of Gatt (as formally defined in [ 159 ]), which runs a program with private mutable state and returns outputs with manufacturer-signed attesta-tion bound to the code identity. We further assume the host cannot read or modify enclave memory during execution, in-teracting only through explicit I/O. Client-enclave and inter-enclave communication runs over authenticated encrypted channels, and the inter-enclave messages are padded to fixed size. TEEs do not natively prevent rollback of externally stored state [ 132 , 149 , 158 ]; following prior work [ 23 , 56 ], Opal adds freshness mechanisms (§3.4). 
+
+Out-of-scope attacks. We focus on access-pattern leak-age outside the enclave, assuming the enclave itself is un-compromised. A complementary line of work studies side-channel attacks inside enclaves: page-table and paging [ 38 ,96 , 250 ], cache and branch-prediction [ 112 , 142 , 261 ], in-terrupt, exception, stepping, and instruction-counting [ 167 ,177 , 178 , 236 , 237 ], timing and performance-counter [ 75 ,113 ], memory-bus and power [ 109 , 138 ], physical [ 53 , 136 ], transient-execution and microarchitectural leakage [ 36 , 37 ,120 , 219 ], fault injection [ 146 ], and attestation or deployment failures [119, 220]. Current confidential-computing hardware makes these attacks substantially harder. In our deployment (§6), all enclaves run in TDX-backed CVMs, and Enclave Emb and 
+
+Enclave LLM use NVIDIA B200 GPUs in confidential-computing mode. In particular, TDX removes the host’s direct software visibility into TD-private guest page tables and memory, so classic guest-PTE accessed-bit oracles do not directly apply to TD-private memory [ 93 , 94 , 96 , 202 ]. On the GPU side, confidential-computing mode removes man-agement, debugging, and profiling observability [ 150 ]. Deployed platforms further mitigate residual channels operationally [19, 205, 215].   
+
+> 3Disk
+> Data ORAM
+> ANN ORAM
+> LLM
+> Model
+> Embedding
+> Model
+> Client
+> Opal Controller
+> Knowledge
+> Graph
+> ANN
+> Metadata
+> ORAM
+> Clients
+> 318
+> 00
+> 2
+> 34
+> 4
+> 5
+> 5
+> 7
+> 2
+> 6
+> Dream
+> 1
+
+Figure 2. Opal system architec-ture. The Opal Controller orches-trates query and ingestion opera-tions across three enclaves, rout-ing data through oblivious stor-age (ORAM) on untrusted disk. Blue numbers trace the query flow; red numbers trace inges-tion. Numbered steps correspond to Algorithm 1. Limitations remain: recent work studies host-induced channels on TDX including interrupt and exception at-tacks [ 177 , 178 ], stepping attacks [ 167 , 236 , 237 ], timing and performance-counter attacks [ 75 , 113 ], cache attacks [ 167 ], and ciphertext-side attacks against CVM memory encryp-tion [ 254 ]. GPU-internal side channels such as cache tim-ing [ 147 , 261 ] and memory-disturbance attacks [ 124 ] also persist. These remaining attacks require microarchitec-tural, cache, exception, stepping, timing, or performance-counter channels rather than ordinary host software obser-vation. Proposals for strengthening enclave security include interrupt-aware and controlled-channel hardening [ 57 , 221 ], defenses against performance-counter attacks [ 233 ], TDX-specific hardening of trust domains [ 230 ], doubly-oblivious data structures [ 139 ], formal attestation models [ 159 ], and smaller-TCB enclave architectures [58, 72, 110]. 
+
+2.2.2 Security Guarantees & Definition. Opal provides the following security guarantees: 
+
+• Confidentiality. Under the adversary model above (§2.2.1), all user data, queries, and responses remain hidden from the adversary. The adversary may learn whether an operation is Query or Ingest , but beyond the declared leakage it learns neither the content of any item, query, or response, nor which stored data is relevant to a query or which records were accessed on its behalf. 
+
+• Integrity and Freshness. Tampering with or rollback of ORAM-backed storage is detected on every request. Client state is held in enclave RAM during a session and periodically sealed to disk; freshness of the sealed state is relative to the provider’s last checkpoint, so a crash may lose updates since that point (§3.4). 
+
+Security Definition. Let Π denote the set of public sys-tem parameters: ANN fetch count 𝑛 , reranking budget 𝐾 ,summarization period 𝑇 , tree depth 𝐿 , and bucket capacity 𝑍 .We provide an indistinguishability-based security definition relative to a leakage function L. For any request sequence, 
+
+L reveals the public parameters Π, the operation type at each step, and the resulting fixed trace shape: the number of fixed-size inter-enclave messages and the ORAM batch sizes. We also treat the provider checkpoint boundary 𝜅 𝑖 as an 1. The challenger C chooses a uniformly random bit 𝑏 .2. The adversary A chooses equally large datasets 𝐷 0
+
+and 𝐷 1 and public parameters Π. The challenger ini-tializes the system with 𝐷 𝑏 and Π.3. For each step 𝑖 :a. The adaptive adversary A chooses public requests 
+
+𝑞 𝑖, 0, 𝑞 𝑖, 1 ∈ { Query , Ingest }.b. If L( 𝑞 𝑖, 0) ≠ L( 𝑞 𝑖, 1), the challenger aborts. Other-wise, it executes 𝑞 𝑖,𝑏 according to Opal’s protocol in the Gatt -hybrid model, aborting on any ORAM-storage or recovered-checkpoint verification fail-ure. c. The challenger gets the request result 𝑟 𝑖 .4. The adversary A outputs a guess 𝑏 ′.
+
+Figure 3. Security game for Opal exogenous public schedule fixed across the two worlds. The game is played in the Gatt -hybrid model. The adversary con-trols all computation, storage, and message delivery outside enclave boundaries. It wins if it learns information beyond 
+
+L about the user’s queries or data, or causes an undetected incorrect execution of Opal. The adversary A wins the game if the challenger C does not abort and one of the following two conditions is met: 
+
+1) 𝑏 ′ = 𝑏 ; 2) the sequence of requests (𝑞 𝑖,𝑏 , 𝑟 𝑖 ) is an incorrect execution of Opal’s plaintext algorithm with Π on 𝐷 𝑏 under the same provider residency and checkpoint policy. 
+
+Theorem 2.1. As defined by the security game in Figure 3, for any PPT stateful adversary A, the Opal protocol defined in §3 and Algorithm 1 satisfies condition 1) with probability at most  
+
+> 12
+
++ negl (𝜆 ) and condition 2) with probability at most negl (𝜆 )
+
+in the Gatt -hybrid model, when instantiated with a durable monotonic client counter, a secure key-derivation function, a SUF-CMA secure MAC, a collision-resistant hash function, and an authenticated encryption with associated data scheme. 
+
+We give a proof sketch in §5; the full proof is in §A. 
+
+> 4
+
+## 3 Opal’s System Design 
+
+Opal’s central design principle is that all data-dependent reasoning executes inside the enclave, so that every ac-cess crossing the trust boundary follows a fixed, content-independent pattern. A query first extracts structured predi-cates inside Enclave LLM , traverses the enclave-resident KG to form an admissible set, embeds the query, and scores ANN candidates before issuing a fixed-budget ORAM fetch for vector reranking. Opal then performs a second fixed-budget ORAM fetch for the top raw chunks and passes them to 
+
+Enclave LLM for final answer synthesis. An ingestion updates KG metadata, embeds the new chunk, inserts it into the ANN metadata and both ORAM stores, and periodically re-ingests a summary item through the same path. In both cases, Dream () executes only on blocks already brought into the enclave on the ordinary ORAM path. Algorithm 1 and Figure 2 describe the full protocol. The following subsections describe KG-filtered search (§3.2), oblivious dreaming (§3.3), and freshness (§3.4). 
+
+3.1 Technical Background 3.1.1 Oblivious RAM. An ORAM allows a client to read and write blocks on an untrusted server such that the server cannot distinguish accesses to different blocks [ 154 , 194 ]. Opal uses Ring ORAM [ 171 ], a tree-based construction where the server stores 𝑁 blocks in a binary tree of depth 𝐿 with buckets of capacity 𝑍 . Each access reads and writes a fixed number of encrypted blocks regardless of which block is requested; a client-side position map and stash track block locations between accesses. Each access incurs 𝑂 (log 𝑁 )
+
+bandwidth, so any additional access beyond the fixed budget multiplies cost proportionally. Both ORAM stores are en-crypted under a per-client key derived from the client secret; integrity and rollback are described in §3.4. 
+
+3.1.2 IVF Indexes. Inverted file (IVF) indexes partition a vector collection into clusters, each represented by a cen-troid [ 101 ]. At query time, the index identifies the nearest centroids and scores only vectors in those clusters, avoid-ing a full scan. Product quantization (PQ) compresses each vector into a short code that enables approximate scoring without accessing the full vector [101]. Prior oblivious ANN work [ 271 ] builds on graph-based in-dexes (HNSW), but multi-hop traversals multiply ORAM round-trips and graphs are difficult to update incremen-tally [ 186 , 252 ]. IVF indexes handle insertion-heavy work-loads more gracefully [ 186 , 252 ] and fit our setting naturally: scoring uses compact PQ codes inside the enclave, and only a single bulk ORAM fetch retrieves full vectors for reranking. 
+
+3.2 KG-filtered Search 
+
+Structured retrieval in agentic memory systems achieves accuracy by building heavyweight, content-rich knowledge graphs that tightly couple retrieval with data-dependent tra-versals [ 67 , 85 , 87 , 166 ]. These graphs store extracted entities, relationships, and even community summaries alongside the corpus, and every query triggers multi-hop walks over this disk-resident state. In an ORAM-backed store, each such traversal either inflates the fixed access budget or leaks in-formation about what the system retrieves. Scoring the full corpus first and filtering afterward would waste the fixed ORAM budget on semantically similar but contextually irrel-evant items, while filtering outside the enclave would leak query predicates. Opal departs from this paradigm entirely: instead of a content-rich graph, it maintains a compact, metadata-only knowledge graph of normalized identifiers (people, sources, time ranges) that fits inside the enclave and stores no cor-pus content. In Algorithm 1, Enclave LLM .Traverse (𝑞, KG ) ex-tracts a filter set 𝐹 from the query, and KG .Traverse (𝐹 ) re-solves those predicates entirely inside the enclave to produce an admissible set 𝐴 𝑞 . The ANN then scores only within 𝐴 𝑞 ,after which Opal performs the same fixed-budget ORAM fetch and reranking pipeline as in the unfiltered case. Be-cause filtration changes which items are eligible rather than 
+
+how many storage accesses occur, Opal achieves the accu-racy benefits of graph-augmented retrieval. Despite storing no content in the graph, this lightweight approach matches a state-of-the-art plaintext agentic memory baseline with query-dependent multi-hop retrieval (§6.3). 
+
+3.2.1 Enclave-Resident Graph. The knowledge graph serves as a compact in-enclave control plane: raw text and embeddings remain in ORAM on untrusted storage, and the graph itself stores only identifiers, sparse metadata, and structural relationships, all deterministically extracted from application metadata (e.g., message participants, meeting attendees, folder hierarchy) at ingest time without an LLM call. Concretely, the graph contains five node types: 
+
+• Artifact nodes represent a logical memory unit (email, meeting, document), each carrying a timestamp and modal-ity label for temporal and source-type filtering. 
+
+• Chunk nodes are identifiers for fixed-size pieces of an artifact’s content, each linked to its parent artifact; the chunk content itself resides in ORAM. 
+
+• Summary nodes are consolidated digests produced by periodic summarization (§3.3), with edges to the artifact nodes they compress. 
+
+• Person nodes represent named individuals (e.g., email senders, meeting attendees). Each artifact holds edges to its participants. 
+
+• Project nodes represent workstreams (folder hierarchies, project spaces, recurring meetings); each artifact holds edges to its project node. Multiple chunks from the same artifact share a single arti-fact record, so the graph scales with the number of distinct artifacts rather than individual chunks. 
+
+> 5
+
+Algorithm 1: Opal                                                                                                      
+
+> Enclave Opal .Query (𝑞 )
+> 1: 𝐹 ←Enclave LLM .Traverse (𝑞, KG )⊲filter set
+> 2: 𝐴 𝑞 ←KG .Traverse (𝐹 )⊲KG traversal
+> 3: 𝑒 𝑞 ←Enclave Emb .Embed (𝑞 )⊲embed query
+> 4: 𝐶 ←ANN .Score (𝑒 𝑞 , 𝐴 𝑞 )⊲ANN scoring
+> 5: 𝑃 ANN ←BatchSearch (ORAM ANN , 𝐶, 𝑛 ;Dream ()) ⊲top-𝑛
+> 6: 𝑆 𝐾 ←ANN .Rerank (𝑃 ANN , 𝑒 𝑞 , 𝐾 )⊲top-𝐾
+> 7: 𝑃 Data ←BatchSearch (ORAM Data , 𝑆 𝐾 , 𝐾 ;Dream ())
+> 8: 𝑎 ←Enclave LLM .Synthesize (𝑃 Data [𝑆 𝐾 ]) ⊲answer synthesis
+> 9: return 𝑎
+> Enclave Opal .Ingest (𝑑 )
+> 1: KG .Update (𝑑. metadata )⊲update KG
+> 2: 𝑒 𝑑 ←Enclave Emb .Embed (𝑑 )⊲embed data
+> 3: ANN .Insert (𝑒 𝑑 )⊲assign cluster + update index
+> 4: 𝑃 ANN ←BatchInsert (ORAM ANN , 𝑒 𝑑 ;Dream ())
+> 5: 𝑃 Data ←BatchInsert (ORAM Data , 𝑑 ;Dream ())
+> 6: 𝑡 ←𝑡 +1
+> 7: if 𝑡 mod 𝑇 =0then ⊲summarization period
+> 8: 𝑆 ←KG .Traverse (recent )⊲recent chunks
+> 9: 𝑑 𝑠 ←Enclave LLM .Summarize (𝑆 )⊲generate summary
+> 10: Enclave Opal .Ingest (𝑑 𝑠 )⊲ingest summary Alice
+> Bob
+> Carol
+> Dave
+> Project Redwood Project Solstice Email Meeting Document Ambient Message Planning meeting Status email Design draft Chat recap c1 c2 c3 c4 c5 c6 c7 c8
+
+Figure 4. Sample Opal knowledge graph for user Alice. artifact nodes link to modality , person , and project nodes; chunk nodes are labeled 𝑐 1-𝑐 8.
+
+3.2.2 Filtration Types. Semantic similarity is necessary but insufficient for personal memory retrieval. Personal in-formation management (PIM) studies confirm that users naturally scope queries by time, people, source type, and project context [ 54 , 118 , 235 ]. We identify four classes of queries where embedding distance alone is unreliable, each resolved by a metadata predicate evaluated cheaply. 
+
+• Temporal. Users naturally anchor queries to dates, inter-vals, or relative time expressions (e.g., “last week”). Opal resolves these into time windows and retains only artifacts within range. 
+
+• Modality. Users often specify the source type (e.g., “in my emails”); modality filtration narrows 𝐴 𝑞 accordingly. 
+
+• Person. Queries like “What did Bob say about the budget?” require scoping memory to a named individual. Opal filters on canonical participant identifiers attached at ingest (e.g., meeting attendees, email senders). 
+
+• Project or workstream. Opal filters on workstream tags derived from organizational structure (folder hierarchies, project spaces, recurring meetings). For example, the query “What did Alice say about the bud-get last Monday?” yields predicates person = ’Alice’ AND timestamp BETWEEN ’2025-03-24’ AND ’2025-03-25’ .
+
+3.2.3 Query-Time Traversal. Because each retrieval round requires a full ORAM access, Opal gets exactly one shot at filtering; a variable number of rounds would leak query information, and fixing the budget at multiple rounds would multiply ORAM latency and bandwidth for every query, even when a single pass suffices. The traversal stage therefore assigns confidence to each predicate in 𝐹 : only high-confidence predicates become hard constraints, and low-confidence ones are widened or dropped. If the result-ing conjunction yields too few candidates, a deterministic relaxation cascade drops predicates in order of brittleness (person, then project, then modality) and widens temporal windows until enough candidates remain. Modality filtering restricts 𝐴 𝑞 to a single source class, but answers often reside in a linked artifact of a different type (e.g., a meeting decision captured in a follow-up email). Opal percolates 𝐴 𝑞 along source-link edges in the KG, adding linked artifacts of other modalities. Without percolation, a correct modality predicate would still miss the chunk that contains the answer. 
+
+3.3 Oblivious Dreaming 
+
+Insecure agentic memory systems routinely perform heavy maintenance: compaction and recursive summarization [ 155 ,176 ], conflict resolution and deduplication [ 51 , 122 , 166 ], pe-riodic graph refresh [ 67 , 166 ], and neighborhood-scanning reflection [ 157 ]. Under ORAM, each of these produces dis-tinctive access patterns that let the adversary observe when 
+
+maintenance occurs and correlate it with recent activity. Any fixed maintenance schedule must either scan the entire store to catch up, or leave stale state lingering. Opal addresses this through oblivious dreaming: the 
+
+Dream () callback (Algorithm 1) executes inside every batched ORAM access, inspecting blocks already in the stash and updating enclave-resident metadata accordingly 
+
+> 6
+
+(expiring entries or repairing index assignments). For re-tention and index repair, no maintenance-specific storage access is ever issued: the external trace is identical whether maintenance fires or not (§5). Memory compression triggers at a fixed public cadence and re-uses the standard inges-tion path. We apply oblivious dreaming to three domains: bounded retention (§3.3.1), streaming index repair (§3.3.2), and long-term memory compression (§3.3.3), all illustrated in Figure 5. 
+
+3.3.1 Adaptive Retention. An ORAM database has a fixed capacity. One could double the store at fixed intervals, but different users fill capacity at different rates, so any uni-form schedule either wastes space or falls behind; worse, the store grows without bound and ORAM overhead ( 𝑂 (log 𝑁 )
+
+per access) grows with it. The store must therefore expire old items, and the retention policy must be user-agnostic: a single configuration that adapts to any workload without per-user tuning. We size the ORAM capacity to hold roughly one year of data, informed by PIM research showing that most personal searches target items from the past few weeks, with a long tail extending over months [4, 18, 102]. Opal assigns each ingested item a TTL measured in logi-cal operations (Figure 5, steps 1-2). Each query access that brings an item into the enclave refreshes its TTL, producing LRU-like behavior: recent and recurrently accessed items survive, while cold items age out automatically. This matches empirical personal-data access patterns, where re-access concentrates heavily in the near past but retains a long tail [ 17 , 18 , 102 ]. Crucially, expiry is evaluated just-in-time on blocks already in the stash, requiring no additional ORAM accesses, extending the inline-expiry idea from oblivious messaging [104]. To target a steady-state store size 𝑁 , Opal sets TTL =
+
+ 𝑁 𝑤 · 𝑐 · 𝜂 
+
+
+
+, 𝜂 = 1 + ( 1 − 𝑤 ) ln 𝐾, 
+
+where 𝑤 is the write ratio, 𝑐 is the average number of chunks generated per logical item, and 𝐾 is the reranking budget. All parameters are public or derivable from public workload statistics; recall that the adversary already knows operation types and counts under our threat model (§2.2), so the TTL itself leaks nothing. The correction factor 𝜂 accounts for life-time refresh: as the read fraction grows, items survive longer in expectation, so the base TTL must shrink to maintain the same expected occupancy. Once the store reaches capacity, expired items are deleted opportunistically as their full vec-tors are encountered in the enclave (Figure 5, step 3), and the active database converges toward 𝑁 in steady state (§6.7 confirms convergence and that neither the ORAM nor its stash overflow in a multi-year replay). 
+
+3.3.2 Sleepy Rebalancing. The continuous insertions and deletions that adaptive retention produces cause IVF clusters to drift: some grow too large and others become too small, and the coarse partitioning that made the original ANN lay-out effective becomes stale. Conventional streaming ANN systems repair this eagerly: SPFresh [ 252 ] splits overgrown clusters, merges undersized ones, and immediately reassigns boundary vectors, while CrackIVF [ 130 ] defers splits to query time but still issues query-dependent accesses for the repair. Under Opal’s threat model, both are problematic: each cor-rection fetches a specific block that the foreground operation did not request, creating observable maintenance traffic. Opal introduces sleepy rebalancing, which defers index corrections to maintain access-pattern privacy while con-verging to the same retrieval quality as eager repair (Fig-ure 5, steps 3-4). When a cluster’s population exceeds a fixed split threshold, the enclave splits it without fetching any full vectors: it reconstructs approximate member vectors by decoding each item’s PQ residual code relative to the parent centroid, runs 2-means on the reconstructions, and installs two new centroids in place of the original. All members of the split cluster, plus items in neighboring clusters that may now be closer to a new centroid, are marked as pending cor-rection in enclave-resident metadata. No items are fetched; the split is invisible externally. Symmetrically, when a clus-ter’s population falls below a merge threshold, the enclave merges it into the nearest neighbor cluster using the same PQ-based reconstruction and lazy correction mechanism. As with adaptive retention, corrections are applied lazily during ordinary ORAM accesses. When an ORAM access brings a pending item into the stash, Opal reassigns it to the nearest live centroid in enclave ANN metadata. Cluster sizes also shrink naturally as expired items are physically reclaimed by later insertions, sometimes eliminating the need for a split entirely. §6 shows that sleepy rebalancing tracks an eager LIRE-style baseline closely: the PQ-based approximate split already places most items correctly. 
+
+3.3.3 Memory Compression. Adaptive retention deletes old detail, but once a chunk expires, any knowledge it con-tained is gone. Users rarely need verbatim access to ev-ery old chunk, but they benefit from preserving durable high-level structure: recurring collaborators, long-running projects, and important past decisions. Prior systems consol-idate memory as a dedicated operation with its own access footprint [155, 157, 176]. Opal periodically compresses recent chunks into denser summary records. Every 𝑇 ingestions, Algorithm 1 retrieves recent chunks via KG .Traverse (recent ), summarizes them with Enclave LLM .Summarize , and re-ingests the resulting summary through the ordinary ingestion path. The sum-mary is simply another memory item with its own identifier, embedding, and KG links, preserving the same abstraction boundary as raw memory. Because summarization runs on the ingest path using items already in the enclave, it requires no dedicated ORAM fetch. Summaries’ condensed content   
+
+> 7Split
+> Pending
+> 1
+> Cluster
+> growth
+> TTL
+> 234
+
+Figure 5. Oblivious dreaming lifecycle. (1) Initial IVF state. (2) Writes grow a cluster; ex-pired items (red) pass TTL. (3) Overgrown cluster splits, vectors marked pending, ex-pired items deleted. (4) Pend-ing corrections resolved on or-dinary ORAM accesses. makes them more relevant per item, earning a disproportion-ate share of top-𝐾 slots (§6). Recursive summarization, compressing old summaries into progressively coarser records to extend retention further, is a natural extension that we leave to future work. 
+
+3.4 Freshness and Rollback 
+
+Each Query and Ingest carries a client secret 𝑘 and the cur-rent monotonic counter ctr . The enclave derives (𝑘 mac , 𝑘 enc ) ← 
+
+KDF (𝑘 ). The key 𝑘 enc is the per-client encryption key used for both ORAM ANN and ORAM Data , as well as for sealing client checkpoints. 3
+
+Both ORAM trees maintain Merkle-style integrity over buckets [ 194 , 271 ]; after each request the enclave forms a rollback record: 
+
+𝑅 = (ctr , root ANN , root Data ,
+
+MAC 𝑘 mac (ctr , root ANN , root Data )) .
+
+Here root ANN and root Data are the current ORAM roots, and the MAC is computed over a canonically encoded tuple. Any accepted storage state for the request must match 𝑅 under the current counter, giving per-request freshness. Let 𝜅 𝑖 ≤ 𝑖 denote the latest request index whose client state has been checkpointed for that logical client by step 𝑖 
+
+under the provider’s residency and checkpoint policy rather than the inter-enclave call pattern; 𝜅 𝑖 need not advance on every request and advances only when that client is evicted from enclave RAM. When 𝜅 𝑖 advances, the enclave pads its resident client state to a fixed size and writes 𝐶 =
+
+AEAD .Enc 𝑘 enc (ctr , client _state ). If a checkpoint is written under the current counter, the same ctr is bound into it, pre-venting independent rollback of the rollback record and the sealed client state. Thus after request 𝑖 , sealed client state is guaranteed fresh only up to 𝜅 𝑖 : a crash may recover the authenticated checkpoint at 𝜅 𝑖 rather than the current state. On recovery, the enclave verifies the MAC in 𝑅 , the check-point tag, and both ORAM roots, and aborts on any mismatch. It also rejects any client request whose ctr is not strictly larger than the last accepted value. All client-to-enclave and inter-enclave calls use authenticated encrypted channels.   
+
+> 3We model a user’s devices as one logical client. Coordinating ctr across physical devices is orthogonal.
+
+## 4 Synthetic Personal-Data Pipeline 
+
+Evaluating Opal requires a corpus with realistic temporal dynamics and cross-modal causal structure, since both the maintenance mechanisms and structured search filters in Opal depend on when artifacts arrive and how they relate to one another. No existing dataset provides this: real personal data is too sensitive to collect or share at scale, and prior benchmarks [ 33 , 44 , 48 , 50 , 65 , 91 , 98 , 131 , 134 , 198 , 217 , 241 ,245 , 262 , 264 ] and digital-footprint pipelines [ 82 , 106 , 197 ,226 ] generate personal artifacts but lack calibrated temporal arrival models or cross-modal dependencies. Synthesizing a realistic substitute poses two challenges. First, modalities are not independent: a meeting triggers follow-up emails, and generating each stream in isolation yields a corpus that never exercises cross-modal retrieval fil-ters. Second, the parameter space is large (arrival rates, noise fractions, thread lengths, social-graph sizes) and no single source covers it; we must synthesize findings across com-munication studies, workplace reports, and access-pattern research into a coherent parameterization. Table 2 maps each empirical finding to the parameter it calibrates. Building on PersonaBench’s [ 28 , 76 , 197 ] social-graph methodology, we address both challenges with a four-stage pipeline that pro-duces years of multimodal activity for any given persona and social graph. 
+
+(1) Life-state schedule. A deterministic daily schedule partitions the anchor person’s time into behavioral states (e.g., asleep, commuting, focus time, free time, weekend). Each state modulates the baseline arrival intensity of ev-ery modality, hard-gating some modalities in certain states (e.g., no meetings while asleep) while strongly downweight-ing others (e.g., few messages received during focus time). Multiplier values are calibrated from empirical activity rates (Table 2). 
+
+(2) Multivariate Hawkes process. Hawkes processes are the standard statistical framework for modeling self-exciting event streams [ 88 , 89 ], where each event raises the probabil-ity of related follow-on events. We use a multivariate Hawkes process [ 191 ] over six modalities: email, meeting, document, query, message, and ambient. Each event can trigger causally related follow-on events in the same or different modalities 
+
+> 8
+
+(e.g., a meeting triggers follow-up emails and documents), with excitation parameters calibrated from empirical com-munication studies (Table 2). The life-state multipliers from Stage 1 modulate the baseline intensity so that daily volume targets are matched in expectation across behavioral states. Further parameterization details are in §B.1. 
+
+(3) Event planning. A scenario planner constructs narra-tive arcs from the social graph, seeds Stage 2 with scenario triggers, and assigns each event its initiator, participants, topic, and, when applicable, scenario membership. Contacts are drawn from modality-eligible graph edges weighted by relationship frequency and life-state context. 
+
+(4) Content generation. Events are realized by modality-specific LLM generators into concrete artifacts. The corpus mixes scenario-backed events with standalone activity not tied to any scenario, a fraction of which is routine noise (newsletters, gossip, spam) calibrated per modality to match empirical rates (Table 2). Scenario-backed artifacts remain causally consistent across modalities because their genera-tors share the same scenario metadata from Stage 3: a meet-ing transcript, its follow-up email, and a later document revision reflect a consistent shared scenario state. For the timestamped retrieval events, we combine ques-tion categories from established agentic memory bench-marks [ 131 , 241 ] with the natural scoping dimensions identi-fied by PIM research (time, people, source type, project) [ 54 ,118 , 235 ], yielding seven categories: single-fact , knowledge-update , multi-hop , temporal , modality , person , and project .Artifact selection for question generation follows an empiri-cally calibrated recency distribution [ 66 , 92 ] (§B.2). We focus on text-derived and structured artifacts; extending to native image and video memory and validating against real user populations are important future work [ 3, 201 , 240 ]. Figure 6 shows the resulting weekly cadence. Mon Tue Wed Thu Fri Sat Sun Mon Queries Meetings Documents Messages Emails          
+
+> Modality
+> 97
+> 50
+> 160
+> 804
+> 422 Representative Week: Apr 14 - Apr 20 Week
+> Mon Tue Wed Thu Fri Sat Sun Mon
+> Time Within Week
+> Queries Meetings Documents Messages Emails
+> Modality
+> 37.9 23.4 39.3 217.4 275.8 Folded Weekly Cadence Across 53 Weeks Avg/wk
+
+Figure 6. Average weekly cadence of each modality across the synthetic corpus. Messages and emails cluster into dense weekday bursts, meetings concentrate during work hours, and all modalities drop on weekends. 
+
+## 5 Security Proof Sketch 
+
+We sketch the proof here; the full proof is in §A. We rely on Compass’s [ 271 ] batched-access ORAM proof for two guarantees under Theorem 2.1: ORAM executions with the same public trace shape are indistinguishable, and tampering with Merkle-authenticated ORAM storage is detected except with negligible probability [ 271 , Thm. 1; Supp. Lemmas 4-5]. For Condition 1), the only extra observable events are fixed-size inter-enclave calls. For each request type, the num-ber of such calls and the ORAM batch sizes are fixed by the public parameters Π; all other computation is enclave-internal, and Dream () (§3.3) performs only in-place main-tenance on already materialized state, so it adds no new event. Thus executions with the same leakage have the same public trace shape, and indistinguishability follows from the Compass privacy guarantee and authenticated encrypted channels for inter-enclave calls. For Condition 2), the freshness and rollback mechanism (§3.4) gives per-request freshness for the ORAM-backed stor-age path and checkpoint-relative freshness for sealed client state up to the public boundary 𝜅 𝑖 . Compass’s authenticated-storage guarantee protects the ORAM trees, the rollback record and checkpoint enforce the intended recovery bound-ary, and replayed client requests are rejected by the mono-tonic counter ctr . Inter-enclave calls run over the authenti-cated encrypted channels assumed in the threat model. 
+
+## 6 Evaluation 
+
+We evaluate whether Opal achieves access-pattern privacy without sacrificing accuracy or efficiency. Concretely: 
+
+• Does KG-filtered search recover the accuracy that oblivi-ous search sacrifices (§6.3)? 
+
+• What is the system overhead of the privacy guarantees (§6.4-§6.6)? 
+
+• Does oblivious dreaming maintain steady-state capacity and track non-oblivious accuracy (§6.7)? 
+
+6.1 Implementation 
+
+The Opal protocol is implemented in ∼6K lines of Rust 4
+
+and the synthetic personal-data pipeline (§4) in ∼7K lines of Python. ANN search uses FAISS [ 101 ] with IVF-PQ index-ing. We use aes-gcm [ 173 ] for AES-128-GCM authenticated encryption, ring [189 ] for SHA-256 ORAM integrity trees, HKDF-SHA256 key derivation, and HMAC-SHA256 message authentication, and rand_chacha [ 172 ] for cryptographic pseudorandom number generation. Authenticated channels from clients to enclaves and between enclaves use TLS via the Tinfoil SDK [ 213 ]. Inter-enclave messages for query, in-gestion, and summarization are each padded to the maximum observed length; sealed client state is padded to 64 MiB.     
+
+> 4We omit Ring ORAM’s XOR optimization [ 171 ] (our ORAM is disk-backed). Ring ORAM metadata is stored in the sealed client state.
+> 9GT-Retrieval
+> Judged Accuracy
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> Accuracy
+> Overall Accuracy
+> Single Fact
+> Temporal Multi-Hop
+> Knowl. Update
+> Modality Project Person
+> By Question Type
+> ANN-only (Vertex) ANN-only (OSS) Opal (Vertex) Opal (OSS)
+
+Figure 7. Accuracy com-parison for ANN-only and Opal. Left: aggregate GT-retrieval rate and judged ac-curacy across Vertex and open-weight stacks. Right: judged accuracy by ques-tion type (Vertex). 
+
+6.2 Experiment Setup 
+
+Baselines. We evaluate Opal against five baselines. ANN-only performs ANN retrieval without KG filtering, isolating the accuracy gain of structured search. Graphiti [ 166 ]is a state-of-the-art graph-memory system with query-dependent retrieval, configured with the same core metadata dimensions as Opal (time, modality, person, project) via Graphiti-native typed edges, representing the insecure ac-curacy ceiling. LIRE [ 252 ] is the incremental rebalancing policy from SPFresh [ 252 ], used as the non-oblivious ac-curacy baseline for oblivious dreaming (§6.7). Plaintext Opal runs the same pipeline over unencrypted storage with selective fetches, giving a lower bound on overhead. 
+
+In-Memory Opal loads the entire encrypted database into the enclave on every query and read-modify-writes it on ingestion, matching the privacy guarantee of Opal without ORAM; this reflects prior enclave-backed designs that keep the full database inside the trusted boundary [ 16 , 74 , 164 ]. We do not evaluate a secure Graphiti baseline: its retrieval, provenance, and deduplication paths would each require oblivious protection (conservatively 1.37M accesses per query, 5.62M per ingestion), and keeping the full graph in-enclave instead requires ∼3.9 GiB for embeddings alone, which we capture with our In-Memory baseline. 
+
+Deployment. All enclaves are co-located on a single US East host with Tinfoil [ 214 ] Intel TDX confidential VMs [ 204 ], attested via Tinfoil’s attestation proxy [ 207 ]and verification stack [ 208 ]. Opal runs in a Tinfoil Con-tainer [ 209 ] (4 vCPUs, 4 GB RAM) with NVMe drives for un-trusted persistent storage. The LLM ( gpt-oss-20b ) and em-bedding ( nomic-embed-text ) enclaves are Tinfoil’s served model services [ 206 ] (16 vCPUs, 64 GB RAM, NVIDIA B200 GPU with confidential computing), routed via Tinfoil’s model router [ 203 ]. For accuracy we additionally evaluate a Google Vertex backend ( gemini-3.1-flash-lite-preview 
+
+with text-embedding-005 ) as a representative frontier stack. To capture realistic WAN latency, the client runs on a GCP n2-standard-8 VM (8 vCPUs, 32 GB RAM) in us-central1-b (Iowa), communicating cross-country with the US East enclaves; network bandwidth is 0.17 Gb/s down and 0.12 Gb/s up. RAM-disk bandwidth on the Opal controller is 3.48 GB/s read and 0.99 GB/s write. 
+
+Parameters. We use standard retrieval parameters. Raw data is chunked into 50-word segments with 10-word overlap [ 32 , 228 ]. We retrieve 𝑛 =200 ANN candidates, rerank [ 103 ], and pass the top 𝐾 =10 to the LLM [ 129 ]. We use standard ORAM configurations [ 271 ] with an 𝐿 =14 
+
+binary tree. Summarization fires every 𝑇 =5 ingestions [ 257 ](§3.3.3), with ORAM capacity sized for a one-year retention target [ 4, 18 , 102 ]. One year of synthetic data yields 1.3K evaluation queries and 190K artifacts (50K emails, 126K messages, 10K documents, 3K ambient notes, 873 meetings), producing 257K chunks and 51K summaries. 
+
+6.3 Accuracy 
+
+Figure 7 reports GT-retrieval rate (whether the top-𝐾 includes ground-truth chunks recorded at question generation) and 
+
+judged accuracy (LLM judges whether retrieved chunks con-tain the correct answer). KG-filtered search improves judged accuracy over ANN-only by 13 pp (Figure 7) and matches the insecure Graphiti baseline. We evaluate a fully-populated store with one year of synthetic data (§4), leaving oblivious dreaming’s accuracy implications to §6.7. On Vertex, Opal reaches 60.5% judged accuracy, surpass-ing even Graphiti (56.9%), which has full metadata access and query-dependent retrieval. As expected, OSS results are lower due to open-source models underperforming fron-tier models, but the relative gains are consistent. Opal’s gains over ANN-only are largest on temporal (23-24 pp), person (27-30 pp), and modality (16-20 pp) questions, where KG predicates add the most signal. Prior memory bench-marks [ 131 , 241 , 266 ] place frontier accuracy at 50-70%; Opal matches this range despite our harder multi-modal setting. 
+
+6.4 Bandwidth 
+
+The key efficiency advantage of Opal is asymptotic: ORAM enables selective fetches with 𝑂 (log 𝑁 ) bandwidth, whereas matching Opal’s storage-side privacy without ORAM re-quires reading the full encrypted database on every access, giving 𝑂 (𝑁 ) bandwidth. Figure 8 shows this gap widening as database size grows. At 524K entries (the exact maximum for our 𝐿 =14 ORAM tree), Opal uses 1.71 MiB per query and 0.09 MiB per inges-tion, while the In-Memory baseline uses 4.55 GiB and 9.1 GiB       
+
+> 10 1K 8K 66K 524K
+> DB Size
+> 0
+> 2K
+> 4K
+> 6K
+> 8K
+> MiB / operation (linear)  Plaintext Opal Opal In-Memory Opal Query Ingest
+> 1K 8K 66K 524K
+> DB Size
+> 2−6
+> 2−2
+> 22
+> 26
+> 210
+> 214
+> MiB / operation (log-2)
+
+Figure 8. Online bandwidth per query and ingestion oper-ation for Opal, In-Memory Opal, and Plaintext Opal across database sizes. Left: linear scale; right: log-2 scale. respectively. Across the 1K-to-524K sweep, Opal uses 12-2,700 × less query bandwidth than the In-Memory baseline. 
+
+6.5 Throughput and Cost 
+
+§6.3 shows that semantic search alone does not meet our accuracy objectives. We therefore apply the same KG-filter traversal to the baselines in all performance experiments and vary only the storage path, so the comparisons reflect secure retrieval overhead rather than a lower-accuracy pipeline. Table 1 summarizes serving performance and cost. 
+
+Throughput. We measure sustained multi-user through-put by packing concurrent users into a single enclave until enclave RAM is full; as each user’s request completes, its state is evicted and a new user is admitted, maintaining max-imal occupancy throughout. This setup inherently captures memory pressure from co-resident users and reflects steady-state serving capacity. Each user’s sealed client state (KG, ANN metadata, and ORAM clients) is sealed and evicted to disk. Opal sustains 16.41 ingests/s and 1.89 queries/s, while In-Memory Opal sustains 0.557 ingests/s and 0.146 queries/s (29.5 × and 13.0 × higher, respectively). The difference arises because In-Memory Opal must read the entire encrypted database on every query and read-modify-write it on every ingestion to match Opal’s privacy guarantee, whereas Opal’s ORAM accesses touch only 𝑂 (log 𝑁 ) blocks. Dividing the weighted throughput by the per-user request rate under the synthetic workload (257K ingests and 1.3K queries per user-year), a single enclave can serve 1,932 users for Opal versus 67.0 for In-Memory Opal. Since serving scales horizontally, this directly determines how many enclaves an application provider must run. One might ask whether In-Memory Opal could keep a single user resident to avoid repeated loads. However, the full encrypted database is orders of magni-tude larger than Opal’s per-user state, so a resident user monopolizes most of enclave RAM yet at the per-user re-quest rate from our synthetic workload sits idle over 98% of the time. Production serving systems evict idle per-user state              
+
+> System Tput. (ops/s) Users/Encl. Cost ($/yr)
+> Opal 15.82 1,932 $1.40M / $5.21M In-Memory 0.549 67.0 $21.13M / $24.93M
+> Ratio 28.8 ×28.8 ×15.0 ×/ 4.79 ×
+
+Table 1. Serving metrics at one million users. Cost columns show infrastructure cost (compute + storage) and total cost (including model/API). for exactly this reason [ 31 , 126 ], which is why both Opal and In-Memory Opal use this model in our evaluation. 
+
+Cost. The primary metric is annual application infras-tructure cost: enclave compute plus persistent storage. We price compute using Tinfoil’s public rates [ 210 ] and stor-age at $0.01/GiB-month based on published object-storage tiers [ 83 ]. At one million users, Opal’s infrastructure cost is 15.0 × lower than In-Memory Opal ($1.40M vs $21.13M annu-ally). The gap is smaller than the throughput ratio because ORAM’s tree structure increases Opal’s per-user storage foot-print by ∼3.0 ×, but compute dominates total infrastructure cost, so Opal retains a large advantage. For a rough end-to-end estimate, we add embedding and LLM inference costs using Tinfoil’s token rates [ 211 , 212 ]. This model/API cost is identical across systems since both use the same retrieval pipeline, so it compresses the rela-tive gap without changing the ranking. Including it yields $5.21M for Opal versus $24.93M for In-Memory Opal annu-ally (4.79 × lower overall). We focus on infrastructure cost because capability-adjusted inference cost is halving roughly every two months [ 26 , 69 , 193 ], while cloud compute and storage pricing improves at ∼15% per VM generation [ 20 , 21 ]. 
+
+6.6 Latency 
+
+Figure 9 breaks down single-client latency by stage for query and ingestion, including client-side request/response over-head. All reported query and ingestion latencies in Figure 9 are averages over 10 consecutive runs. On queries, Opal adds 1.57 × overhead over Plaintext Opal (2.32 s vs 1.48 s) and is 2.92 × faster than In-Memory Opal (6.78 s). LLM calls still dominate the online path: KG filtering and answer syn-thesis account for 1.15 s of the 2.32 s query, while ORAM fetches and client-state handling contribute most of the re-mainder. Ingestion shows the sharper systems gap: Opal is 1.96 × slower than Plaintext Opal but 9.05 × faster than In-Memory Opal, at 0.94 s latency versus 8.51 s for In-Memory Opal. In-Memory Opal remains dominated by full encrypted-store read-modify-write costs on ingestion; queries are faster than ingestion because it can read the store, answer, and re-lease it without writing it back to disk.     
+
+> 11 0s 2s 4s 6s 8s
+> Plaintext Q
+> Plaintext I
+> Opal Q
+> Opal I
+> In-Memory Q
+> In-Memory I
+> Embedding KG filter ANN mem ANN disk Data mem Data disk Client mem Client disk LLM synth Network
+
+Figure 9. Single-client la-tency for query (Q) and in-gestion (I). ANN denotes embeddings, Data raw en-crypted chunks, and Client sealed per-user state; each split shows disk I/O versus in-memory compute. 
+
+6.7 Oblivious Dreaming 
+
+Oblivious dreaming (§3.3) piggybacks all maintenance on or-dinary ORAM accesses, operating only on blocks incidentally brought into the stash, so the storage trace reveals nothing about when or whether maintenance occurred. We evaluate whether this deferred approach degrades retrieval quality by replaying three years of synthetic data with a one-year TTL, so the store reaches steady state after year 1 and remains at capacity thereafter (Figure 10). Adaptive retention (§3.3.1) achieves tight lifetime control: expired items have mean life-time 0.99 years (std 0.07). We configure eager LIRE [ 252 ] with the same one-year TTL policy for a fair comparison. Sleepy rebalancing (§3.3.2) achieves 50.6% judged accuracy versus 50.5% for eager LIRE [ 252 ] on the Vertex stack, matching the non-oblivious baseline. The ORAM stash stays bounded throughout (max 70 blocks), and of 2.22M pending IVF re-assignments evaluated during normal accesses, only 5.7% actually required a cluster change. To isolate the cost of sleepy rebalancing, we run a no-expiration control that keeps all three years. Both curves de-cline over time because later queries are intrinsically harder in a denser corpus. The 7.33 pp gap breaks down into 5.88 pp from deleting old chunks and just 1.45 pp from ANN index drift: nearly all the loss comes from intentionally discarding data. Memory compression (§3.3.3) proves effective: sum-maries are only 16.7% of the store but fill 39.6% of top-𝐾 
+
+slots, showing they capture what matters for retrieval. 
+
+## 7 Related work 
+
+Confidential AI systems. [25 , 27 , 35 , 127 , 253 , 269 ] pro-tect model inference but not persistent memory. Client-local memory [ 13 , 52 , 199 ] stores personal data on the user’s de-vice and re-uploads relevant context on every request, but cannot match cloud capacity, durability, or multi-device ac-cess (§1) [ 66 , 78 , 179 ]. Deployed assistants therefore store memory cloud-natively [ 15 , 27 , 99 , 151 , 240 ], and Opal tar-gets this setting. Concurrent work [ 269 ] offloads cold data to untrusted storage and uses 𝑘 -anonymity, which lacks prov-able guarantees and enables intersection attacks [ 42 , 79 , 238 ]. 
+
+Long-term agent memory. A rich area spanning re-search [ 24 , 51 , 67 , 85 , 87 , 97 , 116 , 122 , 128 , 148 , 155 –157 , 163 ,166 , 176 , 185 , 195 , 200 , 223 , 229 , 231 , 243 , 247 , 266 , 270 ] and 0     
+
+> 200K
+> Active rows
+> Opal
+> 0
+> 50
+> Stash  5–95% Median
+> 1 year 2 year 3 year
+> 50%
+> 60%
+> 70%
+> 80%
+> Accuracy  No-expiry control Opal LIRE
+
+Figure 10. Three-year replay of oblivious dreaming. (A) Ac-tive entries rise to capacity and then remain stable. (B) ORAM stash size stays bounded. (C) Opal tracks LIRE closely on judged accuracy over time. deployed products [ 2, 3, 5 – 7 , 123 , 151 , 181 , 240 ], confirming demand. Opal brings security to this space. 
+
+Synthetic personal data and memory benchmarks. 
+
+[ 33 , 44 , 45 , 48 , 50 , 65 , 82 , 91 , 98 , 106 , 131 , 134 , 197 , 198 , 217 ,218 , 226 , 227 , 241 , 245 , 246 , 262 , 264 ] provide valuable eval-uation methodology but target dialogues, agent traces, or video streams. Our pipeline extends this work to multi-modal personal corpora with calibrated temporal dynamics (§4). 
+
+Private retrieval. Embeddings leak nearly as much as query text [ 115 , 145 , 192 ] (§1), making access-pattern hiding essential. Prior work addresses private semantic search [ 49 ,90 , 117 , 268 , 271 ] and oblivious queries [ 61 , 70 , 216 ], but pure semantic search is insufficient for agentic memory (§1). Opal’s KG-filtered retrieval addresses this gap. 
+
+Dynamic ANN.. [130 , 144 , 186 , 252 , 265 ] supports update-heavy workloads as in Opal, but does not hide access pat-terns. Opal’s oblivious dreaming (§3.3) adds oblivious index maintenance to this space. 
+
+Filtered ANN.. [8, 11 , 39 , 47 , 68 , 81 , 86 , 125 , 143 , 160 , 196 ,224 , 225 , 232 , 242 , 249 , 251 , 256 , 259 , 263 , 271 , 272 ] restricts search to subsets matching metadata predicates, typically 
+
+> 12
+
+for speed. KG-filtered search (§3.2) is a special case of ANN pre-filtering; Opal uses it for both performance and accuracy. 
+
+Trusted storage. Via TEE-I/O [ 64 , 114 , 161 , 162 ] hides storage commands by trusting the device. However, this significantly enlarges the TCB [ 95 ], and recent attacks on confidential-I/O stacks [ 43 , 59 , 135 ] demonstrate that extend-ing trust to storage hardware is premature. In Opal, storage remains untrusted, and access patterns are hidden crypto-graphically via ORAM [153, 154, 171, 184, 194]. 
+
+## 8 Conclusion 
+
+Opal is a private memory system for personal AI that keeps data-dependent reasoning inside trusted enclaves while ex-posing only oblivious access patterns to storage. KG-filtered search and oblivious dreaming enable accurate, efficient re-trieval without leaking access patterns, achieving an order of magnitude higher throughput and lower infrastructure cost than secure baselines. Opal takes a significant step towards private long-term memory at scale. 
+
+Acknowledgments. We thank Wei Huang and Marci Meingast for early discussions and product-side insights at Google DeepMind and Google AI. We thank Tanya Verma and Jules Drean at Tinfoil for their responsive and ongoing confidential VM support. We also thank the students in the Sky security group, especially Corban Villa, Diogo Antunes, and Yiping Ma, for their feedback. This work is supported by the Amazon AI PhD Fellowship and by gifts from Ac-centure, Amazon, AMD, Anyscale, Broadcom, Google, IBM, Intel, Intesa Sanpaolo, Lambda, Lightspeed, Mibura, NVIDIA, Samsung SDS, and SAP. 
+
+## References 
+
+[1] [n. d.]. 1x. https://www.1x.tech/ .[2] [n. d.]. ChatGPT. https://chatgpt.com/ .[3] [n. d.]. Google Project Astra. https://deepmind.google/models/ project-astra/ .[4] [n. d.]. How Do People Re-find Files, Emails and Web Pages? iCon-ference 2014 Proceedings ([n. d.]). doi: 10.9776/14136 
+
+[5] [n. d.]. Mem.ai. https://get.mem.ai/ .[6] [n. d.]. NotebookLM. https://notebooklm.google/ .[7] [n. d.]. Personal.ai. https://www.personal.ai/ .[8] [n. d.]. Pinecone. https://www.pinecone.io/ .[9] [n. d.]. Signal. https://signal.org/ .[10] [n. d.]. Sunday Robotics. https://www.sunday.ai/ .[11] [n. d.]. Weaviate. https://weaviate.io/ .[12] [n. d.]. WhatsApp. https://www.whatsapp.com/ .[13] [n. d.]. Windows Copilot "Recall". https://learn.microsoft.com/en-us/windows/ai/recall/ .[14] 2024. End-to-end encryption on Messenger explained. 
+
+https://about.fb.com/news/2024/03/end-to-end-encryption-on-messenger-explained/ .[15] Amey Agrawal, Nitin Kedia, Ashish Panwar, Jayashree Mohan, Nipun Kwatra, Bhargav S. Gulavani, Alexey Tumanov, and Ramachandran Ramjee. 2024. Taming Throughput-Latency Tradeoff in LLM Infer-ence with Sarathi-Serve. In OSDI . USENIX Association, 117–134. [16] Adil Ahmad, Kyungtae Kim, Muhammad Ihsanulhaq Sarfaraz, and Byoungyoung Lee. 2018. OBLIVIATE: A Data Oblivious Filesystem for Intel SGX. In NDSS . The Internet Society. [17] Qingyao Ai, Susan T. Dumais, Nick Craswell, and Daniel J. Liebling. 2017. Characterizing Email Search using Large-scale Behavioral Logs and Surveys. In WWW . ACM, 1511–1520. [18] Tarfah Alrashed, Ahmed Hassan Awadallah, and Susan T. Dumais. 2018. The Lifetime of Email Messages: A Large-Scale Analysis of Email Revisitation. In CHIIR . ACM, 120–129. [19] Amazon Web Services. 2024. The Security Design of the AWS Nitro System. https://docs.aws.amazon.com/whitepapers/latest/security-design-of-aws-nitro-system/security-design-of-aws-nitro-system.html .[20] Amazon Web Services. 2026. Amazon EC2 M6i Instances. https: //aws.amazon.com/ec2/instance-types/m6i/ .[21] Amazon Web Services. 2026. Amazon EC2 M7i Instances. https: //aws.amazon.com/ec2/instance-types/m7i/ .[22] John R. Anderson and Lael J. Schooler. 1991. Reflections of the En-vironment in Memory. Psychological Science 2, 6 (1991), 396–408. doi: 10.1111/j.1467-9280.1991.tb00174.x 
+
+[23] Sebastian Angel, Aditya Basu, Weidong Cui, Trent Jaeger, Stella Lau, Srinath T. V. Setty, and Sudheesh Singanamalla. 2023. Nimble: Roll-back Protection for Confidential Cloud Services. In OSDI . USENIX Association, 193–208. [24] Petr Anokhin, Nikita Semenov, Artyom Y. Sorokin, Dmitry Evseev, Andrey Kravchenko, Mikhail Burtsev, and Evgeny Burnaev. 2025. AriGraph: Learning Knowledge Graph World Models with Episodic Memory for LLM Agents. In IJCAI . ijcai.org, 12–20. [25] Anthropic. 2025. Confidential Inference via Trusted Virtual Ma-chines. https://www.anthropic.com/research/confidential-inference-trusted-vms .[26] Guido Appenzeller. 2024. Welcome to LLMflation: LLM Inference Cost Is Going Down Fast. https://a16z.com/llmflation-llm-inference-cost/ .[27] Apple. 2024. Private Cloud Compute. https://security.apple.com/ blog/private-cloud-compute/ . Apple Security Blog (2024). [28] Argilla. 2024. FinePersonas: Synthetic Email Conversations. 
+
+https://huggingface.co/datasets/argilla/FinePersonas-Synthetic-Email-Conversations .[29] Denis Baylor, Eric Breck, Heng-Tze Cheng, Noah Fiedel, Chuan Yu Foo, Zakaria Haque, Salem Haykal, Mustafa Ispir, Vihan Jain, Levent Koc, Chiu Yuen Koo, Lukasz Lew, Clemens Mewald, Akshay Naresh Modi, Neoklis Polyzotis, Sukriti Ramesh, Sudip Roy, Steven Euijong Whang, Martin Wicke, Jarek Wilkiewicz, Xin Zhang, and Martin Zinkevich. 2017. TFX: A TensorFlow-Based Production-Scale Ma-chine Learning Platform. In KDD . ACM, 1387–1395. [30] BBC News. 2026. Meta smart glasses: Workers reviewing intimate content. https://www.bbc.com/news/articles/c0q33nvj0qpo .[31] Philip A. Bernstein, Sergey Bykov, Alan Geller, Gabriel Kliot, and Jorgen Thelin. 2014. Orleans: Distributed Virtual Actors for Programma-bility and Scalability . Technical Report MSR-TR-2014-41. Microsoft Research. [32] Sinchana Ramakanth Bhat, Max Rudat, Jannis Spiekermann, and Nico-las Flores-Herr. 2025. Rethinking Chunk Size For Long-Document Retrieval: A Multi-Dataset Analysis. arXiv preprint arXiv:2505.21700 
+
+(2025). [33] Haonan Bian, Zhiyuan Yao, Sen Hu, Zishan Xu, Shaolei Zhang, Yifu Guo, Ziliang Yang, Xueran Han, Huacan Wang, and Ronghao Chen. 2026. RealMem: Benchmarking LLMs in Real-World Memory-Driven Interaction. arXiv preprint arXiv:2601.06966 (2026). [34] Andrea Bittau, Úlfar Erlingsson, Petros Maniatis, Ilya Mironov, Ananth Raghunathan, David Lie, Mitch Rudominer, Ushasree Kode, Julien Tinnés, and Bernhard Seefeld. 2017. Prochlo: Strong Privacy for Analytics in the Crowd. In SOSP . ACM, 441–459. 
+
+> 13
+
+[35] Teofil Bodea, Masanori Misono, Julian Pritzi, Patrick Sabanic, Thore Sommer, Harshavardhan Unnibhavi, David Schall, Nuno Santos, Dim-itrios Stavrakakis, and Pramod Bhatotia. 2025. Trusted AI Agents in the Cloud. arXiv preprint arXiv:2512.05951 (2025). [36] Pietro Borrello, Andreas Kogler, Martin Schwarzl, Moritz Lipp, Daniel Gruss, and Michael Schwarz. 2022. ÆPIC Leak: Architecturally Leak-ing Uninitialized Data from the Microarchitecture. In USENIX Security Symposium . USENIX Association, 3917–3934. [37] Jo Van Bulck, Marina Minkin, Ofir Weisse, Daniel Genkin, Baris Kasikci, Frank Piessens, Mark Silberstein, Thomas F. Wenisch, Yuval Yarom, and Raoul Strackx. 2018. Foreshadow: Extracting the Keys to the Intel SGX Kingdom with Transient Out-of-Order Execution. In 
+
+USENIX Security Symposium . USENIX Association, 991–1008. [38] Jo Van Bulck, Nico Weichbrodt, Rüdiger Kapitza, Frank Piessens, and Raoul Strackx. 2017. Telling Your Secrets without Page Faults: Stealthy Page Table-Based Attacks on Enclaved Execution. In USENIX Security Symposium . USENIX Association, 1041–1056. [39] Yuzheng Cai, Jiayang Shi, Yizhuo Chen, and Weiguo Zheng. 2024. Navigating Labels and Vectors: A Unified Approach to Filtered Ap-proximate Nearest Neighbor Search. Proc. ACM Manag. Data 2, 6 (2024), 246:1–246:27. [40] Hancheng Cao, Chia-Jung Lee, Shamsi T. Iqbal, Mary Czerwinski, Priscilla N. Y. Wong, Sean Rintel, Brent J. Hecht, Jaime Teevan, and Longqi Yang. 2021. Large Scale Analysis of Multitasking Behavior During Remote Meetings. In CHI . ACM, 448:1–448:13. [41] Pádraig Mac Carron, Kimmo Kaski, and Robin Dunbar. 2016. Calling Dunbar’s numbers. Soc. Networks 47 (2016), 151–155. [42] David Cash, Paul Grubbs, Jason Perry, and Thomas Ristenpart. 2016. Leakage-Abuse Attacks Against Searchable Encryption. IACR Cryptol. ePrint Arch. 2016 (2016), 718. [43] CERT Coordination Center. 2025. Vulnerability Note VU#404544: Vulnerabilities identified in PCIe Integrity and Data Encryption (IDE) protocol specification. https://kb.cert.org/vuls/id/404544 .[44] Ding Chen, Simin Niu, Kehang Li, Peng Liu, Xiangping Zheng, Bo Tang, Xinchi Li, Feiyu Xiong, and Zhiyu Li. 2025. HaluMem: Evalu-ating Hallucinations in Memory Systems of Agents. arXiv preprint arXiv:2511.03506 (2025). [45] Guo Chen, Lidong Lu, Yicheng Liu, Liangrui Dong, Lidong Zou, Jixin Lv, Zhenquan Li, Xinyi Mao, Baoqi Pei, Shihao Wang, et al . 2026. Towards Multimodal Lifelong Understanding: A Dataset and Agentic Baseline. arXiv preprint arXiv:2603.05484 (2026). [46] Guoqiang Jerry Chen, Janet L. Wiener, Shridhar Iyer, Anshul Jaiswal, Ran Lei, Nikhil Simha, Wei Wang, Kevin Wilfong, Tim Williamson, and Serhat Yilmaz. 2016. Realtime Data Processing at Facebook. In 
+
+SIGMOD Conference . ACM, 1087–1098. [47] Qi Chen, Bing Zhao, Haidong Wang, Mingqin Li, Chuanjie Liu, Zengzhong Li, Mao Yang, and Jingdong Wang. 2021. SPANN: Highly-efficient Billion-scale Approximate Nearest Neighborhood Search. In 
+
+NeurIPS . 5199–5212. [48] Tiantian Chen, Jiaqi Lu, Ying Shen, and Lin Zhang. 2026. ES-MemEval: Benchmarking Conversational Agents on Personalized Long-Term Emotional Support. arXiv preprint arXiv:2602.01885 (2026). [49] Yihang Cheng, Lan Zhang, Junyang Wang, Mu Yuan, and Yunhao Yao. 2025. RemoteRAG: A Privacy-Preserving LLM Cloud RAG Service. In ACL (Findings) (Findings of ACL) . Association for Computational Linguistics, 3820–3837. [50] Zihao Cheng, Weixin Wang, Yu Zhao, Ziyang Ren, Jiaxuan Chen, Ruiyang Xu, Shuai Huang, Yang Chen, Guowei Li, Mengshi Wang, Yi Xie, Ren Zhu, Zeren Jiang, Keda Lu, Yihong Li, Xiaoliang Wang, Liwei Liu, and Cam-Tu Nguyen. 2026. LifeBench: A Benchmark for Long-Horizon Multi-Source Memory. arXiv preprint arXiv:2603.03781 
+
+(2026). [51] Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. 2025. Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory. In ECAI (Frontiers in Artificial Intelligence and Applications) . IOS Press, 2993–3000. [52] Gérard Chollet, Hugues Sansen, Yannis Tevissen, Jérôme Boudy, Mossaab Hariz, Christophe Lohr, and Fathy Yassa. 2024. Privacy preserving personal assistant with on-device diarization and spoken dialogue system for home and beyond. arXiv preprint arXiv:2401.01146 
+
+(2024). [53] Jalen Chuang, Alex Seto, Nicolas Berrios, Stephan van Schaik, Christina Garman, and Daniel Genkin. 2026. TEE.fail: Breaking Trusted Execution Environments via DDR5 Memory Bus Interpo-sition. https://tee.fail/ .[54] Andrea Civan, William Jones, Predrag V. Klasnja, and Harry Bruce. 2008. Better to organize personal information by folders or by tags?: The devil is in the details. In ASIST (Proc. Assoc. Inf. Sci. Technol., 1) .Wiley, 1–13. [55] Confidential Containers. 2024. Trust Model for Confidential Con-tainers. https://confidentialcontainers.org/docs/architecture/trust-model/trust-model/ .[56] Graeme Connell, Vivian Fang, Rolfe Schmidt, Emma Dauterman, and Raluca Ada Popa. 2024. Secret Key Recovery in a Global-Scale End-to-End Encryption System. In OSDI . USENIX Association, 703–719. [57] Scott Constable, Jo Van Bulck, Xiang Cheng, Yuan Xiao, Cedric Xing, Ilya Alexandrovich, Taesoo Kim, Frank Piessens, Mona Vij, and Mark Silberstein. 2023. AEX-Notify: Thwarting Precise Single-Stepping At-tacks through Interrupt Awareness for Intel SGX Enclaves. In USENIX Security Symposium . USENIX Association, 4051–4068. [58] Victor Costan, Ilia A. Lebedev, and Srinivas Devadas. 2016. Sanc-tum: Minimal Hardware Extensions for Strong Software Isolation. In 
+
+USENIX Security Symposium . USENIX Association, 857–874. [59] Cas Cremers, Alexander Dax, and Aurora Naska. 2023. Formal Analy-sis of SPDM: Security Protocol and Data Model version 1.2. In USENIX Security Symposium . USENIX Association, 6611–6628. [60] Emmelyn A. J. Croes, Marjolijn L. Antheunis, Chris van der Lee, and Jan M. S. de Wit. 2024. Digital Confessions: The Willingness to Disclose Intimate Information to a Chatbot and its Impact on Emotional Well-Being. Interact. Comput. 36, 5 (2024), 279–292. [61] Emma Dauterman, Vivian Fang, Ioannis Demertzis, Natacha Crooks, and Raluca Ada Popa. 2021. Snoopy: Surpassing the Scalability Bot-tleneck of Oblivious Storage. In SOSP . ACM, 655–671. [62] Vicente Bicudo de Castro. 2025. Quantifying the burden of organisa-tional bulk emails in a business school. Higher Education Research & Development 44, 8 (2025), 1934–1948. doi: 10.1080/07294360.2025. 2510662 
+
+[63] David Dearman and Jeffrey S. Pierce. 2008. It’s on my other computer!: computing with multiple devices. In CHI . ACM, 767–776. [64] DMTF. 2025. Security Protocol and Data Model (SPDM) Specification. 
+
+https://www.dmtf.org/dsp/DSP0274 .[65] Yiming Du, Hongru Wang, Zhengyi Zhao, Bin Liang, Baojun Wang, Wanjun Zhong, Zezhong Wang, and Kam-Fai Wong. 2024. PerLTQA: A Personal Long-Term Memory Dataset for Memory Classification, Retrieval, and Fusion in Question Answering. In SIGHAN . Association for Computational Linguistics, 152–164. [66] Susan T. Dumais, Edward Cutrell, Jonathan J. Cadiz, Gavin Jancke, Raman Sarin, and Daniel C. Robbins. 2015. Stuff I’ve Seen: A System for Personal Information Retrieval and Re-Use. SIGIR Forum 49, 2 (2015), 28–35. doi: 10.1145/2888422.2888425 
+
+[67] Darren Edge, Ha Trinh, Newman Cheng, Joshua Bradley, Alex Chao, Apurva Mody, Steven Truitt, Dasha Metropolitansky, Robert Osazuwa Ness, and Jonathan Larson. 2024. From Local to Global: A Graph RAG Approach to Query-Focused Summarization. arXiv preprint arXiv:2404.16130 (2024). [68] Joshua Engels, Benjamin Landrum, Shangdi Yu, Laxman Dhulipala, and Julian Shun. 2024. Approximate Nearest Neighbor Search with Window Filters. In ICML (Proceedings of Machine Learning Research) .
+
+> 14
+
+PMLR / OpenReview.net, 12469–12490. [69] Epoch AI. 2026. Trends in AI: The Inference Cost of Frontier Models is Halving Every Two Months. https://epoch.ai/trends .[70] Saba Eskandarian and Matei Zaharia. 2019. ObliDB: Oblivious Query Processing for Secure Databases. Proc. VLDB Endow. 13, 2 (2019), 169–183. [71] Federal Trade Commission. 2024. A Look Behind the Screens: Ex-amining the Data Practices of Social Media and Video Streaming Ser-vices . Technical Report. https://www.ftc.gov/system/files/ftc_gov/ pdf/Social-Media-6b-Report-9-11-2024.pdf 
+
+[72] Andrew Ferraiuolo, Andrew Baumann, Chris Hawblitzel, and Bryan Parno. 2017. Komodo: Using verification to disentangle secure-enclave hardware from software. In SOSP . ACM, 287–305. [73] Eric W. Fox, Martin B. Short, Frederic P. Schoenberg, Kathryn D. Coronges, and Andrea L. Bertozzi. 2016. Modeling E-mail Networks and Inferring Leadership Using Self-Exciting Point Processes. J. Amer. Statist. Assoc. 111, 514 (2016), 564–584. doi: 10.1080/01621459.2015. 1135802 
+
+[74] Benny Fuhry, Raad Bahmani, Ferdinand Brasser, Florian Hahn, Flo-rian Kerschbaum, and Ahmad-Reza Sadeghi. 2017. HardIDX: Practical and Secure Index with SGX. In DBSec (Lecture Notes in Computer Sci-ence) . Springer, 386–408. [75] Stefan Gast, Hannes Weissteiner, Robin Leander Schröder, and Daniel Gruss. 2025. CounterSEVeillance: Performance-Counter Attacks on AMD SEV-SNP. In NDSS . The Internet Society. [76] Tao Ge, Xin Chan, Xiaoyang Wang, Dian Yu, Haitao Mi, and Dong Yu. 2024. Scaling synthetic data creation with 1,000,000,000 personas. 
+
+arXiv preprint arXiv:2406.20094 (2024). [77] Xinyang Ge, Hsuan-Chi Kuo, and Weidong Cui. 2022. Hecate: Lifting and Shifting On-Premises Workloads to an Untrusted Cloud. In CCS .ACM, 1231–1242. [78] Jim Gemmell, Gordon Bell, and Roger Lueder. 2006. MyLifeBits: a personal database for everything. Commun. ACM 49, 1 (2006), 88–95. doi: 10.1145/1107458.1107460 
+
+[79] Arthur Gervais, Reza Shokri, Adish Singla, Srdjan Capkun, and Vin-cent Lenders. 2014. Quantifying Web-Search Privacy. In CCS . ACM, 966–977. [80] Emily Gliklich, Rong Guo, and Regan W. Bergmark. 2016. Texting while driving: A study of 1211 U.S. adults with the Distracted Driving Survey. Preventive Medicine Reports 4 (2016), 486–489. doi: 10.1016/j. pmedr.2016.09.003 
+
+[81] Siddharth Gollapudi, Neel Karia, Varun Sivashankar, Ravishankar Krishnaswamy, Nikit Begwani, Swapnil Raz, Yiyong Lin, Yin Zhang, Neelam Mahapatro, Premkumar Srinivasan, Amit Singh, and Har-sha Vardhan Simhadri. 2023. Filtered-DiskANN: Graph Algorithms for Approximate Nearest Neighbor Search with Filters. In WWW .ACM, 3406–3416. [82] Amr Gomaa, Ahmed Salem, and Sahar Abdelnabi. 2025. ConVerse: Benchmarking Contextual Safety in Agent-to-Agent Conversations. 
+
+arXiv preprint arXiv:2511.05359 (2025). [83] Google Cloud. 2026. Google Cloud Storage Pricing. https://cloud. google.com/storage/pricing .[84] Google Cloud. 2026. Persistent Disk. https://cloud.google.com/ compute/docs/disks/persistent-disks .[85] Zirui Guo, Lianghao Xia, Yanhua Yu, Tu Ao, and Chao Huang. 2025. LightRAG: Simple and Fast Retrieval-Augmented Generation. In 
+
+EMNLP (Findings) . Association for Computational Linguistics, 10746– 10761. [86] Gaurav Gupta, Jonah Yi, Benjamin Coleman, Chen Luo, Vihan Lak-shman, and Anshumali Shrivastava. 2023. Caps: A practical partition index for filtered similarity search. arXiv preprint arXiv:2308.15014 
+
+(2023). [87] Bernal Jimenez Gutierrez, Yiheng Shu, Yu Gu, Michihiro Yasunaga, and Yu Su. 2024. HippoRAG: Neurobiologically Inspired Long-Term Memory for Large Language Models. In NeurIPS .[88] Alan G. Hawkes. 1971. Point Spectra of Some Mutually Exciting Point Processes. Journal of the Royal Statistical Society Series B: Statistical Methodology 33, 3 (1971), 438–443. doi: 10.1111/j.2517-6161.1971.tb01530.x 
+
+[89] Alan G. Hawkes and David Oakes. 1974. A cluster process represen-tation of a self-exciting process. Journal of Applied Probability 11, 3 (1974), 493–503. doi: 10.2307/3212693 
+
+[90] Alexandra Henzinger, Emma Dauterman, Henry Corrigan-Gibbs, and Nickolai Zeldovich. 2023. Private Web Search with Tiptoe. In SOSP .ACM, 396–416. [91] Yuanzhe Hu, Yu Wang, and Julian McAuley. 2025. Evaluating Mem-ory in LLM Agents via Incremental Multi-Turn Interactions. arXiv preprint arXiv:2507.05257 (2025). [92] Naoki Igarashi, Yukihiko Okada, Hiroki Sayama, and Yukie Sano. 2022. A two-phase model of collective memory decay with a dynamical switching point. Scientific Reports 12, 1 (2022). doi: 10.1038/s41598-022-25840-9 
+
+[93] Intel. 2022. Intel Trust Domain Extensions (TDX). https://www. intel.com/content/dam/develop/external/us/en/documents/tdx-whitepaper-final9-17.pdf .[94] Intel. 2026. Intel Trust Domain Extension Guest Linux Kernel Hard-ening Strategy. https://intel.github.io/ccc-linux-guest-hardening-docs/tdx-guest-hardening.html .[95] Intel Corporation. 2025. Intel TDX Connect TEE-IO Device Guide. https://www.intel.com/content/www/us/en/content-details/ 861654/intel-tdx-connect-tee-io-device-guide.html .[96] Grace Jia, Alex Wong, and Anurag Khandelwal. 2025. Found in Translation: A Generative Language Modeling Approach to Memory Access Pattern Attacks. In USENIX Security Symposium . USENIX Association, 7957–7975. [97] Dongming Jiang, Yi Li, Guanpeng Li, and Bingzhe Li. 2026. MAGMA: A Multi-Graph based Agentic Memory Architecture for AI Agents. 
+
+arXiv preprint arXiv:2601.03236 (2026). [98] Cheng Jiayang, Dongyu Ru, Lin Qiu, Yiyang Li, Xuezhi Cao, Yangqiu Song, and Xunliang Cai. 2026. AMemGym: Interactive Memory Benchmarking for Assistants in Long-Horizon Conversations. arXiv preprint arXiv:2603.01966 (2026). [99] Hongpeng Jin and Yanzhao Wu. 2025. CE-CoLLM: Efficient and Adaptive Large Language Models Through Cloud-Edge Collaboration. In ICWS . IEEE, 316–323. [100] Eunkyung Jo, Yuin Jeong, SoHyun Park, Daniel A. Epstein, and Young-Ho Kim. 2024. Understanding the Impact of Long-Term Memory on Self-Disclosure with Large Language Model-Driven Chatbots for Public Health Intervention. In CHI . ACM, 440:1–440:21. [101] Jeff Johnson, Matthijs Douze, and Hervé Jégou. 2021. Billion-Scale Similarity Search with GPUs. IEEE Trans. Big Data 7, 3 (2021), 535–547. doi: 10.1109/TBDATA.2019.2921572 
+
+[102] William Jones, Susan T. Dumais, and Harry Bruce. 2002. Once found, what then? A study of "keeping" behaviors in the personal use of Web information. In ASIST (Proc. Assoc. Inf. Sci. Technol., 1) . Wiley, 391–402. [103] Vladimir Karpukhin, Barlas Oguz, Sewon Min, Patrick Lewis, Ledell Wu, Sergey Edunov, Danqi Chen, and Wen-tau Yih. 2020. Dense Passage Retrieval for Open-Domain Question Answering. In EMNLP (1) . Association for Computational Linguistics, 6769–6781. [104] Darya Kaviani, Deevashwer Rathee, Bhargav Annem, and Raluca Ada Popa. 2025. Myco: Unlocking Polylogarithmic Accesses in Metadata-Private Messaging. In SP . IEEE, 4419–4437. [105] John Kelsey, Luís T. A. N. Brandão, Rene Peralta, and Harold Booth. 2019. A Reference for Randomness Beacons: Format and Protocol Version 2. Technical Report NIST Interagency or Internal Report 8213 (Draft). National Institute of Standards and Technology. doi: 10.6028/NIST.IR. 8213-draft 
+
+> 15
+
+[106] Hyunwoo Kim, Niloofar Mireshghallah, Michael Duan, Rui Xin, Shuyue Stella Li, Jaehun Jung, David Acuna, Qi Pang, Hanshen Xiao, G. Edward Suh, Sewoong Oh, Yulia Tsvetkov, Pang Wei Koh, and Yejin Choi. 2026. Privasis: Synthesizing the Largest "Public" Private Dataset from Scratch. arXiv preprint arXiv:2602.03183 (2026). [107] Farshad Kooti, Luca Maria Aiello, Mihajlo Grbovic, Kristina Lerman, and Amin Mantrach. 2015. Evolution of Conversations in the Age of Email Overload. In WWW . ACM, 603–613. [108] Dmitrii Kuvaiskii, Dimitrios Stavrakakis, Kailun Qin, Cedric Xing, Pramod Bhatotia, and Mona Vij. 2024. Gramine-TDX: A Lightweight OS Kernel for Confidential VMs. In CCS . ACM, 4598–4612. [109] Dayeol Lee, Dongha Jung, Ian T. Fang, Chia-Che Tsai, and Raluca Ada Popa. 2020. An Off-Chip Attack on Hardware Enclaves via the Mem-ory Bus. In USENIX Security Symposium . USENIX Association, 487– 504. [110] Dayeol Lee, David Kohlbrenner, Shweta Shinde, Krste Asanovic, and Dawn Song. 2020. Keystone: an open framework for architecting trusted execution environments. In EuroSys . ACM, 38:1–38:16. [111] Robert A. Lee. 2025. Slack Statistics 2026: Daily Active Users, En-terprise Trends & Market Share Analysis. https://sqmagazine.co.uk/ slack-statistics . SQ Magazine.. [112] Sangho Lee, Ming-Wei Shih, Prasun Gera, Taesoo Kim, Hyesoon Kim, and Marcus Peinado. 2017. Inferring Fine-grained Control Flow Inside SGX Enclaves with Branch Shadowing. In USENIX Security Symposium . USENIX Association, 557–574. [113] Woomin Lee, Taehun Kim, Seunghee Shin, Junbeom Hur, and Youngjoo Shin. 2025. T-Time: A Fine-Grained Timing-Based Controlled-Channel Attack Against Intel TDX. In ESORICS (3) (Lec-ture Notes in Computer Science) . Springer, 323–341. [114] Hugo Lefeuvre, David Chisnall, Marios Kogias, and Pierre Olivier. 2023. Towards (Really) Safe and Fast Confidential I/O. In HotOS . ACM, 214–222. [115] Haoran Li, Mingshi Xu, and Yangqiu Song. 2023. Sentence Embedding Leaks More Information than You Expect: Generative Embedding Inversion Attack to Recover the Whole Sentence. In ACL (Findings) (Findings of ACL) . Association for Computational Linguistics, 14022– 14040. [116] Hao Li, Chenghao Yang, An Zhang, Yang Deng, Xiang Wang, and Tat-Seng Chua. 2025. Hello Again! LLM-powered Personalized Agent for Long-term Dialogue. In NAACL (Long Papers) . Association for Computational Linguistics, 5259–5276. [117] Jingyu Li, Zhicong Huang, Min Zhang, Cheng Hong, Jian Liu, Tao Wei, and Wenguang Chen. 2025. Panther: Private Approximate Nearest Neighbor Search in the Single Server Setting. In CCS . ACM, 365–379. [118] Jiahao Nick Li, Zhuohao Jerry Zhang, and Jiaju Ma. 2024. OmniQuery: Contextually Augmenting Captured Multimodal Memory to Enable Personal Question Answering. arXiv preprint arXiv:2409.08250 (2024). [119] Mengyuan Li, Yuheng Yang, Guoxing Chen, Mengjia Yan, and Yinqian Zhang. 2024. SoK: Understanding Design Choices and Pitfalls of Trusted Execution Environments. In AsiaCCS . ACM. [120] Mengyuan Li, Yinqian Zhang, Huibo Wang, Kang Li, and Yueqiang Cheng. 2021. CIPHERLEAKS: Breaking Constant-time Cryptography on AMD SEV via the Ciphertext Side Channel. In USENIX Security Symposium . USENIX Association, 717–732. [121] Wenbo Li, David S. Lee, Jonathan L. Stahl, and Joseph Bayer. 2025. Reflecting on Dunbar’s numbers: Individual differences in energy allocation to personal relationships. PLOS ONE 20, 3 (2025), e0319604. doi: 10.1371/journal.pone.0319604 
+
+[122] Zhiyu Li, Shichao Song, Hanyu Wang, Simin Niu, Ding Chen, Ji-awei Yang, Chenyang Xi, Huayi Lai, Jihao Zhao, Yezhaohui Wang, Junpeng Ren, Zehao Lin, Jiahao Huo, Tianyi Chen, Kai Chen, Ke-hang Li, Zhiqiang Yin, Qingchen Yu, Bo Tang, Hongkang Yang, Zhi-Qin John Xu, and Feiyu Xiong. 2025. MemOS: An Operating System for Memory-Augmented Generation (MAG) in Large Language Mod-els. arXiv preprint arXiv:2505.22101 (2025). [123] Limitless.ai. 2026. Limitless.ai. https://www.limitless.ai/ .[124] Chris S. Lin, Joyce Qu, and Gururaj Saileshwar. 2025. GPUHammer: Rowhammer Attacks on GPU Memories are Practical. In USENIX Security Symposium . USENIX Association, 5719–5738. [125] Yanjun Lin, Kai Zhang, Zhenying He, Yinan Jing, and X Sean Wang. 2025. Survey of Filtered Approximate Nearest Neighbor Search over the Vector-Scalar Hybrid Data. arXiv preprint arXiv:2505.06501 (2025). [126] Benjamin C. Ling, Emre Kıcıman, and Armando Fox. 2004. Session State: Beyond Soft State. In Proceedings of the 1st Symposium on Networked Systems Design and Implementation (NSDI) .[127] Ken Ziyu Liu, Erik Chi, Sanmi Koyejo, J. Alex Halderman, and Percy Liang. 2026. Unlinkable Inference as a User Privacy Architecture. The Open Anonymity Project. https://openanonymity.ai/blog/unlinkable-inference/ 
+
+[128] Lei Liu, Xiaoyan Yang, Yue Shen, Binbin Hu, Zhiqiang Zhang, Jinjie Gu, and Guannan Zhang. 2023. Think-in-Memory: Recalling and Post-thinking Enable LLMs with Long-Term Memory. arXiv preprint arXiv:2311.08719 (2023). [129] Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paranjape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2024. Lost in the Middle: How Language Models Use Long Contexts. Trans. Assoc. Comput. Linguistics 12 (2024), 157–173. doi: 10.1162/TACL_A_00638 
+
+[130] Vasilis Mageirakos, Bowen Wu, and Gustavo Alonso. 2025. Cracking Vector Search Indexes. Proc. VLDB Endow. 18, 11 (2025), 3951–3964. [131] Adyasha Maharana, Dong-Ho Lee, Sergey Tulyakov, Mohit Bansal, Francesco Barbieri, and Yuwei Fang. 2024. Evaluating Very Long-Term Conversational Memory of LLM Agents. In ACL (1) . Association for Computational Linguistics, 13851–13870. [132] Sinisa Matetic, Mansoor Ahmed, Kari Kostiainen, Aritra Dhar, David M. Sommer, Arthur Gervais, Ari Juels, and Srdjan Capkun. 2017. ROTE: Rollback Protection for Trusted Execution. In USENIX Security Symposium . USENIX Association, 1289–1306. [133] Colleen McClain, Michelle Faverio, Monica Anderson, and Eugenie Park. 2023. Key Findings About Americans and Data Privacy. Pew Research Center. https://www.pewresearch.org/internet/2023/10/18/ how-americans-view-data-privacy/ 
+
+[134] Jingbiao Mei, Jinghong Chen, Guangyu Yang, Xinyu Hou, Margaret Li, and Bill Byrne. 2026. According to Me: Long-Term Personalized Referential Memory QA. arXiv preprint arXiv:2603.01990 (2026). [135] Carlo Meijer and Bernard van Gastel. 2019. Self-Encrypting Decep-tion: Weaknesses in the Encryption of Solid State Drives. In IEEE Symposium on Security and Privacy . IEEE, 72–87. [136] Jesse De Meulemeester, Luca Wilke, David F. Oswald, Thomas Eisen-barth, Ingrid Verbauwhede, and Jo Van Bulck. 2025. BadRAM: Practi-cal Memory Aliasing Attacks on Trusted Execution Environments. In SP . IEEE, 4117–4135. [137] Microsoft. 2025. Breaking Down the Infinite Workday. 
+
+https://www.microsoft.com/en-us/worklab/work-trend-index/breaking-down-infinite-workday . 2025 Work Trend Index Annual Report.. [138] Nimish Mishra, Kislay Arya, Sarani Bhattacharya, Paritosh Saxena, and Debdeep Mukhopadhyay. 2025. "OOPS!": Out-Of-Band Remote Power Side-Channel Attacks on Intel SGX and TDX. In DAC . IEEE, 1–7. [139] Pratyush Mishra, Rishabh Poddar, Jerry Chen, Alessandro Chiesa, and Raluca Ada Popa. 2018. Oblix: An Efficient Oblivious Search Index. In IEEE Symposium on Security and Privacy . IEEE Computer Society, 279–296. [140] Masanori Misono, Dimitrios Stavrakakis, Nuno Santos, and Pramod Bhatotia. 2025. Confidential VMs Explained: An Empirical Analysis of AMD SEV-SNP and Intel TDX. In SIGMETRICS (Abstracts) . ACM, 34–36. 
+
+> 16
+
+[141] Tanushree Mitra and Eric Gilbert. 2013. "Analyzing gossip in work-place email" by Tanushree Mitra and Eric Gilbert, with Ching-man Au Yeung as coordinator. SIGWEB Newsl. 2013, Winter (2013), 5:1–5:7. [142] Ahmad Moghimi, Gorka Irazoqui, and Thomas Eisenbarth. 2017. CacheZoom: How SGX Amplifies the Power of Cache Attacks. In 
+
+CHES (Lecture Notes in Computer Science) . Springer, 69–90. [143] Jason Mohoney, Anil Pacaci, Shihabur Rahman Chowdhury, Ali Mousavi, Ihab F. Ilyas, Umar Farooq Minhas, Jeffrey Pound, and Theodoros Rekatsinas. 2023. High-Throughput Vector Similarity Search in Knowledge Graphs. Proc. ACM Manag. Data 1, 2 (2023), 197:1–197:25. [144] Jason Mohoney, Devesh Sarda, Mengze Tang, Shihabur Rahman Chowdhury, Anil Pacaci, Ihab F. Ilyas, Theodoros Rekatsinas, and Shivaram Venkataraman. 2025. Quake: Adaptive Indexing for Vector Search. In OSDI . USENIX Association, 153–169. [145] John X. Morris, Volodymyr Kuleshov, Vitaly Shmatikov, and Alexan-der M. Rush. 2023. Text Embeddings Reveal (Almost) As Much As Text. In EMNLP . Association for Computational Linguistics, 12448–12460. [146] Kit Murdock, David F. Oswald, Flavio D. Garcia, Jo Van Bulck, Daniel Gruss, and Frank Piessens. 2020. Plundervolt: Software-based Fault Injection Attacks against Intel SGX. In SP . IEEE, 1466–1482. [147] Hoda Naghibijouybari, Ajaya Neupane, Zhiyun Qian, and Nael B. Abu-Ghazaleh. 2018. Rendered Insecure: GPU Side Channel Attacks are Practical. In CCS . ACM, 2139–2153. [148] Jiayan Nan, Wenquan Ma, Wenlong Wu, and Yize Chen. 2025. Nemori: Self-Organizing Agent Memory Inspired by Cognitive Science. arXiv preprint arXiv:2508.03341 (2025). [149] Jianyu Niu, Wei Peng, Xiaokuan Zhang, and Yinqian Zhang. 2022. NARRATOR: Secure and Practical State Continuity for Trusted Exe-cution in the Cloud. In CCS . ACM, 2385–2399. [150] NVIDIA. 2025. NVIDIA Secure AI with Blackwell and Hopper GPUs. https://docs.nvidia.com/nvidia-secure-ai-with-blackwell-and-hopper-gpus-whitepaper.pdf .[151] OpenAI. 2024. Memory and New Controls for ChatGPT. https: //openai.com/index/memory-and-new-controls-for-chatgpt/ .[152] OpenAI. 2025. Report on Government Requests for User Data (H1 2025) .Technical Report. https://cdn.openai.com/trust-and-transparency/ report-2025h1-government-requests-for-user-data.pdf 
+
+[153] Rafail Ostrovsky. 1990. Efficient Computation on Oblivious RAMs. In STOC . ACM, 514–523. [154] Rafail Ostrovsky. 1992. Software protection and simulation on oblivious RAMs . Ph. D. Dissertation. Massachusetts Institute of Technology, Cambridge, MA, USA. https://hdl.handle.net/1721.1/103684 
+
+[155] Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir G. Patil, Ion Stoica, and Joseph E. Gonzalez. 2024. MemGPT: Towards LLMs as Operating Systems. arXiv preprint arXiv:2310.08560 (2024). [156] Zhuoshi Pan, Qianhui Wu, Huiqiang Jiang, Xufang Luo, Hao Cheng, Dongsheng Li, Yuqing Yang, Chin-Yew Lin, H. Vicky Zhao, Lili Qiu, and Jianfeng Gao. 2025. SeCom: On Memory Construction and Re-trieval for Personalized Conversational Agents. In ICLR . OpenRe-view.net. [157] Joon Sung Park, Joseph C. O’Brien, Carrie Jun Cai, Meredith Ringel Morris, Percy Liang, and Michael S. Bernstein. 2023. Generative Agents: Interactive Simulacra of Human Behavior. In UIST . ACM, 2:1–2:22. [158] Bryan Parno, Jacob R. Lorch, John R. Douceur, James W. Mickens, and Jonathan M. McCune. 2011. Memoir: Practical State Continuity for Protected Modules. In IEEE Symposium on Security and Privacy .IEEE Computer Society, 379–394. [159] Rafael Pass, Elaine Shi, and Florian Tramèr. 2017. Formal Abstractions for Attested Execution Secure Processors. In EUROCRYPT (1) (Lecture Notes in Computer Science) . 260–289. [160] Liana Patel, Peter Kraft, Carlos Guestrin, and Matei Zaharia. 2024. ACORN: Performant and Predicate-Agnostic Search Over Vector Em-beddings and Structured Data. Proc. ACM Manag. Data 2, 3 (2024), 120. [161] PCI-SIG. 2020. PCIe Base Specification Revision 5.0: Integrity and Data Encryption (IDE) ECN. https://pcisig.com/PCI%20Express/ECN/ Base/IntegrityandDataEncryption .[162] PCI-SIG. 2022. TEE Device Interface Security Protocol (TDISP), Revision 1.0. https://pcisig.com/PCI%20Express/ECN/Base/ TEEDeviceInterfaceSecurityProtocol .[163] Mykhailo Poliakov and Nadiya Shvai. 2024. Multi-Meta-RAG: Im-proving RAG for Multi-Hop Queries using Database Filtering with LLM-Extracted Metadata. arXiv preprint arXiv:2406.13213 (2024). [164] Christian Priebe, Kapil Vaswani, and Manuel Costa. 2018. EnclaveDB: A Secure Database Using SGX. In IEEE Symposium on Security and Privacy . IEEE Computer Society, 264–278. [165] Christine Zhenwei Qiang, Yan Liu, and He Wang. 2024. Who on earth is using generative AI? https://blogs.worldbank.org/en/digital-development/who-on-earth-is-using-generative-ai-.[166] Preston Rasmussen, Pavlo Paliychuk, Travis Beauvais, Jack Ryan, and Daniel Chalef. 2025. Zep: A Temporal Knowledge Graph Architecture for Agent Memory. arXiv preprint arXiv:2501.13956 (2025). [167] Fabian Rauscher, Luca Wilke, Hannes Weissteiner, Thomas Eisen-barth, and Daniel Gruss. 2025. TDXploit: Novel Techniques for Single-Stepping and Cache Attacks on Intel TDX. In USENIX Security Sym-posium . USENIX Association, 1207–1222. [168] Keith Rayner and Charles Clifton. 2009. Language processing in reading and speech perception is fast and incremental: Implications for event-related potential research. Biological Psychology 80, 1 (2009), 4–9. doi: 10.1016/j.biopsycho.2008.05.002 
+
+[169] Anthony Rebello, Yuvraj Patel, Ramnatthan Alagappan, Andrea C. Arpaci-Dusseau, and Remzi H. Arpaci-Dusseau. 2021. Can Applica-tions Recover from fsync Failures? ACM Trans. Storage 17, 2 (2021), 12:1–12:30. doi: 10.1145/3450338 
+
+[170] Reclaim.ai. 2024. Smart Meetings Trends Report (145+ Stats). https: //reclaim.ai/blog/smart-meetings-report .[171] Ling Ren, Christopher W. Fletcher, Albert Kwon, Emil Stefanov, Elaine Shi, Marten van Dijk, and Srinivas Devadas. 2015. Constants Count: Practical Improvements to Oblivious RAM. In USENIX Security Sym-posium . USENIX Association, 415–430. [172] Rust Random Contributors. 2025. rand_chacha: ChaCha random number generator. https://github.com/rust-random/rand .[173] RustCrypto Contributors. 2025. aes-gcm: AES-GCM authenticated encryption. https://github.com/RustCrypto/AEADs/tree/master/aes-gcm .[174] Maya Sappelli, Gabriella Pasi, Suzan Verberne, Maaike de Boer, and Wessel Kraaij. 2016. Assessing e-mail intent and tasks in e-mail messages. Inf. Sci. 358-359 (2016), 1–17. [175] Advait Sarkar, Sean Rintel, Damian Borowiec, Rachel Bergmann, Sharon Gillett, Danielle Bragg, Nancy Baym, and Abigail Sellen. 2021. The promise and peril of parallel chat in video meetings for work. In 
+
+CHI Extended Abstracts . ACM, 260:1–260:8. [176] Parth Sarthi, Salman Abdullah, Aditi Tuli, Shubh Khanna, Anna Goldie, and Christopher D. Manning. 2024. RAPTOR: Recursive Abstractive Processing for Tree-Organized Retrieval. In ICLR . Open-Review.net. [177] Benedict Schlüter, Supraja Sridhara, Andrin Bertschi, and Shweta Shinde. 2024. WeSee: Using Malicious #VC Interrupts to Break AMD SEV-SNP. In SP . IEEE, 4220–4238. [178] Benedict Schlüter, Supraja Sridhara, Mark Kuhne, Andrin Bertschi, and Shweta Shinde. 2024. HECKLER: Breaking Confidential VMs with Malicious Interrupts. In USENIX Security Symposium . USENIX Association. 
+
+> 17
+
+[179] Bianca Schroeder and Garth A. Gibson. 2007. Disk Failures in the Real World: What Does an MTTF of 1, 000, 000 Hours Mean to You?. In FAST . USENIX, 1–16. [180] Seagate Technology. 2020. Rethink Data: Put More of Your Business Data to Work–From Edge to Cloud. 
+
+https://www.seagate.com/files/www-content/our-story/rethink-data/files/Rethink_Data_Report_2020.pdf .[181] Akarsha Sehwag, Dani Mitchell, Gopikrishnan Anilku-mar, Mani Khanuja, and Noor Randhawa. 2025. Amazon Bedrock AgentCore Memory: Building context-aware agents. 
+
+https://aws.amazon.com/blogs/machine-learning/amazon-bedrock-agentcore-memory-building-context-aware-agents/ .[182] Youren Shen, Hongliang Tian, Yu Chen, Kang Chen, Runji Wang, Yi Xu, Yubin Xia, and Shoumeng Yan. 2020. Occlum: Secure and Efficient Multitasking Inside a Single Enclave of Intel SGX. In ASPLOS . ACM, 955–970. [183] Faysal Hossain Shezan, Hang Hu, Jiamin Wang, Gang Wang, and Yuan Tian. 2020. Read Between the Lines: An Empirical Measurement of Sensitive Applications of Voice Personal Assistant Systems. In WWW .ACM / IW3C2, 1006–1017. [184] Elaine Shi, T.-H. Hubert Chan, Emil Stefanov, and Mingfei Li. 2011. Oblivious RAM with O((logN)3) Worst-Case Cost. In ASIACRYPT (Lecture Notes in Computer Science) . Springer, 197–214. [185] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023. Reflexion: language agents with verbal reinforcement learning. In NeurIPS .[186] Aditi Singh, Suhas Jayaram Subramanya, Ravishankar Krishnaswamy, and Harsha Vardhan Simhadri. 2021. FreshDiskANN: A Fast and Accurate Graph-Based ANN Index for Streaming Similarity Search. 
+
+arXiv preprint arXiv:2105.09613 (2021). [187] Marita Skjuve, Asbjørn Følstad, and Petter Bae Brandtzæg. 2023. A Longitudinal Study of Self-Disclosure in Human-Chatbot Relation-ships. Interact. Comput. 35, 1 (2023), 24–39. [188] Aaron Smith. 2011. How Americans Use Text Messaging. 
+
+https://www.pewresearch.org/internet/2011/09/19/how-americans-use-text-messaging/ . Pew Research Center.. [189] Brian Smith. 2025. ring: Safe, fast, small crypto using Rust. https: //github.com/briansmith/ring .[190] Mahdi Soleimani, Grace Jia, and Anurag Khandelwal. 2025. Weave: Ef-ficient and Expressive Oblivious Analytics at Scale. In OSDI . USENIX Association, 939–955. [191] Hadeel Soliman, Lingfei Zhao, Zhipeng Huang, Subhadeep Paul, and Kevin S. Xu. 2022. The Multivariate Community Hawkes Model for Dependent Relational Events in Continuous-time Networks. In ICML (Proceedings of Machine Learning Research) . PMLR, 20329–20346. [192] Congzheng Song and Ananth Raghunathan. 2020. Information Leak-age in Embedding Models. In CCS . ACM, 377–390. [193] Stanford Institute for Human-Centered AI. 2025. The 2025 AI Index Report. https://hai.stanford.edu/ai-index/2025-ai-index-report .[194] Emil Stefanov, Marten van Dijk, Elaine Shi, T.-H. Hubert Chan, Christopher W. Fletcher, Ling Ren, Xiangyao Yu, and Srinivas De-vadas. 2018. Path ORAM: An Extremely Simple Oblivious RAM Protocol. J. ACM 65, 4 (2018), 18:1–18:26. doi: 10.1145/3177872 
+
+[195] Miao Su, Yucan Guo, Zhongni Hou, Long Bai, Zixuan Li, Yufei Zhang, Guojun Yin, Wei Lin, Xiaolong Jin, Jiafeng Guo, et al . 2026. Beyond Dialogue Time: Temporal Semantic Memory for Personalized LLM Agents. arXiv preprint arXiv:2601.07468 (2026). [196] Suhas Jayaram Subramanya, Devvrit, Harsha Vardhan Simhadri, Rav-ishankar Krishnaswamy, and Rohan Kadekodi. 2019. DiskANN: Fast Accurate Billion-point Nearest Neighbor Search on a Single Node. In 
+
+NeurIPS . 13748–13758. [197] Juntao Tan, Liangwei Yang, Zuxin Liu, Zhiwei Liu, Rithesh R. N., Tulika Manoj Awalgaonkar, Jianguo Zhang, Weiran Yao, Ming Zhu, Shirley Kokane, Silvio Savarese, Huan Wang, Caiming Xiong, and Shelby Heinecke. 2025. PersonaBench: Evaluating AI Models on Understanding Personal Information through Accessing (Synthetic) Private User Data. In ACL (Findings) (Findings of ACL) . Association for Computational Linguistics, 878–893. [198] Wang-Chiew Tan, Jane Dwivedi-Yu, Yuliang Li, Lambert Mathias, Marzieh Saeidi, Jing Nathan Yan, and Alon Y. Halevy. 2023. Time-lineQA: A Benchmark for Question Answering over Timelines. In 
+
+ACL (Findings) (Findings of ACL) . Association for Computational Linguistics, 77–91. [199] Xingyu Tan, Xiaoyang Wang, Qing Liu, Xiwei Xu, Xin Yuan, Liming Zhu, and Wenjie Zhang. 2026. PrivGemo: Privacy-Preserving Dual-Tower Graph Retrieval for Empowering LLM Reasoning with Memory Augmentation. arXiv preprint arXiv:2601.08739 (2026). [200] Zhen Tan, Jun Yan, I-Hung Hsu, Rujun Han, Zifeng Wang, Long T. Le, Yiwen Song, Yanfei Chen, Hamid Palangi, George Lee, Anand Rajan Iyer, Tianlong Chen, Huan Liu, Chen-Yu Lee, and Tomas Pfister. 2025. In Prospect and Retrospect: Reflective Memory Management for Long-term Personalized Dialogue Agents. In ACL (1) . Association for Computational Linguistics, 8416–8439. [201] TechCrunch. 2026. Meta plans to add facial recognition to its smart glasses, report claims. https://techcrunch.com/2026/02/13/meta-plans-to-add-facial-recognition-to-its-smart-glasses-report-claims/ .[202] The Linux Kernel Documentation. 2026. Intel Trust Domain Exten-sions (TDX). https://www.kernel.org/doc/html/next/x86/tdx.html .[203] Tinfoil Inc. 2026. Confidential Model Router. https://github.com/ tinfoilsh/confidential-model-router .[204] Tinfoil Inc. 2026. Confidential VM Image. https://github.com/ tinfoilsh/cvmimage .[205] Tinfoil Inc. 2026. A Primer on Secure Enclaves. https://docs.tinfoil. sh/verification/secure-enclave-primer .[206] Tinfoil Inc. 2026. Proving Model Identity. https://tinfoil.sh/blog/2026-02-03-proving-model-identity .[207] Tinfoil Inc. 2026. tfshim : Attestation Proxy. https://github.com/ tinfoilsh/tfshim .[208] Tinfoil Inc. 2026. Tinfoil Attestation Verification. https://docs.tinfoil. sh/verification/how-to-verify .[209] Tinfoil Inc. 2026. Tinfoil Containers. https://docs.tinfoil.sh/ containers/overview .[210] Tinfoil Inc. 2026. Tinfoil Containers. https://tinfoil.sh/containers .[211] Tinfoil Inc. 2026. Tinfoil GPT-OSS 120B Model Page. https://tinfoil. sh/models/gpt-oss-120b .[212] Tinfoil Inc. 2026. Tinfoil Nomic Embed Text Model Page. https: //tinfoil.sh/models/nomic-embed-text .[213] Tinfoil Inc. 2026. Tinfoil SDK. https://github.com/tinfoilsh/tinfoil-python .[214] Tinfoil Inc. 2026. Tinfoil: Verifiably Private AI Powered by Secure Enclaves. https://tinfoil.sh/ .[215] Tinfoil Inc. 2026. What About Side-Channels? https://tinfoil.sh/blog/ 2025-05-15-side-channels .[216] Afonso Tinoco, Sixiang Gao, and Elaine Shi. 2023. EnigMap: External-Memory Oblivious Map for Secure Enclaves. In USENIX Security Symposium . USENIX Association, 4033–4050. [217] Quang-Linh Tran, Binh Nguyen, Gareth J. F. Jones, and Cathal Gurrin. 2025. OpenLifelogQA: An Open-Ended Multi-Modal Lifelog Question-Answering Dataset. arXiv preprint arXiv:2508.03583 (2025). [218] Harsh Trivedi, Tushar Khot, Mareike Hartmann, Ruskin Manku, Vinty Dong, Edward Li, Shashank Gupta, Ashish Sabharwal, and Niranjan Balasubramanian. 2024. AppWorld: A Controllable World of Apps and People for Benchmarking Interactive Coding Agents. In ACL (1) .Association for Computational Linguistics, 16022–16076. [219] Stephan van Schaik, Marina Minkin, Andrew Kwong, Daniel Genkin, and Yuval Yarom. 2021. CacheOut: Leaking Data on Intel CPUs via Cache Evictions. In SP . IEEE, 339–354. 
+
+> 18
+
+[220] Stephan van Schaik, Alexander Seto, Thomas Yurek, Adam Batori, Bader AlBassam, Daniel Genkin, Andrew Miller, Eyal Ronen, Yuval Yarom, and Christina Garman. 2024. SoK: SGX.Fail: How Stuff Gets eXposed. In SP . IEEE, 4143–4162. [221] Daan Vanoverloop, Andrés Sánchez, Flavio Toffalini, Frank Piessens, Mathias Payer, and Jo Van Bulck. 2025. TLBlur: Compiler-Assisted Automated Hardening against Controlled Channels on Off-the-Shelf Intel SGX Platforms. In USENIX Security Symposium . USENIX Associ-ation, 1167–1186. [222] Dakuo Wang, Haoyu Wang, Mo Yu, Zahra Ashktorab, and Ming Tan. 2022. Group Chat Ecology in Enterprise Instant Messaging: How Employees Collaborate Through Multi-User Chat Channels on Slack. 
+
+Proc. ACM Hum. Comput. Interact. 6, CSCW1 (2022), 94:1–94:14. [223] Guanzhi Wang, Yuqi Xie, Yunfan Jiang, Ajay Mandlekar, Chaowei Xiao, Yuke Zhu, Linxi Fan, and Anima Anandkumar. 2023. Voyager: An Open-Ended Embodied Agent with Large Language Models. arXiv preprint arXiv:2305.16291 (2023). [224] Jianguo Wang, Xiaomeng Yi, Rentong Guo, Hai Jin, Peng Xu, Shengjun Li, Xiangyu Wang, Xiangzhou Guo, Chengming Li, Xi-aohai Xu, Kun Yu, Yuxing Yuan, Yinghao Zou, Jiquan Long, Yudong Cai, Zhenxiang Li, Zhifeng Zhang, Yihua Mo, Jun Gu, Ruiyi Jiang, Yi Wei, and Charles Xie. 2021. Milvus: A Purpose-Built Vector Data Management System. In SIGMOD Conference . ACM, 2614–2627. [225] Mengzhao Wang, Lingwei Lv, Xiaoliang Xu, Yuxiang Wang, Qiang Yue, and Jiongkang Ni. 2023. An Efficient and Robust Framework for Approximate Nearest Neighbor Search with Attribute Constraint. In 
+
+NeurIPS .[226] Minjia Wang, Yunfeng Wang, Xiao Ma, Dexin Lv, Qifan Guo, Lynn Zheng, Benliang Wang, Lei Wang, Jiannan Li, Yongwei Xing, David Xu, and Zheng Sun. 2026. PersonaTrace: Synthesizing Realistic Digital Footprints with LLM Agents. arXiv preprint arXiv:2603.11955 (2026). [227] Weixuan Wang, Dongge Han, Daniel Madrigal Diaz, Jin Xu, Victor Rühle, and Saravan Rajmohan. 2025. OdysseyBench: Evaluating LLM Agents on Long-Horizon Complex Office Application Workflows. 
+
+arXiv preprint arXiv:2508.09124 (2025). [228] Xiaohua Wang, Zhenghua Wang, Xuan Gao, Feiran Zhang, Yixin Wu, Zhibo Xu, Tianyuan Shi, Zhengyuan Wang, Shizheng Li, Qi Qian, Ruicheng Yin, Changze Lv, Xiaoqing Zheng, and Xuanjing Huang. 2024. Searching for Best Practices in Retrieval-Augmented Generation. In EMNLP . Association for Computational Linguistics, 17716–17736. [229] Zheng Wang, Zhongyang Li, Zeren Jiang, Dandan Tu, and Wei Shi. 2024. Crafting Personalized Agents through Retrieval-Augmented Generation on Editable Memory Graphs. In EMNLP . Association for Computational Linguistics, 4891–4906. [230] Zhanbo Wang, Jiaxin Zhan, Xuhua Ding, Fengwei Zhang, and Ning Hu. 2025. TETD: Trusted Execution in Trust Domains. In USENIX Security Symposium . USENIX Association, 1187–1206. [231] Zora Zhiruo Wang, Jiayuan Mao, Daniel Fried, and Graham Neubig. 2025. Agent Workflow Memory. In ICML (Proceedings of Machine Learning Research) . PMLR / OpenReview.net. [232] Chuangxian Wei, Bin Wu, Sheng Wang, Renjie Lou, Chaoqun Zhan, Feifei Li, and Yuanzhe Cai. 2020. AnalyticDB-V: A Hybrid Analytical Engine Towards Query Fusion for Structured and Unstructured Data. 
+
+Proc. VLDB Endow. 13, 12 (2020), 3152–3165. [233] Hannes Weissteiner, Fabian Rauscher, Robin Leander Schröder, Jonas Juffinger, Stefan Gast, Jan Wichelmann, Thomas Eisenbarth, and Daniel Gruss. 2025. TEEcorrelate: An Information-Preserving De-fense against Performance-Counter Attacks on TEEs. In USENIX Security Symposium . USENIX Association, 2481–2498. [234] Ladd Wheeler and John Nezlek. 1977. Sex differences in social par-ticipation. Journal of Personality and Social Psychology 35, 10 (1977), 742–754. doi: 10.1037/0022-3514.35.10.742 
+
+[235] Steve Whittaker, Tara Matthews, Julian A. Cerruti, Hernan Badenes, and John C. Tang. 2011. Am I wasting my time organizing email?: a study of email refinding. In CHI . ACM, 3449–3458. [236] Luca Wilke, Florian Sieck, and Thomas Eisenbarth. 2024. TDXdown: Single-Stepping and Instruction Counting Attacks against Intel TDX. In CCS . ACM, 79–93. [237] Luca Wilke, Jan Wichelmann, Anja Rabich, and Thomas Eisenbarth. 2024. SEV-Step A Single-Stepping Framework for AMD-SEV. IACR Trans. Cryptogr. Hardw. Embed. Syst. 2024, 1 (2024), 180–206. [238] David Isaac Wolinsky, Ewa Syta, and Bryan Ford. 2013. Hang with your buddies to resist intersection attacks. In CCS . ACM, 1153–1166. [239] Mary Woodcock. 2026. Your Documents Unlock AI Corporate Memory Power. https://www.celiveo.com/blog/ai-document-management-the-important-employee-documents-to-capture-for-competitive-advantage-in-2026/ .[240] Josh Woodward. 2026. Gemini introduces Personal Intelli-gence. https://blog.google/innovation-and-ai/products/gemini-app/ personal-intelligence/ .[241] Di Wu, Hongwei Wang, Wenhao Yu, Yuwei Zhang, Kai-Wei Chang, and Dong Yu. 2025. LongMemEval: Benchmarking Chat Assistants on Long-Term Interactive Memory. In ICLR . OpenReview.net. [242] Wei Wu, Junlin He, Yu Qiao, Guoheng Fu, Li Liu, and Jin Yu. 2022. HQANN: Efficient and Robust Similarity Search for Hybrid Queries with Structured and Unstructured Constraints. In CIKM . ACM, 4580– 4584. [243] Yaxiong Wu, Yongyue Zhang, Sheng Liang, and Yong Liu. 2025. SG-Mem: Sentence Graph Memory for Long-Term Conversational Agents. 
+
+arXiv preprint arXiv:2509.21212 (2025). [244] Julia Wunder, Rick Wash, Karen Renaud, Daniela A Oliveira, and Zinaida Benenson. 2025. Achieving Resilience: Data Loss and Recov-ery on Devices for Personal Use in Three Countries. In CHI . ACM, 830:1–830:26. [245] Zidi Xiu, David Q. Sun, Kevin Cheng, Maitrik Patel, Josh Date, Yizhe Zhang, Jiarui Lu, Omar Attia, Raviteja Vemulapalli, Oncel Tuzel, Meng Cao, and Samy Bengio. 2026. ASTRA-bench: Evaluating Tool-Use Agent Reasoning and Action Planning with Personal User Context. 
+
+arXiv preprint arXiv:2603.01357 (2026). [246] Jing Xu, Arthur Szlam, and Jason Weston. 2022. Beyond Goldfish Memory: Long-Term Open-Domain Conversation. In ACL (1) . Asso-ciation for Computational Linguistics, 5180–5197. [247] Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and Yongfeng Zhang. 2025. A-MEM: Agentic Memory for LLM Agents. 
+
+arXiv preprint arXiv:2502.12110 (2025). [248] Xuhai Xu, Ahmed Hassan Awadallah, Susan T. Dumais, Farheen Omar, Bogdan Popp, Robert Rounthwaite, and Farnaz Jahanbakhsh. 2020. Understanding User Behavior For Document Recommendation. In WWW . ACM / IW3C2, 3012–3018. [249] Xiaoliang Xu, Chang Li, Yuxiang Wang, and Yixing Xia. 2020. Multi-attribute approximate nearest neighbor search based on navigable small world graph. Concurr. Comput. Pract. Exp. 32, 24 (2020). [250] Yuanzhong Xu, Weidong Cui, and Marcus Peinado. 2015. Controlled-Channel Attacks: Deterministic Side Channels for Untrusted Op-erating Systems. In IEEE Symposium on Security and Privacy . IEEE Computer Society, 640–656. [251] Yuexuan Xu, Jianyang Gao, Yutong Gou, Cheng Long, and Christian S. Jensen. 2024. iRangeGraph: Improvising Range-dedicated Graphs for Range-filtering Nearest Neighbor Search. Proc. ACM Manag. Data 2, 6 (2024), 239:1–239:26. [252] Yuming Xu, Hengyu Liang, Jin Li, Shuotao Xu, Qi Chen, Qianxi Zhang, Cheng Li, Ziyue Yang, Fan Yang, Yuqing Yang, Peng Cheng, and Mao Yang. 2023. SPFresh: Incremental In-Place Update for Billion-Scale Vector Search. In SOSP . ACM, 545–561. [253] Jay Yagnik. 2025. Private AI Compute: our next step in build-ing private and helpful AI. https://blog.google/innovation-and-
+
+> 19
+
+ai/products/google-private-ai-compute/ .[254] Yuqin Yan, Wei Huang, Ilya Grishchenko, Gururaj Saileshwar, Aastha Mehta, and David Lie. 2025. Relocate-Vote: Using Sparsity Informa-tion to Exploit Ciphertext Side-Channels. In USENIX Security Sympo-sium . USENIX Association, 5699–5717. [255] Yueru Yan, Tuc Nguyen, Bo Su, Melissa Lieffers, and Thai Le. 2026. ShareChat: A Dataset of Chatbot Conversations in the Wild. arXiv preprint arXiv:2512.17843 (2026). [256] Wen Yang, Tao Li, Gai Fang, and Hong Wei. 2020. PASE: PostgreSQL Ultra-High-Dimensional Approximate Nearest Neighbor Search Ex-tension. In SIGMOD Conference . ACM, 2241–2253. [257] Ruifeng Yuan, Shichao Sun, Yongqi Li, Zili Wang, Ziqiang Cao, and Wenjie Li. 2025. Personalized Large Language Model Assistant with Evolving Conditional Memory. In COLING . Association for Compu-tational Linguistics, 3764–3777. [258] Ye Yuan, Nathalie Riche, Nicolai Marquardt, Molly Jane Nicholas, Teddy Seyed, Hugo Romat, Bongshin Lee, Michel Pahud, Jonathan Goldstein, Rojin Vishkaie, Christian Holz, and Ken Hinckley. 2022. Understanding Multi-Device Usage Patterns: Physical Device Config-urations and Fragmented Workflows. In CHI . ACM, 64:1–64:22. [259] Qianxi Zhang, Shuotao Xu, Qi Chen, Guoxin Sui, Jiadong Xie, Zhizhen Cai, Yaoqi Chen, Yinxuan He, Yuqing Yang, Fan Yang, Mao Yang, and Lidong Zhou. 2023. VBASE: Unifying Online Vector Similarity Search and Relational Queries via Relaxed Monotonicity. In OSDI . USENIX Association, 377–395. [260] Tao Zhang, Aviad Zuck, Donald E. Porter, and Dan Tsafrir. 2019. Apps Can Quickly Destroy Your Mobile’s Flash: Why They Don’t, and How to Keep It That Way. In MobiSys . ACM, 207–221. [261] Zhenkai Zhang, Kunbei Cai, Yanan Guo, Fan Yao, and Xing Gao. 2024. Invalidate+Compare: A Timer-Free GPU Cache Attack Primitive. In 
+
+USENIX Security Symposium . USENIX Association. [262] Zeyu Zhang, Quanyu Dai, Luyu Chen, Zeren Jiang, Rui Li, Jieming Zhu, Xu Chen, Yi Xie, Zhenhua Dong, and Ji-Rong Wen. 2024. Mem-Sim: A Bayesian Simulator for Evaluating Memory of LLM-based Personal Assistants. arXiv preprint arXiv:2409.20163 (2024). [263] Weijie Zhao, Shulong Tan, and Ping Li. 2022. Constrained ap-proximate similarity search on proximity graph. arXiv preprint arXiv:2210.14958 (2022). [264] Yujie Zhao, Boqin Yuan, Junbo Huang, Haocheng Yuan, Zhongming Yu, Haozhou Xu, Lanxiang Hu, Abhilash Shankarampeta, Zimeng Huang, Wentao Ni, Yuandong Tian, and Jishen Zhao. 2026. AMA-Bench: Evaluating Long-Horizon Memory for Agentic Applications. 
+
+arXiv preprint arXiv:2602.22769 (2026). [265] Shurui Zhong, Dingheng Mo, and Siqiang Luo. 2025. LSM-VEC: A Large-Scale Disk-Based System for Dynamic Vector Search. arXiv preprint arXiv:2505.17152 (2025). [266] Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and Yanlin Wang. 2024. MemoryBank: Enhancing Large Language Models with Long-Term Memory. In AAAI . AAAI Press, 19724–19731. [267] Daniel Xiaodan Zhou, Lan Liu, Anmol Anubhai, Maansi Shandilya, Steph Sigalas, William Yang Wang, and Zhiheng Huang. 2023. Beyond Accurate Answers: Evaluating Open-Domain Question Answering in Enterprise Search. In CHIIR . ACM, 308–312. [268] Mingxun Zhou, Elaine Shi, and Giulia Fanti. 2025. Pacmann: Efficient Private Approximate Nearest Neighbor Search. In ICLR . OpenRe-view.net. [269] Xing Zhou, Dmitrii Ustiugov, Haoxin Shang, and Kisson Lin. 2026. MemTrust: A Zero-Trust Architecture for Unified AI Memory System. 
+
+arXiv preprint arXiv:2601.07004 (2026). [270] Zijian Zhou, Ao Qu, Zhaoxuan Wu, Sunghwan Kim, Alok Prakash, Daniela Rus, Jinhua Zhao, Bryan Kian Hsiang Low, and Paul Pu Liang. 2025. MEM1: Learning to Synergize Memory and Reasoning for Efficient Long-Horizon Agents. arXiv preprint arXiv:2506.15841 
+
+(2025). [271] Jinhao Zhu, Liana Patel, Matei Zaharia, and Raluca Ada Popa. 2025. Compass: Encrypted Semantic Search with High Accuracy. In OSDI .USENIX Association, 915–938. [272] Chaoji Zuo, Miao Qiao, Wenchao Zhou, Feifei Li, and Dong Deng. 2024. SeRF: Segment Graph for Range-Filtering Approximate Nearest Neighbor Search. Proc. ACM Manag. Data 2, 1 (2024), 69:1–69:26. 
+
+## A Security Proof 
+
+We prove the security theorem (Theorem 1 in the main pa-per) in the Gatt -hybrid model (§2.2 of the main paper), where each enclave is a stateful black box whose internal state is hidden from the adversary, which sees only I/O cross-ing enclave boundaries. It remains to characterize the extra inter-enclave call trace, show that Dream () adds no extra I/O, and prove checkpoint-relative freshness of the eviction-triggered persisted recovery state. As in prior work [ 271 , §B and §C], we assume no ORAM stash overflow during execu-tion. We rely on Compass’s batched-access ORAM proof for two guarantees. First, ORAM executions with the same pub-lic trace structure are computationally indistinguishable [ 271 ,Thm. 1; Supp. Lemma 4]. Second, tampering with Merkle-authenticated ORAM storage is detected except with negli-gible probability [271, Thm. 1; Supp. Lemma 5]. For request 𝑞 𝑖,𝑏 , let T𝑖,𝑏 denote the observable trace : the ordered sequence of events visible to the adversary during execution. There are two event types: 
+
+• tcall : one fixed-size inter-enclave call, consisting of a padded encrypted request and padded encrypted response on an authenticated encrypted channel. 
+
+• toram (𝑠, ORAM 𝑋 ): one batched ORAM access of public batch size 𝑠 to store ORAM 𝑋 .All enclave-internal computation, including KG traversal, ANN scoring, reranking, stash manipulation, and Dream () 
+
+processing, produces no externally visible event unless it triggers one of the two event types above. 
+
+Definition A.1 (Structural equivalence) . Two traces T and 
+
+T ′ are structurally equivalent , written T ≡ s T ′, if: 1. they have the same number of events; 2. each position has the same event type; and 3. whenever the event at a position is toram , both traces access the same ORAM store with the same public batch size. 
+
+A.1 Condition 1: Indistinguishability Lemma A.2 (Dreaming preserves the enclosing trace) . The 
+
+Dream () callback preserves the observable trace of the enclos-ing ORAM operation. Proof. Dream () runs entirely inside Enclave Opal during an enclosing ORAM access. It acts only on blocks already resi-dent in enclave memory and on enclave-resident metadata. Its updates include deleting expired items and performing maintenance such as sleepy reassignment. The TTL thresh-old used for expiry is a deterministic function of public quan-tities (§3.3 of the main paper). Expiry can cross an item off the 
+
+> 20
+
+enclave-resident position map and, if the item is already ma-terialized by the enclosing access, nullify it before write-back. None of these steps triggers an extra ORAM access or inter-enclave call, or changes the store, path, or public batch size of the enclosing ORAM operation. Therefore the enclosing access contributes the same single event toram (𝑠, ORAM 𝑋 )
+
+as before, so the observable trace is unchanged. □
+
+Lemma A.3 (Request trace structure) . For any admissible request pair 𝑞 𝑖, 0 and 𝑞 𝑖, 1 with L( 𝑞 𝑖, 0) = L( 𝑞 𝑖, 1), the traces satisfy T𝑖, 0 ≡s T𝑖, 1.Proof. Equal leakage fixes the request type, so it suffices to consider the Query and Ingest cases separately. If the pair is Query , only Enclave LLM .Traverse , Enclave Emb .
+
+Embed , and Enclave LLM .Synthesize cross enclave bound-aries, yielding three tcall events. The retrieval phases con-tribute one toram (𝑛, ORAM ANN ) event and one toram (𝐾, 
+
+ORAM Data ) event, where 𝑛, 𝐾 ∈ Π. By Lemma A.2, Dream () 
+
+adds no event. Hence every Query trace has the same public structure, determined only by Π.If the pair is Ingest , the base path yields one tcall , one 
+
+toram (1, ORAM ANN ), and one toram (1, ORAM Data ). At public summarization boundaries, determined by the public pe-riod 𝑇 ∈ Π and the observed request index, the trace appends one tcall to Enclave LLM .Summarize and one recursive copy of the same base trace. Hence every Ingest trace again has public structure determined only by public quantities. Therefore T𝑖, 0 ≡s T𝑖, 1. □
+
+Proof of Condition 1. Fix a PPT adversary A and let 𝑚 be the polynomially bounded number of requests. By Lemma A.3, every admissible request pair yields structurally equivalent traces. Condition on any fixed admissible step. For each toram (𝑠, 
+
+ORAM 𝑋 ) event, the imported Compass batched-access ORAM result ( 271 , Thm. 1; Supp. Lemma 4) gives computa-tional indistinguishability because the store and public batch size match. For each tcall event, the authenticated encrypted channel assumption hides the payload and reveals only that one fixed-size inter-enclave exchange occurred. Thus the entire step is computationally indistinguishable across the two worlds. Use the standard adaptive sequential hybrid. Let 𝐻 ℓ (0 ≤
+
+ℓ ≤ 𝑚 ) be the experiment in which the first ℓ admissible requests are answered in world 1 and the remaining requests in world 0. Then 𝐻 0 is the game with 𝑏 = 0 and 𝐻 𝑚 is the game with 𝑏 = 1.For adjacent hybrids 𝐻 ℓ and 𝐻 ℓ+1, the common prefix through step ℓ induces the same distribution over the next admissible request pair. Applying the fixed-step argument above at step ℓ+1 gives |𝐻 ℓ −𝐻 ℓ+1 | ≤ negl (𝜆 ). Summing over the polynomially many steps yields 
+
+Pr [𝑏 ′ = 𝑏 ] − 12 ≤ 𝑚 · negl (𝜆 ) = negl (𝜆 ). □
+
+A.2 Condition 2: Integrity and Freshness Lemma A.4 (Integrity) . Assuming the theorem hypotheses, the probability that the adversary causes the challenger to accept tampered persisted state is negl (𝜆 ).Proof. As in §3.4 of the main paper, let 𝑅 denote the MAC-protected rollback record authenticating ctr and both ORAM roots, and let 𝐶 denote the AEAD-sealed client checkpoint. Persisted state consists of three authenticated objects: the two ORAM trees, the rollback record 𝑅 , and the sealed client checkpoint 𝐶 .For ORAM ANN and ORAM Data , the Compass ORAM in-tegrity result ( 271 , Thm. 1; Supp. Lemma 5) detects tampering except with negligible probability. For 𝑅 , any accepted modi-fication requires forging the MAC on its canonically encoded tuple under 𝑘 mac . For 𝐶 , any accepted modification requires breaking the authenticity of the AEAD under 𝑘 enc .Therefore any accepted tampering of persisted state im-plies either a failure of the imported Compass batched-access ORAM integrity result on one of the ORAM trees, a MAC forgery on 𝑅 , or an AEAD forgery on 𝐶 . By the theorem hypotheses and a union bound over polynomially many op-erations, this occurs with probability at most negl (𝜆 ). □
+
+Lemma A.5 (Checkpoint-relative freshness) . Assuming the theorem hypotheses, the probability that the adversary causes the challenger to accept a replayed client request, stale ORAM-backed storage for the current request, or stale recovered state beyond the permitted checkpoint boundary is negl (𝜆 ).Proof. Let 𝜅 𝑖 ≤ 𝑖 denote the latest request index whose client state has been checkpointed for the logical client by step 𝑖 
+
+under the provider’s residency and checkpoint policy; in the security game, 𝜅 𝑖 is an exogenous public schedule, indepen-dent of user communication patterns and fixed across the two worlds. Because client state is checkpointed only when 
+
+𝜅 𝑖 advances, recovery after request 𝑖 may revert to the latest authenticated checkpoint at 𝜅 𝑖 by design. In normal execution, the enclave accepts a client request only if its counter ctr is strictly larger than the last accepted value. Therefore any replayed client request with a non-increasing counter is rejected. For the ORAM-backed storage path, the MAC in 𝑅 authen-ticates the current counter ctr together with the expected ORAM roots. Therefore any accepted stale storage for the current request implies either acceptance of a stale counter, a failure of the imported Compass batched-access ORAM integrity result on one of the ORAM trees, or a MAC forgery on 𝑅 . The first case is impossible by the monotonic counter check, and the latter two occur with probability at most 
+
+negl (𝜆 ).For recovery after request 𝑖 , any accepted recovered bun-dle must verify 𝑅 and 𝐶 and use ORAM roots accepted by Lemma A.4. Therefore the only permitted rollback is to the 
+
+> 21
+
+latest authenticated checkpoint at 𝜅 𝑖 . Outside that bound-ary, stale or unauthenticated recovery succeeds only with 
+
+negl (𝜆 ). □
+
+Proof of Condition 2. In the Gatt -hybrid model, any accepted incorrect execution must come from one of three sources: accepted tampering of persisted state, acceptance of a re-played client request or stale ORAM-backed storage for the current request, or recovery beyond the permitted check-point boundary at 𝜅 𝑖 . Lemma A.4 rules out the first except with negl (𝜆 ), and Lemma A.5 rules out the second and third except with negl (𝜆 ), subject only to the intended rollback boundary at 𝜅 𝑖 for sealed client state. Therefore Condition 2 holds except with negl (𝜆 ). □
+
+## B Synthetic Data Pipeline Details 
+
+B.1 Hawkes Process Parameterization 
+
+The conditional intensity of modality 𝑚 at time 𝑡 is: 
+
+𝜆 𝑚 (𝑡 | H 𝑡 ) = 1𝛾 𝑠 (𝑡 ) 
+
+> 𝑚
+
+> 0 
+
+𝛾 𝑠 (𝑡 ) 
+
+> 𝑚
+
+𝜇 𝑚 
+
++∑︁  
+
+> 𝑚 ′∈ M
+
+∑︁ 𝑡 𝑖 <𝑡 𝑚 𝑖 =𝑚 ′
+
+𝜙 𝑚 ′→𝑚 (𝑡 − 𝑡 𝑖 )
+
+
+
+, (1) where 𝛾 𝑠 (𝑡 ) 
+
+> 𝑚
+
+is the life-state multiplier for modality 𝑚 in state 𝑠 (𝑡 ) (calibrated so that the schedule-averaged mod-ulation is approximately neutral), 𝜇 𝑚 is the baseline rate, and 
+
+𝜙 𝑚 ′→𝑚 (𝑢 ) = 𝛼 𝑚 ′→𝑚 𝛽 𝑚 𝑒 −𝛽 𝑚 𝑢 1[𝑢 > 0]
+
+is the excitation kernel with branching ratio 𝛼 𝑚 ′→𝑚 and destination-specific decay rate 𝛽 𝑚 . The decay rate is chosen to be destination-specific rather than source-specific. Off-spring arrive at the natural pace of the destination modality regardless of what triggered them (e.g., a meeting-triggered email arrives at email pace), better reflecting how quickly each modality is acted upon in practice. The exponential kernel is chosen over other alternatives as it admits an 𝑂 (1)
+
+recursive update and produces interpretable branching ra-tios, though it captures only a single response timescale per modality. The 6 × 6 branching matrix is sparse by design: document, query, and ambient modalities act as pure sinks ( 𝛼 𝑑 →𝑚 =
+
+𝛼 𝑞 →𝑚 = 𝛼 amb →𝑚 = 0 for all 𝑚 ). Self-excitation parameters are empirically grounded: 𝛼 𝑒 →𝑒 = 0.40 is derived from the Enron corpus reply rate [ 73 ], adjusted downward for the representativeness gap between intra-enterprise email and a full mixed inbox, and further constrained by the endoge-nous budget reserved for meeting- and message-triggered email. 𝛼 msg →msg = 0.60 is set below the value of 0.70 derived from observed messaging thread lengths [ 222 ], reserving endogenous budget for cross-modal paths. 
+
+B.2 Recency-Weighted Question Sampling 
+
+For question sampling, artifact selection is weighted by a two-phase recency boost 𝑤 (𝑡 ) = 𝐶 1𝑒 −𝜈𝑡 + 𝐶 2 (𝑡 +1)−𝛿 , com-bining a fast exponential component for short-term recency and a slower power-law tail for long-term access. The func-tional form is motivated by empirical observations: personal information access distributions show a steep recency con-centration (6.6% same-day, 21.9% within a week, 45.9% within a month) that a single power law cannot reproduce [ 66 ], and collective memory of significant events follows the same two-phase decay, transitioning from exponential to power-law decay around 10 days after an event [ 92 ]. Parameters are fitted to closely match the empirical bucket distribution [ 66 ]: 
+
+𝐶 1 = 1.45 , 𝜈 = 0.20 , 𝐶 2 = 1.0, 𝛿 = 0.68 .
+
+> 22
+
+Research Finding How Used 
+
+Email 
+
+Mean reply rate of 45.6% across Enron email corpus [73] Email self-excitation set to 0.40, adjusted down from 0.45 for inbox noise absent in Enron and cross-modal budget reserved for meeting- and message-triggered emails Reply time distribution: median 47 min, mean 1157 min [107] Email triggering influence decays with 47-minute half-life 
+
+∼50% of corporate emails contain no actionable task [174] 60% of emails treated as noise 8.4% of institutional emails are organizational bulk emails [62] 15% of noise emails are organizational bulk emails such as newsletters 
+
+∼15% of Enron emails classified as gossip [141] 25% of noise emails are gossip Enron corpus includes greeting/social email category [174] 15% of noise emails are short messages and greetings 
+
+Documents 
+
+68% of enterprise data is never actively used after creation [180] 70% of documents treated as noise 12-27 important documents per day for operational roles [239] 12 signal documents targeted per day 
+
+Queries 
+
+Enterprise intranet: 90K-120K queries from 18K-24K users on a typical day [267] ∼4 queries per person per workday used as the daily query target 
+
+Messages 
+
+Mean 41.5 personal messages per day (2011) [188] ∼85 personal messages per day after upward adjustment for smartphone era Average worker receives 153 Teams messages per workday [137] Used as the baseline for workplace received messages per day Average worker sends 92 Slack messages per day [111] Used as the baseline for workplace sent messages; combined with received messages from Teams data brings total workplace volume to 245/day Project channels average 16.4 words per message; IT support 23.0 words [222] 20 words targeted per message in generation Project threads: 𝑆 =2.0; IT support threads: 𝑆 =4.1 messages per thread [222] Message self-excitation branching ratio derived from observed thread sizes, adjusted down to reserve budget for meeting- and email-triggered messages 
+
+Meetings 
+
+17.1 meetings/week; 27.3% unplanned and spontaneous [170] 3.4 meetings per day; ∼30% are endogenously triggered by prior events 31% of meetings involve email multitasking; 24% involve file activity [40] Meetings trigger follow-up emails and documents 69.7% of remote meeting participants use parallel chat [175] Meetings trigger parallel messaging activity; used to calibrate meeting-to-message cross-excitation Speaking rate 120-200 words per minute [168] Meeting transcripts generated at 100 words per minute 
+
+Ambient conversation 
+
+7.4 social interactions of 10+ minutes per day [234] 8 ambient conversations per day 
+
+Life-state multipliers 
+
+ChatGPT weekend usage ∼2/3 of weekday levels [165] Search query rate drops to 2/3 on weekends 50+ Teams messages sent or received outside work hours [137] Message rate kept near baseline in the FREE_EVENING life-state to reflect continued work messaging alongside personal messaging activity No sharp peak in per-hour query distribution [255] Query intensity is kept roughly uniform across active states PowerPoint edits spike 122% before meetings; peak productivity 9-11 am and 1-3 pm [137] Motivates elevated document and meeting multipliers in the FOCUS_TIME 
+
+life-state cycle block covering 9-11 am and 1-3 pm 
+
+∼60% of commuters use cell phones for reading or writing [80] Email, search, and message rates at 60% of baseline during commuting 
+
+Social graph 
+
+Humans form social groups at preferred sizes of ∼5, 15, 50, 150 [41] Social graph built with 5-person close circle and 15-person regular contact layer 58% of social energy allocated to closest 5 relationships [121] Contact frequency in sampling weighted toward inner social circle Layered friendship structure confirmed in mobile phone data with consistent scaling ratio between layers [41] Validates the geometric scaling between social graph layers used in contact sampling 
+
+Temporal boost for question sampling 
+
+Probability that a memory will be needed decays as a power function of recency, consistent across environmental corpora [22] Establishes power-law decay as the theoretically grounded functional form for recency weighting in query sampling Personal desktop information search: 6.6% same-day, 21.9% within a week, 45.9% within a month [66] Bucket distribution and power-law tail exponent fitted directly from empirical access frequency data Office document accesses: 67.4% same-day, 20.1% one day old, 8.6% three days old [248] Confirms same-day concentration; validates heavy weighting of recent data Collective memory decays in two phases: fast exponential drop in the first ∼10 days, then a power-law tail [92] Motivates two-regime recency curve: a fast exponential short-term compo-nent plus a slower power-law tail 
+
+Table 2. Empirical sources used to calibrate the synthetic data generator and how each source informs the workload design.
