@@ -6,200 +6,259 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-06
-- 运行时间：2026-04-06 21:09:15 UTC
+- 最新运行日期：2026-04-07
+- 运行时间：2026-04-07 21:32:25 UTC
 - 运行状态：成功
-- 本次总论文数：60
-- 精读区：45
+- 本次总论文数：79
+- 精读区：64
 - 速读区：15
 
 ### 今日简报（AI）
-今日深度解析 60 篇前沿论文，重点攻克了 HPC 高性能计算助手 AstraAI 与法庭辩论式
-- 详情：[/202604/06/README](/202604/06/README)
+今日深挖 79 篇前沿成果，重点聚焦图计算赋能数字人文及自主智能体在线学习的满分突破。
+推荐关注 APEX-EM 带来的非参数化经验回放技术，以及 Graphilosophy 在经典文献数字化处理中的创新应用。
+建议从
+- 详情：[/202604/07/README](/202604/07/README)
 
 ### 精读区论文标签
-1. [AstraAI: LLMs, Retrieval, and AST-Guided Assistance for HPC Codebases](/202604/06/2603.27423v1-astraai-llms-retrieval-and-ast-guided-assistance-for-hpc-codebases)  
-   标签：评分：10.0/10、query:ma-kf
-   evidence：用于高性能计算中上下文感知代码生成的RAG架构
-2. [Courtroom-Style Multi-Agent Debate with Progressive RAG and Role-Switching for Controversial Claim Verification](/202604/06/2603.28488v1-courtroom-style-multi-agent-debate-with-progressive-rag-and-role-switching-for-controversial-claim-verification)  
-   标签：评分：10.0/10、query:ma-kf
-   evidence：用于声明验证的渐进式RAG和多智能体辩论
-3. [Graphilosophy: Graph-Based Digital Humanities Computing with The Four Books](/202604/06/2603.28755v1-graphilosophy-graph-based-digital-humanities-computing-with-the-four-books)  
+1. [Graphilosophy: Graph-Based Digital Humanities Computing with The Four Books](/202604/07/2603.28755v1-graphilosophy-graph-based-digital-humanities-computing-with-the-four-books)  
    标签：评分：10.0/10、query:ancient-text
-   evidence：用于《四书》建模与解释的知识图谱框架
-4. [APEX-EM: Non-Parametric Online Learning for Autonomous Agents via Structured Procedural-Episodic Experience Replay](/202604/06/2603.29093v2-apex-em-non-parametric-online-learning-for-autonomous-agents-via-structured-procedural-episodic-experience-replay)  
+   evidence：用于《四书》建模和解释的知识图谱框架
+2. [APEX-EM: Non-Parametric Online Learning for Autonomous Agents via Structured Procedural-Episodic Experience Replay](/202604/07/2603.29093v2-apex-em-non-parametric-online-learning-for-autonomous-agents-via-structured-procedural-episodic-experience-replay)  
    标签：评分：10.0/10、query:agent
-   evidence：智能体的非参数在线学习与程序化-情境经验回放
-5. [MemFactory: Unified Inference & Training Framework for Agent Memory](/202604/06/2603.29493v1-memfactory-unified-inference--training-framework-for-agent-memory)  
+   evidence：自主智能体的结构化程序化-情境化经验回放
+3. [MemFactory: Unified Inference & Training Framework for Agent Memory](/202604/07/2603.29493v1-memfactory-unified-inference--training-framework-for-agent-memory)  
    标签：评分：10.0/10、query:agent
-   evidence：使用强化学习和记忆增强大模型的智能体记忆统一框架
-6. [Doctor-RAG: Failure-Aware Repair for Agentic Retrieval-Augmented Generation](/202604/06/2604.00865v1-doctor-rag-failure-aware-repair-for-agentic-retrieval-augmented-generation)  
+   evidence：利用强化学习优化智能体记忆操作
+4. [Doctor-RAG: Failure-Aware Repair for Agentic Retrieval-Augmented Generation](/202604/07/2604.00865v1-doctor-rag-failure-aware-repair-for-agentic-retrieval-augmented-generation)  
    标签：评分：10.0/10、query:ma-kf
-   evidence：智能体检索增强生成的故障感知修复
-7. [Experience as a Compass: Multi-agent RAG with Evolving Orchestration and Agent Prompts](/202604/06/2604.00901v2-experience-as-a-compass-multi-agent-rag-with-evolving-orchestration-and-agent-prompts)  
+   evidence：智能体检索增强生成架构与故障修复
+5. [Experience as a Compass: Multi-agent RAG with Evolving Orchestration and Agent Prompts](/202604/07/2604.00901v2-experience-as-a-compass-multi-agent-rag-with-evolving-orchestration-and-agent-prompts)  
    标签：评分：10.0/10、query:ma-kf
-   evidence：具有演化编排和智能体提示词的多智能体 RAG
-8. [Omni-SimpleMem: Autoresearch-Guided Discovery of Lifelong Multimodal Agent Memory](/202604/06/2604.01007v2-omni-simplemem-autoresearch-guided-discovery-of-lifelong-multimodal-agent-memory)  
+   evidence：演进的多智能体编排与角色特定提示词优化
+6. [Omni-SimpleMem: Autoresearch-Guided Discovery of Lifelong Multimodal Agent Memory](/202604/07/2604.01007v2-omni-simplemem-autoresearch-guided-discovery-of-lifelong-multimodal-agent-memory)  
    标签：评分：10.0/10、query:agent
    evidence：终身多模态智能体记忆与检索策略
-9. [Look Twice: Training-Free Evidence Highlighting in Multimodal Large Language Models](/202604/06/2604.01280v1-look-twice-training-free-evidence-highlighting-in-multimodal-large-language-models)  
+7. [Beyond the Parameters: A Technical Survey of Contextual Enrichment in Large Language Models: From In-Context Prompting to Causal Retrieval-Augmented Generation](/202604/07/2604.03174v1-beyond-the-parameters-a-technical-survey-of-contextual-enrichment-in-large-language-models-from-in-context-prompting-to-causal-retrieval-augmented-generation)  
+   标签：评分：10.0/10、query:ma-kf
+   evidence：RAG、GraphRAG及上下文增强综述
+8. [Rashomon Memory: Towards Argumentation-Driven Retrieval for Multi-Perspective Agent Memory](/202604/07/2604.03588v1-rashomon-memory-towards-argumentation-driven-retrieval-for-multi-perspective-agent-memory)  
+   标签：评分：10.0/10、query:agent
+   evidence：多视角智能体记忆与知识图谱检索
+9. [Reimagining RAN Automation in 6G: An Agentic AI Framework with Hierarchical Online Decision Transformer](/202604/07/2604.03908v1-reimagining-ran-automation-in-6g-an-agentic-ai-framework-with-hierarchical-online-decision-transformer)  
+   标签：评分：10.0/10、query:ma-kf
+   evidence：集成异构数据源的智能体RAG模块及自动化框架
+10. [Memory Intelligence Agent](/202604/07/2604.04503v1-memory-intelligence-agent)  
+   标签：评分：10.0/10、query:agent
+   evidence：具有非参数化历史轨迹记忆系统的记忆智能体
+11. [Is a Picture Worth a Thousand Words? Adaptive Multimodal Fact-Checking with Visual Evidence Necessity](/202604/07/2604.04692v1-is-a-picture-worth-a-thousand-words-adaptive-multimodal-fact-checking-with-visual-evidence-necessity)  
    标签：评分：10.0/10、query:cmv
-   evidence：提高多模态大模型对多模态证据的利用率
-10. [Memory in the LLM Era: Modular Architectures and Strategies in a Unified Framework](/202604/06/2604.01707v1-memory-in-the-llm-era-modular-architectures-and-strategies-in-a-unified-framework)  
+   evidence：利用视觉证据必要性的多模态事实核查框架
+12. [MemMachine: A Ground-Truth-Preserving Memory System for Personalized AI Agents](/202604/07/2604.04853v1-memmachine-a-ground-truth-preserving-memory-system-for-personalized-ai-agents)  
    标签：评分：10.0/10、query:agent
-   evidence：基于大语言模型的智能体记忆方法统一框架
-11. [SelRoute: Query-Type-Aware Routing for Long-Term Conversational Memory Retrieval](/202604/06/2604.02431v1-selroute-query-type-aware-routing-for-long-term-conversational-memory-retrieval)  
-   标签：评分：10.0/10、query:agent
-   evidence：长期对话记忆检索的路由机制
-12. [OmniTQA: A Cost-Aware System for Hybrid Query Processing over Semi-Structured Data](/202604/06/2604.02444v1-omnitqa-a-cost-aware-system-for-hybrid-query-processing-over-semi-structured-data)  
+   evidence：具有情境和画像记忆的个性化AI智能体持久记忆系统
+13. [MolClaw: An Autonomous Agent with Hierarchical Skills for Drug Molecule Evaluation, Screening, and Optimization](/202604/07/biorxiv-10-64898-2026-04-03-716272-v1-molclaw-an-autonomous-agent-with-hierarchical-skills-for-drug-molecule-evaluation-screening-and-optimization)  
    标签：评分：10.0/10、query:ma-kf
-   evidence：结构化与半结构化数据的混合查询处理
-13. [Overcoming the "Impracticality" of RAG: Proposing a Real-World Benchmark and Multi-Dimensional Diagnostic Framework](/202604/06/2604.02640v1-overcoming-the-impracticality-of-rag-proposing-a-real-world-benchmark-and-multi-dimensional-diagnostic-framework)  
-   标签：评分：10.0/10、query:ma-kf
-   evidence：RAG准确性与可靠性的诊断框架
-14. [When Modalities Remember: Continual Learning for Multimodal Knowledge Graphs](/202604/06/2604.02778v1-when-modalities-remember-continual-learning-for-multimodal-knowledge-graphs)  
-   标签：评分：10.0/10、query:mmkqa
-   evidence：多模态知识图谱推理的持续学习与基准测试
-15. [Self-Optimizing Multi-Agent Systems for Deep Research](/202604/06/2604.02988v1-self-optimizing-multi-agent-systems-for-deep-research)  
-   标签：评分：10.0/10、query:ma-kf
-   evidence：优化多智能体深度研究系统的提示词组合
-16. [Beyond the Parameters: A Technical Survey of Contextual Enrichment in Large Language Models: From In-Context Prompting to Causal Retrieval-Augmented Generation](/202604/06/2604.03174v1-beyond-the-parameters-a-technical-survey-of-contextual-enrichment-in-large-language-models-from-in-context-prompting-to-causal-retrieval-augmented-generation)  
-   标签：评分：10.0/10、query:ma-kf
-   evidence：关于 RAG、GraphRAG 和 CausalRAG 在大模型上下文增强方面的综述
-17. [HeteroHub: An Applicable Data Management Framework for Heterogeneous Multi-Embodied Agent System](/202604/06/2603.28010v1-heterohub-an-applicable-data-management-framework-for-heterogeneous-multi-embodied-agent-system)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：异构多具身智能体系统的数据管理框架
-18. [Quid est VERITAS? A Modular Framework for Archival Document Analysis](/202604/06/2603.28108v1-quid-est-veritas-a-modular-framework-for-archival-document-analysis)  
-   标签：评分：9.0/10、query:ancient-text
-   evidence：档案文献转录与语义增强的集成工作流
-19. [Navigating the Mirage: A Dual-Path Agentic Framework for Robust Misleading Chart Question Answering](/202604/06/2603.28583v1-navigating-the-mirage-a-dual-path-agentic-framework-for-robust-misleading-chart-question-answering)  
-   标签：评分：9.0/10、query:cmv
-   evidence：用于解决跨模态冲突的智能体框架
-20. [ELT-Bench-Verified: Benchmark Quality Issues Underestimate AI Agent Capabilities](/202604/06/2603.29399v2-elt-bench-verified-benchmark-quality-issues-underestimate-ai-agent-capabilities)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：评估AI智能体在自动化ELT流水线构建中的能力
-21. [View-oriented Conversation Compiler for Agent Trace Analysis](/202604/06/2603.29678v2-view-oriented-conversation-compiler-for-agent-trace-analysis)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：智能体系统的轨迹分析与上下文工程
-22. [Terminal Agents Suffice for Enterprise Automation](/202604/06/2604.00073v2-terminal-agents-suffice-for-enterprise-automation)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：自主企业智能体与API交互
-23. [CASCADE: Cascaded Scoped Communication for Multi-Agent Re-planning in Disrupted Industrial Environments](/202604/06/2604.00451v1-cascade-cascaded-scoped-communication-for-multi-agent-re-planning-in-disrupted-industrial-environments)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：具有显式知识库的多智能体协作
-24. [LangMARL: Natural Language Multi-Agent Reinforcement Learning](/202604/06/2604.00722v1-langmarl-natural-language-multi-agent-reinforcement-learning)  
+   evidence：具有分层技能的药物发现自主智能体
+14. [Evolutionary Discovery of Reinforcement Learning Algorithms via Large Language Models](/202604/07/2603.28416v1-evolutionary-discovery-of-reinforcement-learning-algorithms-via-large-language-models)  
    标签：评分：9.0/10、query:agent
-   evidence：语言空间中的多智能体强化学习
-25. [Yet Even Less Is Even Better For Agentic, Reasoning, and Coding LLMs](/202604/06/2604.00824v2-yet-even-less-is-even-better-for-agentic-reasoning-and-coding-llms)  
+   evidence：利用LLM进化发现强化学习算法
+15. [Courtroom-Style Multi-Agent Debate with Progressive RAG and Role-Switching for Controversial Claim Verification](/202604/07/2603.28488v1-courtroom-style-multi-agent-debate-with-progressive-rag-and-role-switching-for-controversial-claim-verification)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：结合渐进式RAG的多智能体辩论用于主张验证
+16. [GraphWalker: Agentic Knowledge Graph Question Answering via Synthetic Trajectory Curriculum](/202604/07/2603.28533v2-graphwalker-agentic-knowledge-graph-question-answering-via-synthetic-trajectory-curriculum)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：智能体知识图谱问答与轨迹合成
+17. [Navigating the Mirage: A Dual-Path Agentic Framework for Robust Misleading Chart Question Answering](/202604/07/2603.28583v1-navigating-the-mirage-a-dual-path-agentic-framework-for-robust-misleading-chart-question-answering)  
+   标签：评分：9.0/10、query:cmv
+   evidence：跨模态验证及解决视觉与OCR之间的冲突
+18. [RAGShield: Detecting Numerical Claim Manipulation in Government RAG Systems](/202604/07/2604.00387v2-ragshield-detecting-numerical-claim-manipulation-in-government-rag-systems)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：检测RAG系统中的数值篡改并减少错误
+19. [LangMARL: Natural Language Multi-Agent Reinforcement Learning](/202604/07/2604.00722v1-langmarl-natural-language-multi-agent-reinforcement-learning)  
    标签：评分：9.0/10、query:agent
-   evidence：用于增强智能体能力的滑动记忆轨迹推理
-26. [Camouflage-aware Image-Text Retrieval via Expert Collaboration](/202604/06/2604.01251v1-camouflage-aware-image-text-retrieval-via-expert-collaboration)  
-   标签：评分：9.0/10、query:cmv
-   evidence：伪装感知的图文检索与跨模态对齐
-27. [VideoZeroBench: Probing the Limits of Video MLLMs with Spatio-Temporal Evidence Verification](/202604/06/2604.01569v1-videozerobench-probing-the-limits-of-video-mllms-with-spatio-temporal-evidence-verification)  
-   标签：评分：9.0/10、query:cmv
-   evidence：验证视频多模态模型中的时空证据
-28. [Retrieval-aligned Tabular Foundation Models Enable Robust Clinical Risk Prediction in Electronic Health Records Under Real-world Constraints](/202604/06/2604.01841v1-retrieval-aligned-tabular-foundation-models-enable-robust-clinical-risk-prediction-in-electronic-health-records-under-real-world-constraints)  
+   evidence：语言空间中多智能体协作的强化学习
+20. [Look Twice: Training-Free Evidence Highlighting in Multimodal Large Language Models](/202604/07/2604.01280v1-look-twice-training-free-evidence-highlighting-in-multimodal-large-language-models)  
+   标签：评分：9.0/10、query:mmkqa
+   evidence：改进预训练多模态大模型在知识密集型查询中利用多模态证据的方式
+21. [Reproducible, Explainable, and Effective Evaluations of Agentic AI for Software Engineering](/202604/07/2604.01437v1-reproducible-explainable-and-effective-evaluations-of-agentic-ai-for-software-engineering)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：针对结构化电子健康档案的检索增强方法
-29. [Beyond Referring Expressions: Scenario Comprehension Visual Grounding](/202604/06/2604.02323v1-beyond-referring-expressions-scenario-comprehension-visual-grounding)  
-   标签：评分：9.0/10、query:cmv
-   evidence：视觉定位与基于场景的上下文对齐
-30. [KAIJU: An Executive Kernel for Intent-Gated Execution of LLM Agents](/202604/06/2604.02375v1-kaiju-an-executive-kernel-for-intent-gated-execution-of-llm-agents)  
+   evidence：软件工程中智能体AI与自主智能体的评估
+22. [OntoKG: Ontology-Oriented Knowledge Graph Construction with Intrinsic-Relational Routing](/202604/07/2604.02618v1-ontokg-ontology-oriented-knowledge-graph-construction-with-intrinsic-relational-routing)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：自主 LLM 智能体的执行内核与工具调度
-31. [Opal: Private Memory for Personal AI](/202604/06/2604.02522v1-opal-private-memory-for-personal-ai)  
+   evidence：面向本体的知识图谱构建与 LLM 引导的提取
+23. [DocShield: Towards AI Document Safety via Evidence-Grounded Agentic Reasoning](/202604/07/2604.02694v1-docshield-towards-ai-document-safety-via-evidence-grounded-agentic-reasoning)  
+   标签：评分：9.0/10、query:cmv
+   evidence：通过文本语义交叉验证视觉异常
+24. [InfoSeeker: A Scalable Hierarchical Parallel Agent Framework for Web Information Seeking](/202604/07/2604.02971v1-infoseeker-a-scalable-hierarchical-parallel-agent-framework-for-web-information-seeking)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：用于信息检索的分层并行智能体框架
+25. [STEAR: Layer-Aware Spatiotemporal Evidence Intervention for Hallucination Mitigation in Video Large Language Models](/202604/07/2604.03045v1-stear-layer-aware-spatiotemporal-evidence-intervention-for-hallucination-mitigation-in-video-large-language-models)  
+   标签：评分：9.0/10、query:cmv
+   evidence：用于视觉定位的层感知时空证据干预
+26. [BridgeRAG: Training-Free Bridge-Conditioned Retrieval for Multi-Hop Question Answering](/202604/07/2604.03384v1-bridgerag-training-free-bridge-conditioned-retrieval-for-multi-hop-question-answering)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：针对多跳问题的免训练RAG检索方法
+27. [TABQAWORLD: Optimizing Multimodal Reasoning for Multi-Turn Table Question Answering](/202604/07/2604.03393v1-tabqaworld-optimizing-multimodal-reasoning-for-multi-turn-table-question-answering)  
+   标签：评分：9.0/10、query:mmkqa
+   evidence：优化多轮表格问答的多模态推理
+28. [SASAV: Self-Directed Agent for Scientific Analysis and Visualization](/202604/07/2604.03406v1-sasav-self-directed-agent-for-scientific-analysis-and-visualization)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：用于科学分析和可视化的自主智能体
+29. [Scaling Multi-agent Systems: A Smart Middleware for Improving Agent Interactions](/202604/07/2604.03430v1-scaling-multi-agent-systems-a-smart-middleware-for-improving-agent-interactions)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：用于多智能体记忆与交互管理的认知织网节点
+30. [Agile Story-Point Estimation: Is RAG a Better Way to Go?](/202604/07/2604.03443v1-agile-story-point-estimation-is-rag-a-better-way-to-go)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：实施RAG用于自动敏捷估算
+31. [VisionClaw: Always-On AI Agents through Smart Glasses](/202604/07/2604.03486v1-visionclaw-always-on-ai-agents-through-smart-glasses)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：具备第一视角感知与任务执行能力的穿戴式智能体
+32. [Beyond Predefined Schemas: TRACE-KG for Context-Enriched Knowledge Graphs from Complex Documents](/202604/07/2604.03496v1-beyond-predefined-schemas-trace-kg-for-context-enriched-knowledge-graphs-from-complex-documents)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：从复杂文档中联合构建上下文丰富的知识图谱和诱导模式
+33. [Applications of Large Language Models in Radiation Oncology: From Workflow Automation to Clinical Intelligence](/202604/07/2604.03509v1-applications-of-large-language-models-in-radiation-oncology-from-workflow-automation-to-clinical-intelligence)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：用于临床智能的自主LLM智能体与模块化RAG
+34. [Inside the Scaffold: A Source-Code Taxonomy of Coding Agent Architectures](/202604/07/2604.03515v1-inside-the-scaffold-a-source-code-taxonomy-of-coding-agent-architectures)  
    标签：评分：9.0/10、query:agent
-   evidence：个人AI智能体的长期记忆存储与检索
-32. [Competency Questions as Executable Plans: a Controlled RAG Architecture for Cultural Heritage Storytelling](/202604/06/2604.02545v1-competency-questions-as-executable-plans-a-controlled-rag-architecture-for-cultural-heritage-storytelling)  
+   evidence：基于大模型的代码智能体架构分类
+35. [Explainable Model Routing for Agentic Workflows](/202604/07/2604.03527v1-explainable-model-routing-for-agentic-workflows)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：利用知识图谱减少叙事中幻觉的RAG架构
-33. [Principled and Scalable Diversity-Aware Retrieval via Cardinality-Constrained Binary Quadratic Programming](/202604/06/2604.02554v1-principled-and-scalable-diversity-aware-retrieval-via-cardinality-constrained-binary-quadratic-programming)  
+   evidence：优化智能体工作流中的模型路由
+36. [Focus Matters: Phase-Aware Suppression for Hallucination in Vision-Language Models](/202604/07/2604.03556v1-focus-matters-phase-aware-suppression-for-hallucination-in-vision-language-models)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：提升RAG准确性和相关性的多样性感知检索
-34. [AnnoRetrieve: Efficient Structured Retrieval for Unstructured Document Analysis](/202604/06/2604.02690v1-annoretrieve-efficient-structured-retrieval-for-unstructured-document-analysis)  
+   evidence：抑制视觉语言模型中的幻觉
+37. [MultiPress: A Multi-Agent Framework for Interpretable Multimodal News Classification](/202604/07/2604.03586v1-multipress-a-multi-agent-framework-for-interpretable-multimodal-news-classification)  
+   标签：评分：9.0/10、query:mmkqa
+   evidence：多智能体多模态检索增强推理框架
+38. [Beyond Retrieval: Modeling Confidence Decay and Deterministic Agentic Platforms in Generative Engine Optimization](/202604/07/2604.03656v1-beyond-retrieval-modeling-confidence-decay-and-deterministic-agentic-platforms-in-generative-engine-optimization)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：非结构化文档分析的结构化检索
-35. [DocShield: Towards AI Document Safety via Evidence-Grounded Agentic Reasoning](/202604/06/2604.02694v1-docshield-towards-ai-document-safety-via-evidence-grounded-agentic-reasoning)  
-   标签：评分：9.0/10、query:cmv
-   evidence：通过文本语义交叉验证视觉异常以进行伪造分析
-36. [LogicPoison: Logical Attacks on Graph Retrieval-Augmented Generation](/202604/06/2604.02954v1-logicpoison-logical-attacks-on-graph-retrieval-augmented-generation)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：图检索增强生成 (GraphRAG) 的安全性和准确性
-37. [InfoSeeker: A Scalable Hierarchical Parallel Agent Framework for Web Information Seeking](/202604/06/2604.02971v1-infoseeker-a-scalable-hierarchical-parallel-agent-framework-for-web-information-seeking)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：用于大规模信息综合的分层并行智能体框架
-38. [Prompt Compression in the Wild: Measuring Latency, Rate Adherence, and Quality for Faster LLM Inference](/202604/06/2604.02985v1-prompt-compression-in-the-wild-measuring-latency-rate-adherence-and-quality-for-faster-llm-inference)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：通过提示词压缩管理RAG系统中的长上下文
-39. [Agentic-MME: What Agentic Capability Really Brings to Multimodal Intelligence?](/202604/06/2604.03016v1-agentic-mme-what-agentic-capability-really-brings-to-multimodal-intelligence)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：评估包括工具使用和搜索在内的多模态智能体能力
-40. [QVAD: A Question-Centric Agentic Framework for Efficient and Training-Free Video Anomaly Detection](/202604/06/2604.03040v1-qvad-a-question-centric-agentic-framework-for-efficient-and-training-free-video-anomaly-detection)  
+   evidence：分析了基于RAG的幻觉问题，并提出了确定性多智能体意图路由
+39. [MMP-Refer: Multimodal Path Retrieval-augmented LLMs For Explainable Recommendation](/202604/07/2604.03666v1-mmp-refer-multimodal-path-retrieval-augmented-llms-for-explainable-recommendation)  
+   标签：评分：9.0/10、query:mmkqa
+   evidence：用于推荐的多模态检索增强大语言模型
+40. [PRAISE: Prefix-Based Rollout Reuse in Agentic Search Training](/202604/07/2604.03675v1-praise-prefix-based-rollout-reuse-in-agentic-search-training)  
    标签：评分：9.0/10、query:agent
-   evidence：用于动态 VLM-LLM 交互的以问题为中心的智能体框架
-41. [STEAR: Layer-Aware Spatiotemporal Evidence Intervention for Hallucination Mitigation in Video Large Language Models](/202604/06/2604.03045v1-stear-layer-aware-spatiotemporal-evidence-intervention-for-hallucination-mitigation-in-video-large-language-models)  
+   evidence：用于智能体搜索和多轮推理的强化学习
+41. [Deploy, Calibrate, Monitor, Heal -- No Human Required: An Autonomous AI SRE Agent for Elasticsearch](/202604/07/2604.03933v1-deploy-calibrate-monitor-heal----no-human-required-an-autonomous-ai-sre-agent-for-elasticsearch)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：用于管理 Elasticsearch 生命周期的自主 AI SRE 智能体
+42. [Unmasking Hallucinations: A Causal Graph-Attention Perspective on Factual Reliability in Large Language Models](/202604/07/2604.04020v1-unmasking-hallucinations-a-causal-graph-attention-perspective-on-factual-reliability-in-large-language-models)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：减少幻觉的因果图注意力框架
+43. [MisEdu-RAG: A Misconception-Aware Dual-Hypergraph RAG for Novice Math Teachers](/202604/07/2604.04036v1-misedu-rag-a-misconception-aware-dual-hypergraph-rag-for-novice-math-teachers)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：用于结构化与实例知识集成的双超图RAG
+44. [Profile-Then-Reason: Bounded Semantic Complexity for Tool-Augmented Language Agents](/202604/07/2604.04131v1-profile-then-reason-bounded-semantic-complexity-for-tool-augmented-language-agents)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：语言智能体结构化工具增强推理的有界执行框架
+45. [Schema-Aware Planning and Hybrid Knowledge Toolset for Reliable Knowledge Graph Triple Verification](/202604/07/2604.04190v1-schema-aware-planning-and-hybrid-knowledge-toolset-for-reliable-knowledge-graph-triple-verification)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：用于知识图谱三元组验证的自主智能体
+46. [ClawArena: Benchmarking AI Agents in Evolving Information Environments](/202604/07/2604.04202v1-clawarena-benchmarking-ai-agents-in-evolving-information-environments)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：在演化信息环境中评估AI智能体
+47. [Don't Blink: Evidence Collapse during Multimodal Reasoning](/202604/07/2604.04207v1-dont-blink-evidence-collapse-during-multimodal-reasoning)  
    标签：评分：9.0/10、query:cmv
-   evidence：层感知的时空证据干预以缓解幻觉
-42. [Querying Structured Data Through Natural Language Using Language Models](/202604/06/2604.03057v1-querying-structured-data-through-natural-language-using-language-models)  
+   evidence：推理过程中的跨模态验证与视觉定位
+48. [Combee: Scaling Prompt Learning for Self-Improving Language Model Agents](/202604/07/2604.04247v1-combee-scaling-prompt-learning-for-self-improving-language-model-agents)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：通过自然语言查询结构化数据
-43. [Co-Evolution of Policy and Internal Reward for Language Agents](/202604/06/2604.03098v1-co-evolution-of-policy-and-internal-reward-for-language-agents)  
+   evidence：为自我改进的语言模型智能体扩展提示词学习
+49. [How Well Do Agentic Skills Work in the Wild: Benchmarking LLM Skill Usage in Realistic Settings](/202604/07/2604.04323v1-how-well-do-agentic-skills-work-in-the-wild-benchmarking-llm-skill-usage-in-realistic-settings)  
    标签：评分：9.0/10、query:agent
-   evidence：为语言智能体提供自生成的内部奖励以进行稠密策略优化
-44. [Domain-Adapted Retrieval for In-Context Annotation of Pedagogical Dialogue Acts](/202604/06/2604.03127v1-domain-adapted-retrieval-for-in-context-annotation-of-pedagogical-dialogue-acts)  
+   evidence：在现实智能体设置中基准测试LLM技能使用和检索
+50. [GROUNDEDKG-RAG: Grounded Knowledge Graph Index for Long-document Question Answering](/202604/07/2604.04359v1-groundedkg-rag-grounded-knowledge-graph-index-for-long-document-question-answering)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：领域自适应RAG流水线与检索微调以提高准确性
-45. [MolClaw: An Autonomous Agent with Hierarchical Skills for Drug Molecule Evaluation, Screening, and Optimization](/202604/06/biorxiv-10-64898-2026-04-03-716272-v1-molclaw-an-autonomous-agent-with-hierarchical-skills-for-drug-molecule-evaluation-screening-and-optimization)  
+   evidence：用于长文档 RAG 的落地知识图谱索引
+51. [Graph-to-Frame RAG: Visual-Space Knowledge Fusion for Training-Free and Auditable Video Reasoning](/202604/07/2604.04372v1-graph-to-frame-rag-visual-space-knowledge-fusion-for-training-free-and-auditable-video-reasoning)  
+   标签：评分：9.0/10、query:mmkqa
+   evidence：用于视频推理的视觉空间知识融合多模态 RAG
+52. [Retrieval Augmented Conversational Recommendation with Reinforcement Learning](/202604/07/2604.04457v1-retrieval-augmented-conversational-recommendation-with-reinforcement-learning)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：编排专业工具和工作流的自主智能体
+   evidence：用于推荐系统的检索增强生成架构
+53. [SuperLocalMemory V3.3: The Living Brain -- Biologically-Inspired Forgetting, Cognitive Quantization, and Multi-Channel Retrieval for Zero-LLM Agent Memory Systems](/202604/07/2604.04514v1-superlocalmemory-v33-the-living-brain----biologically-inspired-forgetting-cognitive-quantization-and-multi-channel-retrieval-for-zero-llm-agent-memory-systems)  
+   标签：评分：9.0/10、query:agent
+   evidence：受生物启发的多通道检索智能体记忆系统
+54. [Mapping the Exploitation Surface: A 10,000-Trial Taxonomy of What Makes LLM Agents Exploit Vulnerabilities](/202604/07/2604.04561v1-mapping-the-exploitation-surface-a-10000-trial-taxonomy-of-what-makes-llm-agents-exploit-vulnerabilities)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：触发智能体漏洞利用的系统提示词特征分类法
+55. [PassiveQA: A Three-Action Framework for Epistemically Calibrated Question Answering via Supervised Finetuning](/202604/07/2604.04565v1-passiveqa-a-three-action-framework-for-epistemically-calibrated-question-answering-via-supervised-finetuning)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：通过认识论校准减少RAG系统幻觉
+56. [Search, Do not Guess: Teaching Small Language Models to Be Effective Search Agents](/202604/07/2604.04651v1-search-do-not-guess-teaching-small-language-models-to-be-effective-search-agents)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：训练小语言模型作为搜索智能体
+57. [Hallucination Basins: A Dynamic Framework for Understanding and Controlling LLM Hallucinations](/202604/07/2604.04743v1-hallucination-basins-a-dynamic-framework-for-understanding-and-controlling-llm-hallucinations)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：用于理解和控制大语言模型幻觉的几何动力系统框架
+58. [SkillX: Automatically Constructing Skill Knowledge Bases for Agents](/202604/07/2604.04804v1-skillx-automatically-constructing-skill-knowledge-bases-for-agents)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：为智能体自动构建技能知识库
+59. [ANX: Protocol-First Design for AI Agent Interaction with a Supporting 3EX Decoupled Architecture](/202604/07/2604.04820v1-anx-protocol-first-design-for-ai-agent-interaction-with-a-supporting-3ex-decoupled-architecture)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：自主参与者的智能体原生协议与框架
+60. [Strengthening Human-Centric Chain-of-Thought Reasoning Integrity in LLMs via a Structured Prompt Framework](/202604/07/2604.04852v1-strengthening-human-centric-chain-of-thought-reasoning-integrity-in-llms-via-a-structured-prompt-framework)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：用于引导大模型推理的结构化提示框架
+61. [Optimizing LLM Prompt Engineering with DSPy Based Declarative Learning](/202604/07/2604.04869v1-optimizing-llm-prompt-engineering-with-dspy-based-declarative-learning)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：利用声明式学习优化 LLM 提示工程
+62. [TriAttention: Efficient Long Reasoning with Trigonometric KV Compression](/202604/07/2604.04921v1-triattention-efficient-long-reasoning-with-trigonometric-kv-compression)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：通过KV缓存压缩管理长上下文
+63. [CIViC MCP: Integrating Large Language Models with the Clinical Interpretations of Variants in Cancer](/202604/07/biorxiv-10-1101-2025-10-13-682185-v2-civic-mcp-integrating-large-language-models-with-the-clinical-interpretations-of-variants-in-cancer)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：通过大语言模型以自然语言对接API
+64. [From Parametric Guessing to Graph-Grounded Answers: Building Reliable ChatGPT-like tools for Plant Science](/202604/07/biorxiv-10-64898-2026-04-02-716042-v1-from-parametric-guessing-to-graph-grounded-answers-building-reliable-chatgpt-like-tools-for-plant-science)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：通过从参数化猜测转向图谱接地答案来减少幻觉
 
 ### 速读区论文标签
-1. [LVRPO: Language-Visual Alignment with GRPO for Multimodal Understanding and Generation](/202604/06/2603.27693v1-lvrpo-language-visual-alignment-with-grpo-for-multimodal-understanding-and-generation)  
-   标签：评分：8.0/10、query:cmv
-   evidence：使用基于强化学习的偏好优化显式对齐语言和视觉表示
-2. [MAR3: Multi-Agent Recognition, Reasoning, and Reflection for Reference Audio-Visual Segmentation](/202604/06/2603.27706v1-mar3-multi-agent-recognition-reasoning-and-reflection-for-reference-audio-visual-segmentation)  
-   标签：评分：8.0/10、query:mmkqa
-   evidence：用于多模态视听分割的多智能体框架
-3. [Progressive Prompt-Guided Cross-Modal Reasoning for Referring Image Segmentation](/202604/06/2603.27993v1-progressive-prompt-guided-cross-modal-reasoning-for-referring-image-segmentation)  
-   标签：评分：8.0/10、query:cmv
-   evidence：将语言描述落地到视觉区域
-4. [Is One-Shot In-Context Learning Helpful for Data Selection in Task-Specific Fine-Tuning of Multimodal LLMs?](/202604/06/2603.28058v1-is-one-shot-in-context-learning-helpful-for-data-selection-in-task-specific-fine-tuning-of-multimodal-llms)  
-   标签：评分：8.0/10、query:mmkqa
-   evidence：向多模态模型注入世界知识
-5. [ORACAL: A Robust and Explainable Multimodal Framework for Smart Contract Vulnerability Detection with Causal Graph Enrichment](/202604/06/2603.28128v1-oracal-a-robust-and-explainable-multimodal-framework-for-smart-contract-vulnerability-detection-with-causal-graph-enrichment)  
+1. [HeteroHub: An Applicable Data Management Framework for Heterogeneous Multi-Embodied Agent System](/202604/07/2603.28010v1-heterohub-an-applicable-data-management-framework-for-heterogeneous-multi-embodied-agent-system)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：结合多模态图学习的RAG增强分析
-6. [Towards Domain-Generalized Open-Vocabulary Object Detection: A Progressive Domain-invariant Cross-modal Alignment Method](/202604/06/2603.27556v1-towards-domain-generalized-open-vocabulary-object-detection-a-progressive-domain-invariant-cross-modal-alignment-method)  
+   evidence：整合智能体静态知识和多模态数据集的数据管理框架
+2. [HISA: Efficient Hierarchical Indexing for Fine-Grained Sparse Attention](/202604/07/2603.28458v3-hisa-efficient-hierarchical-indexing-for-fine-grained-sparse-attention)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：长上下文稀疏注意力的分层索引
+3. [Design Principles for the Construction of a Benchmark Evaluating Security Operation Capabilities of Multi-agent AI Systems](/202604/07/2603.28998v1-design-principles-for-the-construction-of-a-benchmark-evaluating-security-operation-capabilities-of-multi-agent-ai-systems)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：网络安全中的自主多智能体AI系统
+4. [Emergence WebVoyager: Toward Consistent and Transparent Evaluation of (Web) Agents in The Wild](/202604/07/2603.29020v1-emergence-webvoyager-toward-consistent-and-transparent-evaluation-of-web-agents-in-the-wild)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：在复杂现实环境中评估AI智能体
+5. [SiPaKosa: A Comprehensive Corpus of Canonical and Classical Buddhist Texts in Sinhala and Pali](/202604/07/2603.29221v1-sipakosa-a-comprehensive-corpus-of-canonical-and-classical-buddhist-texts-in-sinhala-and-pali)  
+   标签：评分：8.0/10、query:ancient-text
+   evidence：历史佛教文献和经典文本语料库
+6. [Efficient Inference of Large Vision Language Models](/202604/07/2603.27960v1-efficient-inference-of-large-vision-language-models)  
+   标签：评分：7.0/10、query:mmkqa
+   evidence：大型多模态模型及其高效推理综述
+7. [PReD: An LLM-based Foundation Multimodal Model for Electromagnetic Perception, Recognition, and Decision](/202604/07/2603.28183v1-pred-an-llm-based-foundation-multimodal-model-for-electromagnetic-perception-recognition-and-decision)  
+   标签：评分：7.0/10、query:mmkqa
+   evidence：用于领域决策的多模态基础模型
+8. [PReD: An LLM-based Foundation Multimodal Model for Electromagnetic Perception, Recognition, and Decision](/202604/07/2603.28183v2-pred-an-llm-based-foundation-multimodal-model-for-electromagnetic-perception-recognition-and-decision)  
+   标签：评分：7.0/10、query:mmkqa
+   evidence：用于特定领域推理和决策的大规模多模态模型
+9. [TIEG-Youpu Solution for NeurIPS 2022 WikiKG90Mv2-LSC](/202604/07/2603.28512v1-tieg-youpu-solution-for-neurips-2022-wikikg90mv2-lsc)  
+   标签：评分：7.0/10、query:mmkqa
+   evidence：用于问答的大规模知识图谱嵌入
+10. [Omni-NegCLIP: Enhancing CLIP with Front-Layer Contrastive Fine-Tuning for Comprehensive Negation Understanding](/202604/07/2603.29258v1-omni-negclip-enhancing-clip-with-front-layer-contrastive-fine-tuning-for-comprehensive-negation-understanding)  
    标签：评分：7.0/10、query:cmv
-   evidence：跨模态对齐与视觉语义耦合
-7. [TMTE: Effective Multimodal Graph Learning with Task-aware Modality and Topology Co-evolution](/202604/06/2603.27723v1-tmte-effective-multimodal-graph-learning-with-task-aware-modality-and-topology-co-evolution)  
-   标签：评分：7.0/10、query:mmkqa
-   evidence：优化图拓扑和多模态表示
-8. [TailNLG: A Multilingual Benchmark Addressing Verbalization of Long-Tail Entities](/202604/06/2603.27768v1-tailnlg-a-multilingual-benchmark-addressing-verbalization-of-long-tail-entities)  
-   标签：评分：7.0/10、query:ma-kf
-   evidence：为RAG系统提供结构化知识的语言化
-9. [Efficient Inference of Large Vision Language Models](/202604/06/2603.27960v1-efficient-inference-of-large-vision-language-models)  
-   标签：评分：7.0/10、query:mmkqa
-   evidence：大视觉语言模型优化与多模态推理综述
-10. [Efficient Domain Adaptation for Text Line Recognition via Decoupled Language Models](/202604/06/2603.28028v1-efficient-domain-adaptation-for-text-line-recognition-via-decoupled-language-models)  
-   标签：评分：7.0/10、query:ancient-text
-   evidence：数字人文研究者与文档数字化
-11. [Safer Builders, Risky Maintainers: A Comparative Study of Breaking Changes in Human vs Agentic PRs](/202604/06/2603.27524v1-safer-builders-risky-maintainers-a-comparative-study-of-breaking-changes-in-human-vs-agentic-prs)  
-   标签：评分：6.0/10、query:ma-kf
-   evidence：软件工程中AI编码智能体的可靠性
-12. [A Benchmarking Methodology to Assess Open-Source Video Large Language Models in Automatic Captioning of News Videos](/202604/06/2603.27662v1-a-benchmarking-methodology-to-assess-open-source-video-large-language-models-in-automatic-captioning-of-news-videos)  
-   标签：评分：6.0/10、query:mmkqa
-   evidence：评估用于新闻摘要的视频大语言模型基准
-13. [KazByte: Adapting Qwen models to Kazakh via Byte-level Adapter](/202604/06/2603.27859v1-kazbyte-adapting-qwen-models-to-kazakh-via-byte-level-adapter)  
-   标签：评分：6.0/10、query:ma-kf
-   evidence：缩短有效上下文窗口及字节级适配
-14. [Decentralized Proof-of-Location for Content Provenance: Towards Capture-Time Authenticity](/202604/06/2603.27883v1-decentralized-proof-of-location-for-content-provenance-towards-capture-time-authenticity)  
+   evidence：视觉语言模型中的跨模态否定理解
+11. [Uniform Interpolation in Distributed Knowledge Modal Logics](/202604/07/2603.28036v1-uniform-interpolation-in-distributed-knowledge-modal-logics)  
+   标签：评分：6.0/10、query:agent
+   evidence：用于集体推理的分布式知识模态逻辑
+12. [Explaining CLIP Zero-shot Predictions Through Concepts](/202604/07/2603.28211v1-explaining-clip-zero-shot-predictions-through-concepts)  
    标签：评分：6.0/10、query:cmv
-   evidence：用于真实性验证的多模态证据和见证区架构
-15. [Transcription and Recognition of Italian Parliamentary Speeches Using Vision-Language Models](/202604/06/2603.28103v1-transcription-and-recognition-of-italian-parliamentary-speeches-using-vision-language-models)  
-   标签：评分：6.0/10、query:ancient-text
-   evidence：用于历史文献转录和语义分割的视觉语言模型
+   evidence：通过概念解释视觉语言模型的预测
+13. [Generalizable Detection of AI Generated Images with Large Models and Fuzzy Decision Tree](/202604/07/2603.28508v1-generalizable-detection-of-ai-generated-images-with-large-models-and-fuzzy-decision-tree)  
+   标签：评分：6.0/10、query:cmv
+   evidence：多模态大语言模型用于语义推理和图文验证
+14. [Unsafe2Safe: Controllable Image Anonymization for Downstream Utility](/202604/07/2603.28605v1-unsafe2safe-controllable-image-anonymization-for-downstream-utility)  
+   标签：评分：6.0/10、query:cmv
+   evidence：多模态引导的扩散编辑用于图像匿名化
+15. [MELT: Improve Composed Image Retrieval via the Modification Frequentation-Rarity Balance Network](/202604/07/2603.29291v1-melt-improve-composed-image-retrieval-via-the-modification-frequentation-rarity-balance-network)  
+   标签：评分：6.0/10、query:cmv
+   evidence：组合图像检索的语义对齐
 
 
 <div class="dpr-home-promo-card">
