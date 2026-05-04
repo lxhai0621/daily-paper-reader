@@ -1,0 +1,431 @@
+Title: MemRouter: Memory-as-Embedding Routing for Long-Term Conversational Agents
+
+URL Source: https://arxiv.org/pdf/2605.00356v1
+
+Published Time: Mon, 04 May 2026 00:31:14 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+Preprint. Under review. 
+
+# MemRouter: Memory-as-Embedding Routing for Long-Term Conversational Agents 
+
+Tianyu Hu Weikai Lin 
+
+University of Central Florida University of Rochester 
+
+ti721494@ucf.edu wlin33@ur.rochester.edu 
+
+Weizhi Zhang Jing Ma 
+
+University of Illinois at Chicago Case Western Reserve University 
+
+wzhan42@uic.edu jing.ma5@case.edu 
+
+Song Wang ∗
+
+University of Central Florida 
+
+song.wang@ucf.edu 
+
+# Abstract 
+
+Long-term conversational agents must decide which turns to store in ex-ternal memory, yet recent systems rely on autoregressive LLM generation at every turn to make that decision. We present MemRouter, a write-side memory router that decouples memory admission from the downstream answer backbone and replaces per-turn memory-management decoding with an embedding-based routing policy. MemRouter encodes each turn together with recent context, projects the resulting embeddings through a frozen LLM backbone, and predicts whether the turn should be stored using lightweight classification heads while training only ∼12M parame-ters. Under a controlled matched-harness comparison on LoCoMo, where the retrieval pipeline, answer prompts, and QA backbone (Qwen2.5-7B) are held identical, MemRouter outperforms an LLM-based memory man-ager on every question category (overall F1 52.0 vs. 45.6, non-overlapping 95% CIs) while reducing memory-management p50 latency from 970 ms to 58 ms. Descriptive factorial averaging further shows that learned admis-sion improves mean F1 by +10.3 over random storage, category-specific prompting adds +5.2 over a generic prompt, and retrieval contributes +0.7. These results suggest that write-side memory admission can be learned by a small supervised router, while answer generation remains a separate downstream component in long-horizon conversational QA. The code is available at https://github.com/SongW-SW/MemRouter. 
+
+# 1 Introduction 
+
+Long-term conversational memory is becoming a critical capability for LLM agents de-ployed in real-world applications (Zhang et al., 2025; Hu et al., 2026; Pink et al., 2025). In multi-session settings, agents must selectively store personal facts, preferences, plans, and emotional states in an external memory bank and retrieve them accurately later (Maharana et al., 2024; Zhong et al., 2024; Packer et al., 2023; Xu et al., 2025; Nan et al., 2025; Chhikara et al., 2025). Selective admission matters not only for answer quality, but also for controlling memory growth over time and reducing unnecessary retention of personal information. As conversations grow to hundreds of turns and tens of thousands of tokens, the fundamental question becomes: how should an agent decide what to remember, and at what cost? 
+
+> ∗
+
+Corresponding author. 
+
+1
+
+> arXiv:2605.00356v1 [cs.CL] 1 May 2026
+
+Preprint. Under review. Recent work uses the LLM itself as the memory manager (Yan et al., 2026; Yu et al., 2026; Zhang et al., 2026; Packer et al., 2023; Xu et al., 2025). Memory-R1 (Yan et al., 2026) trains an RL-based memory manager over ADD/UPDATE/DELETE/NOOP operations together with an answer agent, achieving strong results with limited QA supervision. AgeMem (Yu et al., 2026) exposes six memory operations as tool calls and learns a unified policy via three-stage progressive RL. A-MAC (Zhang et al., 2026) decomposes memory admission into interpretable factors including utility, confidence, and novelty. MemGPT (Packer et al., 2023) employs an OS-inspired paging mechanism where the LLM manages its own context through function calls. Personalized dialogue systems such as Hello Again! (Li et al., 2025), RMM (Tan et al., 2025), and MemInsight (Salama et al., 2025) highlight the importance of long-term memory management in realistic interactions. While effective, these approaches share two practical limitations. First, per-turn autore-gressive cost : every conversational turn requires one or more full LLM generation calls to make the admission decision. Memory-R1, for instance, uses two generation calls per turn, one for fact extraction and one for the memory manager, resulting in approximately 1,200 generation calls for a single 600-turn conversation, before any questions are answered . For a system processing hundreds of conversations daily, this write-side overhead can dominate the total serving budget. The underlying question is whether a full autoregressive pass is truly necessary to decide if a turn is worth storing, or whether this decision can be made more cheaply at the embedding level. Second, backbone coupling : because write-side policies are often trained jointly with, or against rewards defined by, the downstream an-swer model, the admission policy can become entangled with a specific answer backbone. Upgrading to a newer or larger QA model may then require retraining or re-tuning the memory management policy. An ideal write-side router would operate independently of the downstream answer agent, so that it can be trained once and reused across different QA backends without modification. More broadly, prior agent-memory and external-memory architectures suggest that persis-tence can emerge from retrieved memory streams, explicit long-term memory banks, or compressed dialogue summaries (Park et al., 2023; Wang et al., 2023; 2025a). What remains less explored is whether the write-side admission decision itself can be isolated and learned without invoking autoregressive generation at every turn. We address both limitations with MemRouter , an embedding-based memory router that makes per-turn storage decisions entirely in embedding space. Instead of generating mem-ory actions in text, the router encodes recent conversational context into a short sequence of chunks, maps those chunk embeddings through a frozen LLM backbone, and predicts whether the current turn should be stored using lightweight classification heads. This removes per-turn autoregressive decoding from the write path while keeping the admission policy separate from the downstream answer agent, so the same router can be reused across QA backbones. As we show later, this design yields both higher matched-harness accuracy and substantially lower write-side latency than an LLM-based manager. Our contributions are threefold: an embedding-based write-side router that replaces per-turn memory-management decoding with a forward-only classifier built from a frozen backbone plus ∼12M trainable parameters; a supervised training pipeline using teacher-generated turn-level labels without reinforcement learning while preserving clean conversation-level data splits; and controlled experiments showing that, under identical re-trieval and prompting conditions, MemRouter’s embedding-based admission outperforms an LLM-based manager and stronger matched-budget baselines. 
+
+# 2 Related Work 
+
+Memory Architectures for LLM Agents. The need for external memory in LLM agents is widely recognized, because context windows, although growing, remain insufficient for long-horizon tasks. MemGPT (Packer et al., 2023) pioneered the analogy between OS virtual memory and LLM memory management, introducing a paging mechanism between main context and external storage. A-MEM (Xu et al., 2025) organizes memories through Zettelkasten-inspired indexing, MemoryBank (Zhong et al., 2024) models temporal decay 2Preprint. Under review. and reinforcement, and Mem0 (Chhikara et al., 2025) provides a modular stack that combines graph-based and embedding-based retrieval. Generative Agents (Park et al., 2023) maintains a retrieved memory stream with reflection and planning, while LONGMEM (Wang et al., 2023) augments a language model with a long-term memory bank. Compression-oriented dialogue memory methods such as recursive summarization (Wang et al., 2025a) and compressive memory for long conversations (Chen et al., 2024) also target long-horizon interaction by condensing prior dialogue. Personalized dialogue systems such as Hello Again! (Li et al., 2025), RMM (Tan et al., 2025), and MemInsight (Salama et al., 2025) highlight the importance of long-term memory in realistic interactions. These systems advance memory organization and retrieval , but they typically depend on heuristic rules or the LLM itself for the upstream decision of what to store , the bottleneck our work targets. 
+
+RL-Trained Memory Management. A recent line of work applies reinforcement learn-ing to train LLMs for adaptive memory management. Memory-R1 (Yan et al., 2026) is the closest comparison to our setting: it trains both a Memory Manager, which predicts ADD/UPDATE/DELETE/NOOP operations, and an Answer Agent, which distills retrieved memories before answering, using PPO and GRPO with exact-match reward. Memory-R1 achieves strong results with very limited QA supervision, but both agents are full 7B LLMs and the Memory Manager still performs per-turn generation. AgeMem (Yu et al., 2026) exposes six memory operations as tool calls and trains a unified policy through progressive RL, while A-MAC (Zhang et al., 2026) decomposes admission into interpretable factors such as utility, novelty, and confidence and explicitly studies the latency tradeoffs of this more structured decision process. Related systems such as Mem-α (Wang et al., 2025b), HiAgent (Hu et al., 2025), and ACON (Kang et al., 2025b) also treat memory construction or compression as a learned policy. Our work departs from this line by asking whether the LLM needs to participate in per-turn admission decisions at all. 
+
+Routing and Gating Mechanisms for Memory. Router-based architectures have proven effective across many domains, from Mixture-of-Experts (Shazeer et al., 2017) for efficient LLM inference to specialized routers in retrieval-augmented generation. In the memory domain, RCR-Router (Liu et al., 2025) routes memory subsets to different agents based on role and task stage, MemR3 (Du et al., 2025) routes among retrieve, reflect, and answer actions, G-MemLLM (Xu, 2026) introduces differentiable gates for latent memory updates, and FluxMem (Lu et al., 2026) selects among multiple memory structures through a learned gate. These works show the value of routing in memory systems, but they primarily route retrieval or latent update behavior. Our work instead applies routing to the write-side 
+
+decision of whether a conversational turn should enter long-term memory, and does so at the embedding level rather than through autoregressive generation. 
+
+# 3 Method 
+
+3.1 Overview 
+
+The central design principle of MemRouter is to separate the decision of what to remember from the capability of answering questions. Memory management decisions, which are made for every conversational turn, should avoid per-turn autoregressive decoding overhead. Question answering can still use full LLM generation. This asymmetry motivates our three-component architecture, summarized in Figure 1, which separates the per-turn write path from the question-time read and answer path: (1) Memory Router processes every conversation turn to decide whether it should be stored. Since this component is invoked hundreds of times per conversation, it should avoid per-turn autoregressive decoding. We implement it as an embedding-based classifier built on frozen components. (2) Memory Store maintains the stored entries with dense embeddings for retrieval. It combines semantic matching with keyword search to support diverse question types (factual, temporal, entity-specific). (3) Answer Agent is invoked when the user poses a question. It retrieves relevant memories and generates an answer using a frozen LLM. 3Preprint. Under review. 
+
+Figure 1: MemRouter system overview. Left: Write path. Given turn xt and history Ht,the router forms contextual chunks, encodes them into dense embeddings, projects them into the frozen backbone space, contextualizes them, and predicts whether the turn should be written to memory. If the decision is ADD, the admitted item is stored in persistent memory. Center: Persistent memory. Stored entries retain verbatim turn text together with timestamp and speaker metadata. Right: Read / QA path. At question time, hybrid retrieval ranks the stored memories and returns the top evidence to a frozen answer agent, which performs the only text-generation step in the pipeline. 
+
+3.2 Memory Router Architecture 
+
+The router must process each turn efficiently while still capturing enough semantic content to make informed storage decisions. Our design leverages a frozen LLM backbone’s repre-sentational power while avoiding per-turn text-generation overhead. Given a conversation turn xt with history Ht = {x1, . . . , xt−1}, the router proceeds in three stages: 
+
+Stage 1: Contextual Embedding and Projection. To make an informed storage decision, the router must understand the current turn in context : a turn saying “Let’s take the earlier one” is unimportant on its own but may confirm a concrete plan when considered with preceding turns. We first partition the recent dialogue context into a sequence of fixed-size chunks 
+
+Ct = [ c(1) 
+
+> t
+
+, . . . , c(L) 
+
+> t
+
+], (1) where each chunk contains up to 5 turns and L ≤ 13 (the current chunk plus up to 12 history chunks). We then encode each chunk with a sentence transformer ϕ (BGE-large-en-v1.5 (Xiao et al., 2023), 335M parameters, 1024-dimensional output): 
+
+Et = [ ϕ(c(1) 
+
+> t
+
+); . . . ; ϕ(c(L) 
+
+> t
+
+)] ∈ RL×d. (2) Here d = 1024, and the chunking strategy balances context breadth with computational efficiency: each chunk captures a coherent conversational segment, while the 12-chunk history window covers the most recent 60 turns. These sentence embeddings are then mapped to the backbone hidden dimension ( d′ = 3584 for Qwen2.5-7B) with a two-layer projection that applies LayerNorm and GELU: 
+
+Ht = P(Et) ∈ RL×d′
+
+, (3) 4Preprint. Under review. where P : Rd → Rd′
+
+is a two-layer MLP with LayerNorm and GELU applied row-wise to each chunk embedding. This projection constitutes ∼8M trainable parameters and is the primary learned component for aligning the embedding space with the backbone’s representation space during router training. 
+
+Stage 2: Backbone Contextualization. The projected chunk embeddings are fed directly into the frozen Qwen2.5-7B transformer body (Qwen Team, 2024) via its continuous input interface instead of the standard token-embedding lookup. This design does not eliminate neural inference: the router still performs a frozen-backbone forward pass for each turn. However, it avoids tokenization-driven autoregressive generation, which is the dominant per-turn cost in Memory-R1-style memory management. In the evaluated setting, the router operates on an unpadded variable-length chunk sequence ordered chronologically from retained history to the current turn, so no explicit attention mask is required at inference time. We do not introduce additional input scaling beyond the projection module itself, which already applies LayerNorm and GELU before the projected chunk sequence is cast to the backbone computation dtype. The backbone’s 28 transformer layers then contextualize the chunk sequence in a single forward pass, enabling the model to capture dependencies between the current turn and its conversational context: 
+
+Zt = F(Ht) ∈ RL×d′
+
+, zt = Z(L) 
+
+> t
+
+, (4) where F denotes the frozen transformer body and zt is the final chunk representation corre-sponding to the current turn. Critically, all backbone parameters are frozen . We therefore leverage the pre-trained transformer’s representational capacity without modifying it, and the backbone can be shared with the answer agent without interference. 
+
+Stage 3: Operation Classification. The pooled representation is passed through lightweight classification heads to produce the routing decision: 
+
+pop  
+
+> t
+
+= softmax (Wop zt + bop ), ptype  
+
+> t
+
+= softmax (Wtype zt + btype ). (5) The operation head predicts a distribution over {ADD , NOOP }, while the content-type head predicts one of {key_facts, emotional, preference, plan, routine } and is only used when the target operation is ADD. Together, these heads add ∼4M parameters. The total trainable parameter count is ∼12M (projection + heads), which is 0.17% of the full 7B model. 
+
+3.3 Router Training 
+
+Training requires turn-level supervision indicating whether a turn should be stored and, if stored, which content type it expresses. We obtain these labels from a teacher model (Qwen3.5-35B-A3B (Qwen Team, 2026)) applied to dialogue turns from LoCoMo, Long-MemEval (Wu et al., 2024), and MSC. For LoCoMo, teacher labeling follows the same conversation-level split as QA evaluation: the first conversation is used for training refer-ence, the second for validation and model selection, and the remaining eight are held out for testing only. No turns from LoCoMo test conversations are used for teacher labeling, router training, threshold tuning, prompt tuning, or model selection. We train only the projection layers and classification heads, while keeping the sentence encoder and LLM backbone frozen. The objective combines weighted cross-entropy for the operation head with standard cross-entropy for the content-type head, applied only when the target operation is ADD: 
+
+L = 1
+
+N
+
+> N
+
+# ∑
+
+> t=1
+
+h
+
+CE w
+
+
+
+yop  
+
+> t
+
+, pop 
+
+> t
+
+
+
++ 1[yop  
+
+> t
+
+=ADD ] · CE 
+
+
+
+ytype  
+
+> t
+
+, ptype 
+
+> t
+
+i 
+
+. (6) In practice, turn embeddings are pre-computed and cached before optimization, so training operates on fixed embeddings rather than repeatedly re-encoding text. We also explored GRPO-style RL fine-tuning, but found supervised training more stable and effective for this lightweight router; quantitative comparisons appear in Section 4.4. 5Preprint. Under review. 
+
+3.4 Memory Store and Retrieval 
+
+When the router decides ADD for a turn, we store the tuple 
+
+mt = ( τt, ut, xt), (7) where τt is the session timestamp, ut is the speaker identity, and xt is the verbatim turn text. At indexing time, this tuple is serialized as [session_datetime] speaker: turn_text , mak-ing the timestamp part of the searchable content. We found that storing raw conversation text outperforms extracting structured facts via an LLM in this setting, because verbatim storage preserves wording that matches gold answers during token-level F1 evaluation. At question-answering time, we retrieve the top-60 most relevant memories using a hybrid scoring function that combines dense semantic matching with BM25, a sparse retrieval function based on weighted keyword overlap: 
+
+sbase (q, m) = λ · cos (ψ(q), ψ(m)) + ( 1 − λ) · BM25 (q, m), λ = 0.7, (8) 
+
+s(q, m) = sbase (q, m) · bspk (q, m) · btmp (q, m). (9) Here ψ denotes the retrieval encoder instantiated from the same BGE model family. Dense cosine similarity captures semantic relatedness (e.g., “dental checkup” matching “dentist appointment”), while BM25 captures exact lexical matches that dense retrieval often misses (e.g., specific dates “March 12, 2026” or proper names). We normalize the dense and sparse scores separately and combine them with λ = 0.7. We further apply lightweight query-dependent adjustments. If a question explicitly men-tions a speaker, memories from that speaker receive an additional boost, with a stronger boost for inferential questions. If a question contains temporal cues, memories with times-tamp metadata are also upweighted. Finally, a session diversity constraint limits over-retrieval from any single session, improving coverage across the full conversation. 
+
+3.5 Answer Generation 
+
+The answer agent is a frozen LLM (Qwen2.5-7B-Instruct (Qwen Team, 2024) or Qwen3.5-35B-A3B (Qwen Team, 2026)) that receives the top-60 retrieved memories and generates an answer. This is the only component that performs LLM text generation, and it is invoked only once per question, not per turn. The agent is never fine-tuned; all its behavior is controlled through prompting. We present retrieved memories grouped by speaker with timestamps, following the format used by Memory-R1 (Yan et al., 2026). This grouping helps the model associate information with specific speakers and attend to temporal ordering within each speaker’s history. We use category-specific prompts based on the question type: For single-hop, temporal, and open-domain questions, the prompt instructs the model to “answer in 5–6 words” and “pay special attention to timestamps.” The word limit is critical: it forces concise answers with less extraneous text, which achieves higher precision in token-level F1 evaluation. For temporal questions specifically, the prompt adds “answer with specific dates (e.g., March 12, 2026), NOT relative terms like ‘next Thursday’,” because we observed that models tend to copy relative temporal expressions from the conversation text rather than resolving them to absolute calendar dates. For multi-hop questions, the prompt removes the word limit and instead instructs “list all relevant items separated by commas,” since multi-hop answers are typically enumerations (e.g., “pottery, hiking, photography, volunteering”) that require more tokens. This category-specific prompting substantially improves multi-hop performance: F1 increases from 26.1 to 52.4 when switching from the default prompt to the multi-hop prompt. 6Preprint. Under review.                                         
+
+> Method Overall Single Multi Temp. Open
+> Baselines from Yan et al. (2026), Qwen2.5-7B-Instruct:
+> LoCoMo (RAG) 9.0 9.6 11.8 8.4 8.7 A-Mem (Xu et al., 2025) 26.1 19.0 14.7 23.7 30.6 Mem0 (Chhikara et al., 2025) 30.6 25.0 20.3 33.2 32.7 MemoryOS (Kang et al., 2025a) 34.6 29.6 21.0 26.3 40.9 Memory-R1-GRPO (Yan et al., 2026) 43.1 33.6 23.6 47.8 46.9
+> MemRouter (Qwen2.5-7B-Instruct) 52.0 57.5 52.4 44.0 27.1
+> Backbone transfer (same router)
+> MemRouter (Qwen3.5-35B-A3B answer agent) 55.5 60.9 56.1 49.7 23.8
+
+Table 1: End-to-end results on LoCoMo test set (F1, excluding adversarial). Baseline numbers from Yan et al. (2026) use Qwen2.5-7B-Instruct. The first MemRouter row is the like-for-like 7B comparison; the final row is reported separately as a backbone-transfer result that swaps only the answer agent to Qwen3.5-35B-A3B, with no router retraining. Each system uses its own retrieval and prompting pipeline. 
+
+# 4 Experiments 
+
+4.1 Setup 
+
+We evaluate on LoCoMo (Maharana et al., 2024), following Memory-R1’s 1:1:8 split and excluding adversarial questions. For MemRouter, LoCoMo supervision follows the same conversation-level split: conversation 1 is used for training, conversation 2 for validation, and conversations 3–10 are held out for test only. No LoCoMo test conversations are used in teacher labeling, router training, threshold tuning, prompt tuning, or model selection. Our primary baseline is Memory-R1 (Yan et al., 2026); we compare against their reported Qwen2.5-7B-Instruct results. We adopt the official LoCoMo token-level F1 metric. Detailed benchmark statistics, split counts, metric definitions, baseline descriptions, and training hyperparameters are deferred to Appendix A.1 and Appendix A.2. 
+
+4.2 Main Results 
+
+Table 1 compares the end-to-end MemRouter system against published baselines on the LoCoMo test set. All baseline numbers (LoCoMo RAG through Memory-R1-GRPO) are taken from Yan et al. (2026) under their Qwen2.5-7B-Instruct evaluation, so the first Mem-Router row is the like-for-like 7B comparison. The final row is shown separately as a backbone-transfer result that swaps only the answer agent to Qwen3.5-35B-A3B, with no router retraining. Note that the baseline systems each use their own retrieval and prompting pipelines, so these numbers reflect full system-level performance rather than a controlled comparison of admission policies alone (see Section 4.3 for the latter). In the like-for-like 7B comparison, MemRouter achieves the highest single-hop (57.5) and multi-hop (52.4) F1 among all methods. Open-domain F1 (27.1 with 7B) trails Memory-R1-GRPO (46.9), which we attribute to the frozen answer agent’s limited inference capability rather than a routing failure. The separate 35B transfer row shows that swapping only the answer agent to Qwen3.5-35B-A3B (4-bit, ∼18GB) raises temporal F1 to 49.7 and overall F1 to 55.5. The router weights are not retrained , demonstrating backbone-agnostic transfer. These end-to-end numbers combine write-side admission with each system’s retrieval and prompting pipeline. Section 4.3 therefore reports a matched-harness comparison that fixes the model, retrieval, and prompts and isolates the admission policy itself. 
+
+Backbone Transfer to LLaMA-3.1-8B. To validate that MemRouter generalizes across LLM backbones, we retrain only the router’s lightweight heads ( ∼12M parameters) with 7Preprint. Under review. 
+
+Method Overall Single Multi Temp. Open 
+
+Store-all (LLaMA-3.1-8B) 50.6 60.4 38.3 42.3 26.2 MemRouter (LLaMA-3.1-8B) 49.1 57.0 36.2 46.3 24.9 MemRouter (Qwen2.5-7B) 52.0 57.5 52.4 44.0 27.1 
+
+Table 2: Backbone transfer to LLaMA-3.1-8B-Instruct. The router heads are retrained with the LLaMA backbone frozen; the same LLaMA model serves as the answer agent. F1 excluding adversarial. The Qwen row is reproduced from Table 1 for reference. a frozen LLaMA-3.1-8B-Instruct backbone and use the same model as the answer agent. Table 2 reports the results alongside a store-all baseline under the same backbone. With LLaMA-3.1-8B, MemRouter achieves an overall F1 of 49.1, within 3 points of the Qwen2.5-7B result (52.0), despite using a completely different backbone family. Temporal F1 (46.3) actually exceeds the Qwen result (44.0), approaching Memory-R1’s 47.8. The multi-hop gap (36.2 vs. 52.4) is partly attributable to the router’s higher storage rate ( ∼70% vs. ∼62%), which introduces retrieval noise for multi-hop queries that require combining information across fewer, more relevant memories. These results confirm that the router architecture transfers across backbone families with only head retraining, consistent with our backbone-agnostic design goal. 
+
+4.3 Controlled Comparison with an LLM Manager 
+
+To isolate the effect of the write-side admission policy, we compare MemRouter against a local Memory-R1-style LLM-based memory manager baseline under a matched harness: both methods use the same Qwen2.5-7B model, same hybrid retrieval, and same category-specific prompts, and differ only in how they decide whether to store each turn. Figure 2a summarizes the matched-harness F1 comparison, while Figure 2b shows the relative wall-clock efficiency comparison. Overall Single  
+
+> hop
+> Multi
+> hop
+> Temp. Open
+> domain
+> 20
+> 30
+> 40
+> 50
+> 60
+> F1 (%)
+> LLM Manager
+> MemRouter
+
+(a) Matched-harness F1 comparison. Mgmt  
+
+> p50
+> Mgmt
+> p95
+> Write
+> total
+> QA
+> p50
+> Through-
+> put
+> 0
+> 5
+> 10
+> 15
+> 20
+> Improvement ( ×) 16.7 ×
+> 19.9 ×
+> 17.2 ×
+> 1.4 ×
+> 10.8 ×
+
+(b) Relative efficiency improvements. 
+
+Figure 2: Controlled comparison with an LLM-based memory manager, where the only difference is the write-side admission policy. Panel (a) reports matched-harness F1 ex-cluding adversarial questions, with overall 95% bootstrap CIs reported in the text and Appendix Table 4. Panel (b) reports relative efficiency improvements, expressed as how many times MemRouter improves over the LLM manager on memory-management p50 latency, memory-management p95 latency, total write-path time, QA p50 latency, and end-to-end throughput; exact raw values are reported in Appendix Table 5. Under these controlled conditions, MemRouter outperforms the LLM-based manager on 
+
+every question category, with the largest gains on single-hop (+14%) and multi-hop (+19%). The overall 95% bootstrap confidence intervals do not overlap ( [51, 53 ] vs. [42, 49 ]), indicating a reliable difference. The LLM manager also shows higher per-conversation variance (std = 5.5 vs. 2.1), suggesting less consistent memory decisions across conversation styles. 8Preprint. Under review.                                           
+
+> Policy Store% F1 Single Multi Temp. Open
+> Store-all (upper bound) 100% 53.7 60.5 53.7 43.8 25.6
+> MemRouter 62% 50.8 56.2 52.2 42.2 26.1
+> MLP-only (no backbone) 62% 50.0 54.7 51.7 43.3 24.9 Keyword heuristic 62% 47.2 50.5 52.1 41.8 21.3 Random 62% 42.8 45.8 44.9 38.5 24.1 Recent-k62% 38.6 42.9 42.6 27.8 21.8
+
+Table 3: Budget-matched storage policy comparison. All policies store ∼62% of turns (except store-all) and use the same hybrid retrieval pipeline, speaker-grouped prompts, and Qwen2.5-7B answer agent. Only the write-side storage decision varies. For score-based policies (keyword, MLP, MemRouter), we rank turns by policy score and select the top 62%. F1 excluding adversarial. 
+
+Wall-Clock Efficiency. Using the same matched harness, we also measure wall-clock efficiency. Figure 2 (right) plots the relative improvement factors for the main latency and throughput metrics, while Appendix Table 5 reports the full latency, throughput, and GPU-memory numbers. The per-turn memory management latency is 17 × lower for MemRouter (58 ms vs. 970 ms at p50), because the router performs a single frozen forward pass over pre-computed embeddings rather than autoregressive text generation. This translates to a 17 × reduction in total write-path wall-clock time (293 s vs. 5,028 s) and an 11 × improvement in end-to-end throughput (2.58 vs. 0.24 QA/s). GPU peak memory is slightly higher for MemRouter (31.2 vs. 26.6 GB) due to the additional BGE-large encoder and router projection heads. 
+
+4.4 Ablation Studies Budget-Matched Storage Policies. Table 3 reports the full storage-policy comparison under a matched 62% storage budget. At that budget, MemRouter achieves the best overall F1 (50.8), ahead of MLP-only (50.0), keyword heuristic (47.2), random storage (42.8), and recency-based storage (38.6). Store-all remains the unconstrained upper bound at 53.7, indicating that learned admission matters most when storage is limited rather than when every turn can simply be retained. This matched-budget view isolates storage selection quality from raw storage volume. It also shows that contextual routing retains an advantage over both heuristic and simpler learned policies when capacity is fixed. 19.4 45.9 64.9 80.4 94.5 
+
+> Stored Turns (%)
+> 20
+> 25
+> 30
+> 35
+> 40
+> 45
+> 50
+> 55
+> F1 (%)
+> MemRouter
+> Random
+
+Figure 3: Memory budget sweep: F1 (%, excluding adversarial questions) versus storage ratio. 
+
+Memory Budget Curve. To characterize the accuracy–storage tradeoff, we sweep the router’s ADD threshold from 0.1 to 0.9 and compare against random storage at each matched budget. This matched-budget comparison separates storage qual-ity from the trivial advantage of simply retaining more turns under the same budget and storage vol-ume. Figure 3 shows that MemRouter consistently outperforms random storage at every budget level in the sweep, with the gap widening as the budget de-creases: at 94.5% storage the advantage is only 1.0 F1, but at 45.9% it grows to 11.4. This demonstrates that the router’s learned selectivity becomes increasingly valuable in resource-constrained settings where not all turns can be stored. 
+
+Descriptive Factor Attribution. Figure 4 summarizes descriptive factor averages on a mean-F1 percentage scale. Admission policy spans the widest range, from 38.7 for random storage to 49.0 for MemRouter, with store-all reaching 50.5 as an unconstrained reference. 9Preprint. Under review. Prompt style shifts mean F1 from 44.3 with a generic prompt to 49.5 with category-specific prompting, whereas retrieval changes only modestly from 46.5 for cosine-only search to 47.2 for hybrid retrieval. Exact marginal means are reported in Appendix Table 8. Random        
+
+> MLP-only
+> Keyword
+> MemRouter
+> Store-
+> all
+> Generic
+> Category-
+> specific
+> Cosine-
+> only
+> Hybrid
+> 0
+> 20
+> 40
+> 60
+> Mean F1 (%)
+> Admission policy Prompt style Retrieval
+> 38.7%
+> 47.9% 48.3% 49.0% 50.5%
+> 44.3%
+> 49.5% 46.5% 47.2%
+
+Figure 4: Mean F1 (%) for each admission policy, prompt style, and retrieval setting after averaging over the other two factors. Store-all is included as an unconstrained reference and is not budget-matched. Together with the end-to-end comparison against Memory-R1 (Table 1), the matched-harness comparison (Figure 2a), the budget sweep (Figure 3), and the descriptive factor chart (Figure 4) collectively support the conclusion that learned write-side admission improves both accuracy and efficiency. Detailed retrieval/prompt ablations and additional supporting results are reported in Appendix C. 
+
+# 5 Conclusion 
+
+We presented MemRouter, an embedding-based memory router that avoids per-turn au-toregressive decoding in the memory-management loop while leaving answer generation to a separate downstream stage. Under a matched-harness LoCoMo evaluation with the same Qwen2.5-7B backbone, retrieval pipeline, and prompts, it outperforms an LLM-based memory manager on every question category while reducing memory-management p50 latency from 970 ms to 58 ms. These results show that write-side memory admission can be learned effectively as a small supervised router, enabling long-horizon conversational systems to build useful external memory without a full generation call on every turn. 
+
+# References 
+
+Nuo Chen, Hongguang Li, Juhua Huang, Baoyuan Wang, and Jia Li. Compress to impress: Unleashing the potential of compressive memory in real-world long-term conversations, 2024. URL https://arxiv.org/abs/2402.11975 .Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. Mem0: Building production-ready ai agents with scalable long-term memory, 2025. URL https: //arxiv.org/abs/2504.19413 .Xingbo Du, Loka Li, Duzhen Zhang, and Le Song. Memr 3: Memory retrieval via reflective reasoning for llm agents, 2025. URL https://arxiv.org/abs/2512.20237 .Mengkang Hu, Tianxing Chen, Qiguang Chen, Yao Mu, Wenqi Shao, and Ping Luo. Hia-gent: Hierarchical working memory management for solving long-horizon agent tasks with large language model. In Proceedings of the 63rd Annual Meeting of the Associ-ation for Computational Linguistics (Volume 1: Long Papers) , pp. 32779–32798. Associa-tion for Computational Linguistics, 2025. doi: 10.18653/v1/2025.acl-long.1575. URL 
+
+https://doi.org/10.18653/v1/2025.acl-long.1575 .10 Preprint. Under review. Yuyang Hu, Shichun Liu, Yanwei Yue, Guibin Zhang, Boyang Liu, Fangyi Zhu, Jiahang Lin, Honglin Guo, Shihan Dou, Zhiheng Xi, Senjie Jin, Jiejun Tan, Yanbin Yin, Jiongnan Liu, Zeyu Zhang, Zhongxiang Sun, Yutao Zhu, Hao Sun, Boci Peng, Zhenrong Cheng, Xuanbo Fan, Jiaxin Guo, Xinlei Yu, Zhenhong Zhou, Zewen Hu, Jiahao Huo, Junhao Wang, Yuwei Niu, Yu Wang, Zhenfei Yin, Xiaobin Hu, Yue Liao, Qiankun Li, Kun Wang, Wangchunshu Zhou, Yixin Liu, Dawei Cheng, Qi Zhang, Tao Gui, Shirui Pan, Yan Zhang, Philip Torr, Zhicheng Dou, Ji-Rong Wen, Xuanjing Huang, Yu-Gang Jiang, and Shuicheng Yan. Memory in the age of ai agents, 2026. URL https://arxiv.org/abs/2512.13564 .Jiazheng Kang et al. MemoryOS: An operating system for llm agent long-term memory. 
+
+arXiv preprint arXiv:2506.06326 , 2025a. Minki Kang, Wei-Ning Chen, Dongge Han, Huseyin A. Inan, Lukas Wutschitz, Yanzhi Chen, Robert Sim, and Saravan Rajmohan. Acon: Optimizing context compression for long-horizon llm agents, 2025b. URL https://arxiv.org/abs/2510.00615 .Hao Li, Chenghao Yang, An Zhang, Yang Deng, Xiang Wang, and Tat-Seng Chua. Hello again! LLM-powered personalized agent for long-term dialogue. In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , pp. 5259–5276. Associa-tion for Computational Linguistics, 2025. doi: 10.18653/v1/2025.naacl-long.272. URL 
+
+https://aclanthology.org/2025.naacl-long.272/ .Jun Liu, Zhenglun Kong, Changdi Yang, Fan Yang, Tianqi Li, Peiyan Dong, Joannah Nan-jekye, Hao Tang, Geng Yuan, Wei Niu, Wenbin Zhang, Pu Zhao, Xue Lin, Dong Huang, and Yanzhi Wang. Rcr-router: Efficient role-aware context routing for multi-agent llm systems with structured memory, 2025. URL https://arxiv.org/abs/2508.04903 .Mingfei Lu, Mengjia Wu, Feng Liu, Jiawei Xu, Weikai Li, Haoyang Wang, Zhengdong Hu, Ying Ding, Yizhou Sun, Jie Lu, and Yi Zhang. Choosing how to remember: Adaptive memory structures for llm agents, 2026. URL https://arxiv.org/abs/2602.14038 .Adyasha Maharana, Dong-Ho Lee, Sergey Tulyakov, Mohit Bansal, Francesco Barbieri, and Yuwei Fang. Evaluating very long-term conversational memory of llm agents. In 
+
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pp. 13851–13870. Association for Computational Linguistics, 2024. doi: 10. 18653/v1/2024.acl-long.747. URL https://doi.org/10.18653/v1/2024.acl-long.747 .Jiayan Nan, Wenquan Ma, Wenlong Wu, and Yize Chen. Nemori: Self-organizing agent memory inspired by cognitive science, 2025. URL https://arxiv.org/abs/2508.03341 .Charles Packer, Sarah Wooders, Kevin Lin, Vivian Fang, Shishir G. Patil, Ion Stoica, and Joseph E. Gonzalez. Memgpt: Towards llms as operating systems, 2023. URL https: //arxiv.org/abs/2310.08560 .Joon Sung Park, Joseph O’Brien, Carrie Jun Cai, Meredith Ringel Morris, Percy Liang, and Michael S. Bernstein. Generative agents: Interactive simulacra of human behavior. In 
+
+Proceedings of the 36th Annual ACM Symposium on User Interface Software and Technology ,pp. 1–22. ACM, 2023. doi: 10.1145/3586183.3606763. URL https://doi.org/10.1145/ 3586183.3606763 .Mathis Pink, Qinyuan Wu, Vy Ai Vo, Javier Turek, Jianing Mu, Alexander Huth, and Mariya Toneva. Position: Episodic memory is the missing piece for long-term llm agents, 2025. URL https://arxiv.org/abs/2502.06975 .Qwen Team. Qwen2.5: A party of foundation models, sep 2024. URL https://qwenlm. github.io/blog/qwen2.5/ .Qwen Team. Qwen3.5: Towards native multimodal agents, feb 2026. URL https://qwen. ai/blog?id=qwen3.5 .Rana Salama, Jason Cai, Michelle Yuan, Anna Currey, Monica Sunkara, Yi Zhang, and Yassine Benajiba. MemInsight: Autonomous memory augmentation for llm agents, 2025. URL https://arxiv.org/abs/2503.21760 .11 Preprint. Under review. Noam Shazeer, Azalia Mirhoseini, Krzysztof Maziarz, Andy Davis, Quoc Le, Geoffrey Hinton, and Jeff Dean. Outrageously large neural networks: The sparsely-gated mixture-of-experts layer, 2017. URL https://arxiv.org/abs/1701.06538 .Zhen Tan, Jun Yan, I-Hung Hsu, Rujun Han, Zifeng Wang, Long T. Le, Yiwen Song, Yanfei Chen, Hamid Palangi, George Lee, Anand Iyer, Tianlong Chen, Huan Liu, Chen-Yu Lee, and Tomas Pfister. In prospect and retrospect: Reflective memory management for long-term personalized dialogue agents, 2025. URL https://arxiv.org/abs/2503.08026 .Qingyue Wang, Yanhe Fu, Yanan Cao, Shuai Wang, Zhiliang Tian, and Liang Ding. Re-cursively summarizing enables long-term dialogue memory in large language mod-els. Neurocomputing , 639:130193, jul 2025a. doi: 10.1016/j.neucom.2025.130193. URL 
+
+https://doi.org/10.1016/j.neucom.2025.130193 .Weizhi Wang, Li Dong, Hao Cheng, Xiaodong Liu, Xifeng Yan, Jianfeng Gao, and Furu Wei. Augmenting language models with long-term memory. In Advances in Neural Information Processing Systems 36 , pp. 74530–74543. Neural Information Processing Systems Founda-tion, 2023. doi: 10.52202/075280-3259. URL https://doi.org/10.52202/075280-3259 .Yu Wang, Ryuichi Takanobu, Zhiqi Liang, Yuzhen Mao, Yuanzhe Hu, Julian McAuley, and Xiaojian Wu. Mem-α: Learning memory construction via reinforcement learning, 2025b. URL https://arxiv.org/abs/2509.25911 .Di Wu, Hongwei Wang, Wenhao Yu, Yuwei Zhang, Kai-Wei Chang, and Dong Yu. Long-MemEval: Benchmarking chat assistants on long-term interactive memory, 2024. URL 
+
+https://arxiv.org/abs/2410.10813 .Shitao Xiao, Zheng Liu, Peitian Zhang, Niklas Muennighoff, Defu Lian, and Jian-Yun Nie. C-Pack: Packed resources for general chinese embeddings, 2023. URL https: //arxiv.org/abs/2309.07597 .Wujiang Xu, Zujie Liang, Kai Mei, Hang Gao, Juntao Tan, and Yongfeng Zhang. A-mem: Agentic memory for llm agents, 2025. URL https://arxiv.org/abs/2502.12110 .Xun Xu. G-memllm: Gated latent memory augmentation for long-context reasoning in large language models, 2026. URL https://arxiv.org/abs/2602.00015 .Sikuan Yan, Xiufeng Yang, Zuchao Huang, Ercong Nie, Zifeng Ding, Zonggen Li, Xiaowen Ma, Jinhe Bi, Kristian Kersting, Jeff Z. Pan, Hinrich Schütze, Volker Tresp, and Yunpu Ma. Memory-r1: Enhancing large language model agents to manage and utilize memories via reinforcement learning, 2026. URL https://arxiv.org/abs/2508.19828 .Yi Yu, Liuyi Yao, Yuexiang Xie, Qingquan Tan, Jiaqi Feng, Yaliang Li, and Libing Wu. Agentic memory: Learning unified long-term and short-term memory management for large language model agents, 2026. URL https://arxiv.org/abs/2601.01885 .Guilin Zhang, Wei Jiang, Xiejiashan Wang, Aisha Behr, Kai Zhao, Jeffrey Friedman, Xu Chu, and Amine Anoun. Adaptive memory admission control for llm agents, 2026. URL 
+
+https://arxiv.org/abs/2603.04549 .Zeyu Zhang, Quanyu Dai, Xiaohe Bo, Chen Ma, Rui Li, Xu Chen, Jieming Zhu, Zhenhua Dong, and Ji-Rong Wen. A survey on the memory mechanism of large language model-based agents. ACM Transactions on Information Systems , 43(6):1–47, sep 2025. doi: 10.1145/ 3748302. URL https://doi.org/10.1145/3748302 .Wanjun Zhong, Lianghong Guo, Qiqi Gao, He Ye, and Yanlin Wang. MemoryBank: Enhanc-ing large language models with long-term memory. Proceedings of the AAAI Conference on Artificial Intelligence , 38(17):19724–19731, mar 2024. doi: 10.1609/aaai.v38i17.29946. URL 
+
+https://doi.org/10.1609/aaai.v38i17.29946 .12 Preprint. Under review. 
+
+# A Experimental Details 
+
+This appendix first summarizes the dataset, evaluation protocol, and implementation set-tings used throughout the paper. 
+
+A.1 Dataset and Evaluation Details Benchmark. We evaluate on LoCoMo (Maharana et al., 2024), the standard benchmark for long-term conversational memory. The released benchmark consists of 10 multi-session con-versations, each spanning approximately 35 sessions over several months, with an average of 588.2 turns and 16,618.1 tokens per conversation. Each conversation is annotated with approximately 200 QA pairs spanning five categories: single-hop (factual recall from one session), multi-hop (synthesizing across sessions), temporal (date/time reasoning), open-domain (inference from indirect evidence), and adversarial (questions about nonexistent information). 
+
+Data Split. Following the protocol established by Memory-R1 (Yan et al., 2026), we use a 1:1:8 train/validation/test split: the first conversation (152 QA pairs) for training reference, the second (81 QA pairs) for validation, and the remaining eight conversations (1,307 QA pairs after excluding adversarial) for testing. LoCoMo supervision follows this same split: conversation 1 is the only LoCoMo source used for training reference, conversation 2 is used for validation and model selection, and conversations 3–10 are held out for test only. We exclude adversarial questions from evaluation, consistent with Memory-R1, which notes that this subset “lacks ground-truth answers” suitable for F1 evaluation. 
+
+Metrics. We adopt the official LoCoMo evaluation protocol: token-level F1 with Porter stemming and answer normalization (lowercasing, removing articles including “and”, removing punctuation and commas). Category-specific evaluation logic is applied: multi-hop questions use comma-split matching (each gold sub-answer is matched against the best prediction sub-answer); open-domain questions use the first answer before any semicolons; temporal and single-hop questions use standard F1. 
+
+Baselines. Our primary baseline is Memory-R1 (Yan et al., 2026), the current state-of-the-art on LoCoMo with RL-trained memory management. We use their reported numbers on Qwen2.5-7B-Instruct. We also report ablations that serve as internal baselines (dense-only retrieval, different embedding models, alternative training approaches). 
+
+A.2 Implementation Details Training Details. Router supervision is generated by a Qwen3.5-35B-A3B teacher model in 4-bit quantization over a unified label set of 28,415 turns drawn from LoCoMo, Long-MemEval, and MSC. For LoCoMo, only conversation 1 contributes training-side supervision, conversation 2 is reserved for validation and model selection, and conversations 3–10 are excluded from teacher labeling and router training. We keep the sentence encoder and LLM backbone frozen and train only the projection and classification heads. All BGE embeddings are pre-computed once and cached before optimization. Unless otherwise noted, supervised router training uses 5 epochs, batch size 16, learning rate 10 −3, and conversation-level validation for model selection. Training takes approximately 10 minutes on a single NVIDIA B200 GPU, while one-time label generation runs at about 4.8 turns per second and completes in approximately 98 minutes. 
+
+# B Exact Numbers for Main-Paper Figures 
+
+This section reports the exact numeric values underlying the main-paper comparison figures. 13 Preprint. Under review. 
+
+Matched-Harness Comparison. Table 4 reports the exact matched-harness numbers un-derlying Figure 2. Both methods use the same Qwen2.5-7B answer model, retrieval pipeline, and prompts, and differ only in the write-side admission policy.                  
+
+> Method Overall Single Multi Temp. Open
+> LLM Manager 45.6 [42,49] 50.4 44.2 43.8 20.5 MemRouter 52.0 [51,53] 57.5 52.4 44.0 27.1
+
+Table 4: Exact values underlying Figure 2a. Both methods use the same Qwen2.5-7B answer model, hybrid retrieval pipeline, and category-specific prompts; they differ only in the write-side admission policy. Overall 95% bootstrap confidence intervals are shown in brackets. 
+
+Wall-Clock Efficiency. Table 5 reports the exact wall-clock measurements underlying Figure 2. Both methods use the same Qwen2.5-7B model, retrieval pipeline, and prompts; they differ only in the write-side admission policy.               
+
+> Metric LLM Manager MemRouter
+> Memory mgmt p50 latency (ms/turn) 970 58
+> Memory mgmt p95 latency (ms/turn) 1,415 71
+> Memory mgmt total time (s) 5,028 293
+> QA p50 latency (ms/question) 198 141
+> End-to-end throughput (QA/s) 0.24 2.58
+> GPU peak memory (GB) 26.6 31.2
+
+Table 5: Exact values underlying Figure 2b. Measurements are reported on the LoCoMo test set (8 conversations, ∼5,000 turns, ∼1,300 questions). Both methods use the same Qwen2.5-7B model, hybrid retrieval pipeline, and answer prompts; the LLM manager baseline performs autoregressive generation for each turn, whereas MemRouter performs only frozen forward passes. 
+
+Memory Budget Sweep Values. Table 6 reports the exact budget-sweep values underlying Figure 3.                   
+
+> Store% MemRouter F1 Random F1 ∆
+> 94.5% 53.7 52.7 +1.0 80.4% 53.2 47.4 +5.8 64.9% 52.0 41.8 +10.2 45.9% 46.1 34.8 +11.4 19.4% 33.5 23.3 +10.2
+
+Table 6: Exact values underlying Figure 3. Each row reports the matched storage ratio, the resulting F1 (%) for MemRouter and random storage, and the absolute F1-point gap between the two policies. 
+
+# C Additional Ablations 
+
+This section collects supporting ablations that complement, but are not required to read, the main-paper results. 
+
+Retrieval and Prompt Components. Table 7 reports the incremental ablation over retrieval and prompting components. All configurations use the same trained router; only the retrieval and prompting pipeline changes. The two most impactful changes are: (1) upgrading the retrieval embedding from MiniLM-L6-v2 (22M parameters, 384 dimensions) to BGE-large-en-v1.5 (Xiao et al., 2023) (335M 14 Preprint. Under review.                             
+
+> Configuration Single Multi Temp. Open
+> Dense only (MiniLM-L6-v2) 29.5 18.9 11.0 13.9 + BGE-large embedding 44.1 33.8 19.4 12.8 + BM25 hybrid retrieval 44.5 35.4 19.9 14.2 + Speaker/temporal boost 44.5 35.4 19.9 14.2 + Speaker-grouped prompt 54.8 26.1 34.5 17.8 + Category-specific prompts 57.5 52.4 44.0 27.1
+
+Table 7: Incremental ablation of retrieval and prompt components. Starting from dense-only retrieval with MiniLM-L6-v2, each row adds one retrieval or prompting component while keeping the trained router fixed. All evaluations use Qwen2.5-7B as the answer agent, and F1 excludes adversarial questions.                           
+
+> Factor Level Mean F1 ∆vs. baseline
+> Admission policy Random 38.7 —MLP-only 47.9 +9.2 Keyword heuristic 48.3 +9.6
+> MemRouter 49.0 +10.3
+> Store-all †50.5 +11.8 Prompt style Generic 44.3 —
+> Category-specific 49.5 +5.2
+> Retrieval Cosine-only 46.5 —
+> Hybrid (dense+BM25) 47.2 +0.7
+> ∆is measured relative to the first row in each factor block.
+> †Store-all is shown separately because it is not budget-matched.
+
+Table 8: Descriptive factor attribution via factorial averaging over 20 configurations (5 admission policies × 2 retrieval variants × 2 prompt styles). Each row reports the mean F1 for one factor level after averaging over all settings of the other two factors. All admission policies are budget-matched to approximately 62% storage except store-all. parameters, 1024 dimensions), which improves single-hop F1 by 14.6 points; and (2) intro-ducing category-specific prompts, particularly the multi-hop prompt that removes the “5–6 words” constraint and instructs list-style answers, which lifts multi-hop F1 from 26.1 to 52.4. The speaker-grouped memory presentation substantially helps temporal questions (19.9 →
+
+34.5) by organizing memories chronologically within each speaker’s history. 
+
+Factor Attribution. Table 8 reports descriptive factor attribution via factorial averaging over admission policy, retrieval method, and prompt style. 
+
+Admission policy shows the largest budget-matched contrast in this descriptive averaging: MemRouter reaches mean F1 49.0, compared with 38.7 for random storage ( +10.3), while unconstrained store-all reaches 50.5 overall. Prompt style shows the next-largest contrast, with category-specific prompting improving mean F1 by +5.2 over the generic prompt, reflecting the importance of answer-format alignment with the evaluation metric. Retrieval method shows the smallest contrast ( +0.7), indicating that our hybrid retrieval provides only a modest improvement over cosine-only search in this setting. These descriptive averages suggest that write-side admission and prompt design matter more than the retrieval variant in our setup. 
+
+Router Training Approaches. Table 9 compares our supervised training approach against RL-based alternatives. GRPO without supervised warm-starting catastrophically fails (F1 = 1.1): the randomly initialized router overwhelmingly selects NOOP, resulting in empty memory stores and zero QA reward, providing no learning signal. Even with supervised warm-starting followed by GRPO, the RL phase does not improve over supervised-only training (28.5 vs. 52.0), as the sparse binary EM reward is insufficient to refine the router’s 15 Preprint. Under review. already-reasonable policy. We also attempted training with UPDATE labels (marking semantically similar consecutive turns as updates to existing entries), but this caused the router to over-predict UPDATE at the expense of ADD, collapsing the memory store.           
+
+> Training Approach F1 (excl. adv.) Failure Mode
+> GRPO only 1.1 Cold-start: all NOOP Supervised + GRPO 28.5 GRPO did not improve Supervised (ADD/UPDATE/NOOP) 1.4–12.8 UPDATE over-predicted Supervised (ADD/NOOP) 52.0 —
+
+Table 9: Router training approach comparison. All variants are evaluated with the same retrieval and prompt pipeline; only the router-training procedure changes. This table highlights the cold-start failure of pure RL and the mode-collapse behavior observed when UPDATE labels are introduced. F1 excludes adversarial questions. 
+
+Backbone Scaling. An advantage of MemRouter’s decoupled architecture is that the answer agent can be swapped independently of the router. Table 10 compares Qwen2.5-7B and Qwen3.5-35B-A3B (4-bit) as answer agents, both using identical router weights. The larger model improves all categories except open-domain: single-hop rises from 57.5 to 60.9, multi-hop from 52.4 to 56.1, and temporal from 44.0 to 49.7. The open-domain decline (27.1 
+
+→ 23.8) may be attributable to 4-bit quantization effects on inference-heavy questions.                
+
+> Answer Agent F1 (all) Single Multi Temp. Open
+> Qwen2.5-7B 52.0 57.5 52.4 44.0 27.1
+> Qwen3.5-35B (4-bit) 55.5 60.9 56.1 49.7 23.8
+
+Table 10: Backbone scaling ablation. The router is trained once with Qwen2.5-7B and then kept frozen while only the answer agent changes. This isolates how much downstream answer quality improves when the same write-side policy is paired with a larger LLM. F1 excludes adversarial questions. 
+
+# D Limitations and Future Work 
+
+Our current system has three main limitations. First, open-domain performance remains an area for improvement, suggesting that the frozen answer agent is weaker at multi-step inference from indirect evidence. Second, the router currently learns only ADD and NOOP: attempts to incorporate UPDATE led to mode collapse, highlighting the difficulty of embedding-level memory consolidation. Third, supervised training depends on teacher-generated labels, which introduces an upfront labeling cost; reducing this dependency through weaker supervision or self-supervised objectives is an important direction for future work. 16
