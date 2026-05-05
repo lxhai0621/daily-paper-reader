@@ -1,0 +1,1446 @@
+Title: Semia: Auditing Agent Skills via Constraint-Guided Representation Synthesis
+
+URL Source: https://arxiv.org/pdf/2605.00314v1
+
+Published Time: Mon, 04 May 2026 00:26:38 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Semia : Auditing Agent Skills via Constraint-Guided Representation Synthesis 
+
+# Hongbo Wen 
+
+hongbowen@ucsb.edu University of California, Santa Barbara Santa Barbara, CA, USA 
+
+# Ying Li 
+
+yinglee@ucla.edu University of California, Los Angeles Los Angeles, CA, USA 
+
+# Hanzhi Liu 
+
+hanzhi@ucsb.edu University of California, Santa Barbara Santa Barbara, CA, USA 
+
+# Chaofan Shou 
+
+shou@fuzz.land Fuzzland USA 
+
+# Yanju Chen 
+
+yanju@ucsd.edu University of California, San Diego San Diego, CA, USA 
+
+# Yuan Tian 
+
+yuant@ucla.edu University of California, Los Angeles Los Angeles, CA, USA 
+
+# Yu Feng 
+
+yufeng@cs.ucsb.edu University of California, Santa Barbara Santa Barbara, CA, USA 
+
+## Abstract 
+
+An agent skill is a configuration package that equips an LLM-driven agent with a concrete capability, such as reading email, executing shell commands, or signing blockchain transactions. Each skill is a hybrid artifact—a structured half declares executable interfaces, while a prose half dictates when and how those interfaces fire—and the prose is reinterpreted probabilistically on every invocation. Conventional static analyzers parse the structured half but ignore the prose; LLM-based tools read the prose but cannot reproducibly prove that a tainted input reaches a high-impact sink. We present Semia , a static auditor for agent skills. Semia lifts each skill into the Skill Description Language (SDL), a Datalog fact base that captures LLM-triggered actions, prose-defined conditions, and human-in-the-loop checkpoints. Synthesizing a fact base that is both structurally sound and semantically faithful to the original prose is the central challenge; we address it with Constraint-Guided Representation Synthesis (CGRS), a propose-verify-evaluate loop that refines LLM candidates until convergence. Security proper-ties (e.g., indirect injection, secret leakage, confused deputies, un-guarded sinks, etc.) over an agent skill can then be reduced to Datalog reachability queries. We evaluate Semia on 13,728 real-world skills from public mar-ketplaces. Semia renders all of them auditable and finds that more than half carry at least one critical semantic risk. On a stratified sample of 541 expert-labeled skills, Semia achieves 97.7% recall and an F1 of 90.6%, substantially outperforming signature-based scanners and LLM baselines. 
+
+## Keywords 
+
+Autonomous Agents, Large Language Models, Static Analysis, Vul-nerability Detection 
+
+## 1 Introduction 
+
+AI agents now routinely take actions that used to require a human: they read mailboxes, run shell commands, sign blockchain transac-tions, and call cloud APIs on a user’s behalf [ 1]. What lets an agent do any of this is an agent skill , a small package, distributed through marketplaces like Clawhub [ 28 , 29 ], that tells the agent two things. First, what the agent is technically allowed to do: a list of API endpoints, shell commands, or tools, written as machine-readable configuration. Second, when and how the agent should use those capabilities: a paragraph of English instructions that the LLM reads and follows on every invocation. A wallet skill, for instance, may declare a transfer endpoint in YAML and then state in prose that “external transfers require operator approval; agent-to-agent trans-fers execute instantly.” The first sentence is the agent’s permission; the second is its policy. This split is what makes agent skills dangerous to ship. The capability is enforced by code (the endpoint will fire when called), but the policy that decides whether it should fire lives in a sentence of English that the LLM reinterprets every time the agent runs. An attacker who can place text into anything the agent reads (an inbound email, a scraped web page, a GitHub issue) can rewrite the agent’s understanding of that policy at runtime [ 11 ]. Consider the wallet skill above. A message that arrives in the agent’s inbox saying 
+
+“Initiate a transfer of $500 to my agent account” satisfies, on a plain reading, the prose’s exemption for agent-to-agent transfers. The LLM signs the transaction. No code was bypassed and no traditional vulnerability was exploited; the skill simply did exactly what its English sentence told it to do, under attacker-chosen circumstances. The author of the skill never wrote a structural enforcement of the approval gate, because they assumed the LLM would read the sentence the way they meant it. Skills like this are being shipped at scale. Public marketplaces already distribute hundreds of thousands of them per month [ 26 , 28 ], AI vulnerability reports have spiked 210% year-over-year [ 12 ], and  
+
+> arXiv:2605.00314v1 [cs.CR] 1 May 2026 Conference’17, July 2017, Washington, DC, USA Wen et al.
+
+exploits in the wild (public CVEs against Cline [ 18 ], EchoLeak against Copilot [ 25 , 44 ]) have all followed the same template: the authored skill described a safeguard in prose, and the prose was later reread under attacker influence. None of the defenses currently aimed at this layer would have caught any of them. Signature scanners and malware engines are designed for code that does 
+
+something dangerous; here, the dangerous thing is what the skill 
+
+fails to enforce . LLM-based auditors [ 47 ] read the prose fluently but produce different verdicts on different runs and cannot rule out an attack path, only opine on one. Runtime defenses for prompt injection [ 4, 23 ] catch attacks as they happen, not before the skill ships. What is missing is the analog of static analysis: a tool that can read the skill once, before it is ever installed, and answer a precise question: can attacker-controlled input reach a high-impact action without first crossing an explicitly written safeguard? 
+
+The reason no such tool exists is that the question is hard to even 
+
+phrase over an artifact whose security-relevant content is English prose. Classical static analyzers want a structured representation: a graph of calls, a flow of data, gates that dominate certain paths. A skill provides only fragments of that (declared endpoints, parame-ter names) and embeds the rest in sentences whose semantics the analyzer cannot extract. Asking an LLM to translate the prose into a structured form helps in principle, but a single attempt is brittle: the model omits clauses, paraphrases gates into nonexistent ones, and silently drops the very safeguard the analyst wants to check. The translation step is where every prior attempt has either de-generated into prose-similarity heuristics or fallen back to runtime monitoring. We present Semia , a static analyzer for agent skills that closes this gap. Semia ’s central technical contribution is Constraint-Guided Representation Synthesis (CGRS): rather than asking an LLM to produce a faithful structured representation of a skill in one shot, 
+
+Semia treats the translation as a constrained search. An LLM pro-poses a candidate representation in a small relational language we call the Skill Description Language (SDL), expressive enough to encode actions, data flow, authorization gates, declared secrets, and documentation claims. Two semantic checks then discipline each candidate: a structural validator rejects any candidate whose references, data-flow graph, or annotations are malformed, and a 
+
+semantic scorer projects the candidate back into English and mea-sures how far it has drifted from the original skill. Failures from either check become targeted hints for the next proposal. The loop terminates when a candidate passes both checks, and gives up if the refinement budget is exhausted before any candidate does. Once an SDL representation is accepted, the analysis itself is purely de-terministic. A small library of Datalog rules (eleven detectors in total) answers the auditor’s reachability question over the relational facts. One detector targets unguarded sinks, four target taint-flow violations, and six target structural anomalies. Every finding ships with a witness path the developer can read. We evaluate Semia on 13,728 real-world skills crawled from public marketplaces, with a stratified, expert-labeled subsample of 541 skills ( 𝜅 = 0.83 ) used for head-to-head comparison against a signature-based scanner and an LLM-only auditor. Semia achieves 84.5% precision and 97.7% recall (F1 = 90.6%), substantially out-performing both baselines under shared decoding and prompt-ing settings. An ablation isolates the contribution of each compo-nent: removing SDL drops F1 by 19.9 points; within the SDL-based pipeline, disabling iterative refinement accounts for 4.0 of those points. Beyond the labeled benchmark, Semia discovered 17 critical exploitable zero-day vulnerabilities in deployed skills, all confirmed by the OpenClaw registry maintainers and responsibly disclosed. 
+
+Contributions. This paper makes the following contributions: 
+
+• Skill Description Language. A compact relational schema that exposes the security-relevant content of an agent skill as a finite fact base. 
+
+• Constraint-Guided Representation Synthesis. A bounded refinement loop that lifts a skill into SDL by alternating LLM proposal with structural and semantic feedback. 
+
+• A taxonomy of structural risk patterns. Eleven Datalog de-tectors covering seven vulnerability classes and four malicious-author patterns. 
+
+• Large-scale evaluation. A study on 13,728 real-world skills, including 17 confirmed zero-day disclosures. 
+
+## 2 Background 
+
+This section reviews the four primitives Semia builds on: the anatomy of agent skills (Section 2.1), the indirect-prompt-injection threat model (Section 2.2), Datalog-based reachability over struc-tured intermediate representations (Section 2.3), and the role of LLMs as IR synthesizers (Section 2.4). 
+
+## 2.1 Agent Skills 
+
+An agent skill [ 1] is a configuration package that equips an LLM-driven agent with a specific capability such as reading email, exe-cuting shell commands, querying enterprise databases, or signing blockchain transactions. As introduced in Section 1, skills belong to a broader class of hybrid documents that interleave structured exe-cutable interfaces with unstructured prose prescribing operational policy. Related artifact types include Model Context Protocol (MCP) server manifests, which expose tool endpoints over a standardized JSON-RPC transport [ 27 , 33 ], as well as agent cards and policy-annotated OpenAPI documents. Security analyses of earlier plugin ecosystems [ 15 , 35 ] and MCP-specific threat surveys [ 14 , 32 ] have documented the risks that arise when these artifacts are composed without structural enforcement. Unlike traditional software whose control flow is defined by com-piled source code, an agent’s control flow is probabilistic . Following the tool-augmented LLM paradigm [ 31 , 36 ], the LLM acts as an orchestrator: on each invocation it reads the skill’s prose instruc-tions within its context window, decides which structured API to call, and synthesizes the required parameters. The security-relevant policy is therefore enforced not by a runtime check in executable code but by the LLM’s interpretation of natural language on every turn. Consider clawnads , a real-world multi-agent collaboration skill whose structured region exposes a wallet-send endpoint (POST /agents/NAME/wallet/send ) while its prose region states “external-wallet sends require operator approval; agent-to-agent trans-fers execute instantly .” Two properties make such skills uniquely Semia : Auditing Agent Skills via Constraint-Guided Representation Synthesis Conference’17, July 2017, Washington, DC, USA 
+
+hard to audit. First, the security boundary lives outside executable code: the operator-approval requirement depends entirely on the LLM’s reading of the prose. Second, prose policies admit unbounded surface variation, as developers paraphrase the same constraint across markdown headings, YAML frontmatter, and inline code comments, so any analysis that relies on a fixed parser is fragile by construction. 
+
+## 2.2 Indirect Prompt Injection 
+
+In traditional computing architectures, executable instructions and user-provided data are strictly separated. In agentic environments, system prompts, tool documentation, and untrusted external data (inbound emails, scraped web pages, retrieved documents, GitHub issues) are concatenated into a single context window from which the LLM deduces its next action. This unified context enables indi-rect prompt injection (IPI) [ 11 ]: malicious instructions embedded in external data silently hijack the agent’s reasoning. For instance, an inbound message that invokes the clawnads skill’s agent-to-agent transfer exemption can coerce a high-impact financial action with-out operator approval, a textbook confused-deputy attack that we revisit in detail in Section 3. 
+
+## 2.3 Static Analysis over Structured IRs 
+
+Pre-deployment static analysis is the standard tool for detecting the absence of a target attack pattern in a software artifact. It rests on two primitives: a structured intermediate representation (IR) that captures the artifact’s data-flow and control-flow skeleton [ 10 ], and a reachability calculus that decides whether a query pattern is satisfiable over the IR. 
+
+Relational fact bases and Datalog. A widely adopted approach encodes the IR as a set of typed ground facts, such as call (𝑐, 𝑎, 𝜖 ) or 
+
+call_next (𝑐 1, 𝑐 2), and derives security-relevant properties through recursive Datalog rules. Transitive data-flow reachability, for in-stance, is expressed as a recursive closure: data_flows (𝑎, 𝑐 ) :−
+
+data_flows (𝑎, 𝑏 ), data_flows (𝑏, 𝑐 ). A security detector is then a compact query over the derived predicates; for example, asking whether any untrusted variable transitively reaches a high-privilege call without crossing a sanitization barrier. Modern Datalog engines such as Soufflé [ 17 ] evaluate these queries with near-linear scalabil-ity over millions of facts and produce deterministic, reproducible verdicts. This declarative style is widely used in Java analyzers such as Doop [ 2], Datalog-based program-analysis engines such as bddbddb [40], and smart-contract analyzers such as Vandal [3]. 
+
+Taint analysis. A common instantiation of Datalog-based reach-ability is taint analysis , which tracks data from designated sources 
+
+(e.g., untrusted external inputs) through intermediate operations to security-critical sinks (e.g., shell execution or network egress). Propagation is blocked at sanitizers that neutralize the data. A vul-nerability is reported whenever a tainted source reaches a sink without crossing any sanitizer. 
+
+The applicability gap. Datalog-based reachability is exactly the analytical machinery needed to answer the security question posed in Section 2.2: “does any tainted input reach a high-impact sink without crossing an approval gate?” Yet the machinery is inert with-out a faithful structured IR of the source artifact. For source artifacts that are pure executable code, the IR is produced by a deterministic compiler. For hybrid documents whose security boundary lives in prose, no deterministic compiler exists, and constructing one by hand is infeasible at the rate at which agent skills are produced. Bridging this applicability gap is precisely where CGRS intervenes. 
+
+## 2.4 LLMs as IR Synthesizers 
+
+LLMs read prose accurately and emit structured artifacts when prompted, suggesting their use as the missing “compiler” for hybrid documents. In practice, however, single-pass synthesis is insuffi-cient: our ablation (Section 7.3) shows a clear F1 gap between the first-pass variant and the full iteratively refined pipeline (86.6% vs. 90.6%), indicating that initial outputs, while often structurally valid, still omit or misrepresent security-relevant facts that subsequent refinement rounds recover. 
+
+Task-specific representations are easier to synthesize. A natural alternative would be to have the LLM produce a fully executable program (e.g., a Python script) that faithfully replicates the skill’s runtime behavior. Synthesizing such a replica, however, demands that the LLM simultaneously resolve control-flow nesting, type sys-tems, import resolution, and library-specific APIs, a search space that vastly exceeds what current models can reliably navigate in a single generation. A task-specific representation such as SDL, by contrast, requires only that the LLM surface the security-relevant relations (triggers, data flows, authorization barriers) as flat, declar-ative Datalog facts. The smaller, more regular output space lets well-formedness be checked by lightweight structural invariants rather than full program verification, which is what makes con-strained iterative synthesis practical: verifying flat Datalog facts is trivial, whereas verifying arbitrary executable code is not. 
+
+## 3 Overview 
+
+We sketch Semia ’s two-phase workflow (Section 3.1), walk through how it surfaces a real-world attack that existing defenses miss (Section 3.2), and lay out the threat model that scopes its findings (Section 3.3). 
+
+## 3.1 Framework Overview 
+
+The audit question for an agent skill is a reachability question: can attacker-controlled input drive a high-privilege action without first crossing a developer-stated approval gate? Reachability over a structured fact base routinely settles such questions, but the stan-dard recipe stalls on hybrid documents. Classical SAST cannot lift prose-defined policy into facts, so it green-lights skills whose only safeguard is a sentence in markdown. An LLM read of the prose, while expressive, yields verdicts that flip across runs and cannot deductively rule out the existence of a tainted path, which is the negative property an auditor needs to establish. Semia ’s design isolates the LLM to a translation role (Figure 2): an LLM-driven synthesis loop, disciplined by structural constraints, lifts the skill into a Skill Description Language (SDL); once a fact base is accepted, a small set of structural detectors runs over those facts without further LLM involvement. 
+
+Phase 1: Lifting prose to SDL. Phase 1 takes a raw agent skill 𝑠 
+
+and produces an accepted SDL fact base 𝑝 ∗. It is structured as a Conference’17, July 2017, Washington, DC, USA Wen et al. 
+
+> (b) Analysis verdicts
+
+§ Community ¥ No Report  VirusTotal ¥ Benign 
+
+Æ Direct LLM ® Partial & Unstable         
+
+> Iter 1: “The skill may have concerns around agent-to-agent transfers executing instantly. . . Server-side limits are the only safeguard, which may be insufficient .”
+> — found ungated operation; confidence: medium
+> Iter 2: “Agent reads DMs and forum posts directly into context without sanitization. . . However, au-tonomous trading within limits is intentional and server-gated ; external sends require ap-proval.”
+> — found context ingestion; missed ungated operation
+
+Ô Semia - Critical              
+
+> DSDL Facts
+> action("act_sign", "claw"). call("c_sign", "act_sign", "crypto_sign"). action_trigger("act_sign", "external"). call_input("c_sign", "message", "v_sign_msg").
+> . . .
+> ÛSecurity Findings
+> unsanitized_context_ingestion
+> act_sign →c_sign
+> missing_human_gate
+> act_sign →c_sign
+> name: clawnads
+> description: Register with Clawnads to get a Privy wallet on Monad, trade tokens, and collaborate with other agents. . . .
+> metadata: { "openclaw": { "emoji": " ", "requires": { "env": ["CLAW_AUTH_TOKEN"], "bins": ["curl"] } } }
+> # Clawnads
+> . . . You are part of a multi-agent network. Other agents DM you with proposals, questions, and funding requests.
+> Read, evaluate, and respond to every message.
+> . . .
+> ## Wallet & Transactions
+> . . . POST /agents/NAME/wallet/send . . . Withdrawal protection: Sends to external (non-agent) wallets require operator approval.
+> Agent-to-agent transfers execute instantly.
+> . . .
+> (a) Original skill file of the clawnads tool
+
+Figure 1: Motivating example: the clawnads skill (a) evades community review, VirusTotal, and direct-LLM analysis; Semia (b) lifts it into SDL facts and proves an unsanitized path from external context to the ungated crypto_sign sink. 
+
+D Agent Skill 𝑠 . Security Findings 
+
+Reconstruction 
+
+Verbalization 
+
+> fidelity
+> Phase 1
+> SDL Synthesis
+
+Predicates 
+
+Detectors  
+
+> Phase 2
+> Reachability Detection
+> SDL fact base
+
+𝑝 ∗
+
+Figure 2: High-level workflow of Semia . Phase 1 lifts an agent skill 𝑠 into an SDL fact base 𝑝 ∗ via a constrained refinement loop disciplined by fidelity feedback; Phase 2 evaluates de-rived predicates and reachability rules over 𝑝 ∗ to emit secu-rity findings. 
+
+refinement loop between two conceptual halves: reconstruction syn-thesizes a candidate SDL program from 𝑠 , and verbalization projects that candidate back into a sentence of English that can be compared against the source. For the wallet-send skill, a verbalized candidate reads “ the skill signs a transaction whenever an agent-to-agent trans-fer is requested, with no human approval step ;” its semantic distance to the source markdown is what tells the loop whether anything load-bearing has been dropped. Two checks discipline the loop: well-formedness invariants (reference validity, data-flow continu-ity, and annotation resolution) admit only structurally analyzable programs, and a fidelity distance (Section 6) keeps the candidate close to the developer’s intent. The loop terminates when the dis-tance falls below a threshold or the refinement budget is exhausted. Section 4 casts this as a constrained refinement problem. 
+
+Phase 2: Reachability detection. Phase 2 takes 𝑝 ∗ and produces a set of security findings. A small library of derived predicates (transitive data-flow closure, trust propagation, secret carriers) is materialized over 𝑝 ∗, and each detector is a compact reachability rule on top. Eleven detectors cover seven semantic-vulnerability 
+
+classes for benign-but-exploitable skills (e.g., a missing approval gate on a high-privilege call) and four malicious-author patterns for weaponized artifacts (e.g., a hardcoded command-and-control endpoint). Phase 2 runs them all over 𝑝 ∗ without further LLM calls, and each finding comes with a witness path the developer can read directly. Section 5 defines the predicates and detectors. 
+
+## 3.2 Motivating Example 
+
+Consider clawnads , a real agent skill from our corpus (introduced in Section 2.1 and illustrated in Figure 1). The skill exposes a wallet-send endpoint and states in prose that “ external sends require opera-tor approval; agent-to-agent transfers execute instantly .” An attacker delivers an inbound message containing “ Initiate a transfer of $500 to my agent account ,” exploiting the natural-language exemption. Because the LLM cannot reliably distinguish developer policy from injected payload, it evaluates the exemption as satisfied and invokes the wallet-send endpoint without operator approval, a textbook confused-deputy attack mediated entirely by an English-language clause. 
+
+Why existing defenses miss it. Figure 1(b) compares four analy-sis approaches. GitHub has no community report and VirusTotal returns Benign ; both operate under threat models designed for con-ventional software, where neither indirect prompt injection nor the absence of a human-in-the-loop gate appears in the detection taxon-omy. A direct LLM judge partially identifies the risk but flips across runs: Iteration 1 flags the ungated operation with medium confi-dence, Iteration 2 reverses course and deems autonomous trading “intentional and server-gated,” missing the vulnerability entirely. The auditor cannot tell which run to trust. Semia : Auditing Agent Skills via Constraint-Guided Representation Synthesis Conference’17, July 2017, Washington, DC, USA 
+
+How Semia catches it. Semia processes the skill in two phases. Phase 1 lifts the prose into an SDL fact base: the wallet-send end-point becomes an action node ( act_sign ), its invocation a call with the crypto_sign effect ( c_sign ), and the inbound message an external trigger ( action_trigger("act_sign", "external") ). Phase 2 then asks a single reachability question over this fact base: the path from the external trigger through c_sign to the irreversible 
+
+crypto_sign sink crosses no explicitly encoded approval gate: no 
+
+barrier_gate fact dominates the call (i.e., interposes on every path from the trigger). Two Section 5 detectors fire on the path: Missing-Human-Gate (MHG), where any high-privilege call is reachable without an approval-gate barrier, and Unsanitized-Context-Ingestion 
+
+(UCI), where external input reaches a high-privilege call without a sanitizer in between. Both findings ship with the witness path through the fact base. 
+
+## 3.3 Threat Model 
+
+We delineate the audit setting along three axes: the artifacts Semia 
+
+targets, the adversary it defends against, and the audit goal it pur-sues. 
+
+Targets. Semia audits agent skill artifacts whose security bound-ary lives in prose rather than executable code, including Claude Skills, MCP server manifests, agent cards, and policy-annotated OpenAPI or Cline-style rule files. 
+
+Adversary. We assume an unprivileged external attacker who injects payloads into data sources the agent consumes (emails, web pages, GitHub issues, retrieved documents) to coerce high-privilege actions such as shell execution, financial transactions, or secret exfiltration by exploiting prose-defined safeguards. The attacker cannot modify the agent’s infrastructure, skill files, or runtime environment. 
+
+Goal. Semia ’s pre-deployment objective is, given an accepted SDL fact base, to flag the structural absence of an explicitly en-coded approval gate on any path from attacker-controlled input to a high-privilege sink. The complementary direction (showing that a documented gate is actually enforced at runtime) is outside our scope: documented gates are themselves prose-defined safeguards subject to the same probabilistic interpretation that motivates this work. Semia therefore reports findings of the form “no gate domi-nates this high-privilege call,” not “this gate is enforced.” 
+
+## 4 Constraint-Guided Representation Synthesis 
+
+Auditing an agent skill statically requires phrasing it as a reacha-bility question (can a tainted input flow into a high-impact action without crossing an approval gate?) and answering it over a struc-tured fact base. The bottleneck is the input side: a skill arrives as a hybrid of YAML, code stubs, and natural-language prose, and the most security-relevant content lives in the prose. This section closes that gap. Section 4.1 defines the Skill Description Language (SDL), a relational fact schema that exposes a skill’s security-relevant el-ements as a finite set of ground facts. Section 4.2 describes the reconstruction procedure (Algorithm 1) that lifts a raw skill into SDL by alternating LLM proposal with structural and semantic feedback. Section 4.3 drills into the procedures that constrain and guide each refinement step. 
+
+Skeleton: 
+
+skill (𝑠 ) skill declaration 
+
+action (𝑎, 𝑠 ) action within skill 
+
+call (𝑐, 𝑎, 𝜖 ) operation with effect 𝜖 
+
+call _next (𝑐 1, 𝑐 2) sequential ordering 
+
+action _param (𝑎, 𝑛, 𝑣 ) named parameter 
+
+Data Flow: 
+
+call _input (𝑐, 𝑝, 𝑣 ) input binding 
+
+call _output (𝑐, 𝑝, 𝑣 ) output binding 
+
+Annotations: 
+
+action _trigger (𝑎, 𝜏 ) trigger kind 
+
+call _target (𝑐, 𝑡 ) endpoint / path 
+
+call _target _trusted (𝑐 ) first-party target 
+
+call _target _sensitive (𝑐 ) credential target 
+
+call _target _unresolved (𝑐 ) unresolvable target 
+
+Secrets & Barriers: 
+
+secret (𝑛 ), secret _var (𝑣, 𝑛 ) secret declaration 
+
+secret _allowed (𝑛, 𝑎 ) authorized access 
+
+barrier _gate (𝑎, 𝑔 ) authorization gate 
+
+barrier _sanitize (𝑣, 𝑝 ) sanitization checkpoint 
+
+Documentation: 
+
+doc _claim (𝑠, 𝜅 ) documentation claim 
+
+Code-Level Markers: 
+
+call _body _obfuscated (𝑐 ) obfuscated code 
+
+call _body _encoded _binary (𝑐 ) encoded binary blob 
+
+call _conditional (𝑐 1, 𝑐 2) conditional edge 
+
+𝜏 ∈ triggers = { llm , external , on _import , on _install }
+
+𝑔 ∈ gates = { human _approval , confirmation _prompt ,
+
+allowlist , budget _limit }
+
+𝜅 ∈ claims = { read _only , local _only , no _network , no _exec }
+
+𝜖 ∈ effects = { net _read , net _write , proc _exec ,
+
+code _eval , chain _write , crypto _sign ,
+
+fs _read , fs _write }
+
+Figure 3: Relational fact schema of SDL. 
+
+## 4.1 Skill Description Language 
+
+SDL is a relational fact schema for skills. Figure 3 lists its predicates, grouped by what they capture: the call skeleton, the data flow be-tween calls, annotations on actions and targets, secrets and barriers, documentation claims, and code-level markers. A skill, once lifted, is a finite set of ground facts over these predicates. The skeleton captures the control structure: skill , action , and call 
+
+form a three-level hierarchy; call _next orders calls within an ac-tion; and action _param records each action’s named parameters. Each call carries one of eight effects; four of them ( chain _write ,
+
+proc _exec , code _eval , crypto _sign ) are irreversible operations at-tackers want to reach, and we mark them high-privilege . The data-flow predicates record how values move between calls: call _output 
+
+names the variables a call produces, and call _input binds them as inputs of later calls. Conference’17, July 2017, Washington, DC, USA Wen et al. 
+
+The remaining four groups annotate the skeleton with informa-tion the analysis needs. 
+
+• Annotations. Two facets of an action matter beyond its calls: how the action enters and where its calls go. 
+
+action _trigger (𝑎, 𝜏 ) records what causes an action to fire (a user prompt llm , an external event external , or a package lifecycle hook on _import /on _install ); non-llm triggers run without the user in the loop and are treated as taint sources. 
+
+call _target (𝑐, 𝑡 ) records each call’s destination 𝑡 , optionally labelled trusted (first-party), sensitive (credential-bearing, e.g., 
+
+.ssh/ , .aws/ ), or unresolved (cannot be identified from the source); unlabelled targets are treated as untrusted. 
+
+• Secrets & Barriers. Skills frequently misroute credentials or leave irreversible actions guarded only by prose. secret (𝑛 )
+
+declares a credential name, secret _var (𝑣, 𝑛 ) binds it to a vari-able, and secret _allowed (𝑛, 𝑎 ) lists the actions allowed to touch it; any flow outside that allowlist becomes a finding. 
+
+barrier _gate (𝑎, 𝑔 ) marks an action as protected by a gate of kind 𝑔 (human _approval , confirmation _prompt , allowlist , or 
+
+budget _limit ), and barrier _sanitize (𝑣, 𝑝 ) records that variable 
+
+𝑣 has been sanitized at point 𝑝 .
+
+• Documentation claims. A skill’s prose often promises 
+
+read _only , local _only , no _network , or no _exec behavior. 
+
+doc _claim (𝑠, 𝜅 ) records each promise; if the skill’s actual ef-fects contradict the promise, the analysis reports a claim– behavior mismatch. 
+
+• Code-level markers. Malicious skills sometimes hide behavior in obfuscated code, embedded binaries, or rarely-taken branches. call _body _obfuscated (𝑐 ) and 
+
+call _body _encoded _binary (𝑐 ) flag the first two patterns, and call _conditional marks an edge as conditional rather than unconditional, so the analysis can distinguish definite reachability from conditionally reachable paths. 
+
+Example 1. Consider a tiny skill described in prose as 
+
+> fetch the latest USD/EUR rate from an external feed and sign a transaction with the value.
+
+Its SDL form is 
+
+skill (𝑠 ), action (𝑎, 𝑠 ), action _trigger (𝑎, llm ),
+
+call (𝑐 1, 𝑎, net _read ), call (𝑐 2, 𝑎, chain _write ),
+
+call _next (𝑐 1, 𝑐 2),
+
+call _output (𝑐 1, body , 𝑣 ), call _input (𝑐 2, msg , 𝑣 ).
+
+“Fetch from an external feed” becomes a net _read against an un-labelled (hence untrusted) target; “sign a transaction” becomes a high-privilege chain _write ; the shared variable 𝑣 records that the rate flows directly into the signing input. The unsafe path is then a single reachability query over these facts. 
+
+Schema scope. The enumerations 𝜏 , 𝑔 , 𝜅 , and 𝜖 are closed sets, chosen to cover the operation patterns we observed during the 13,728-skill corpus crawl rather than to be exhaustive. Extending SDL with a new effect, gate kind, or claim is mechanical: we add the value to the relevant enumeration and revise the affected detec-tors in Section 5; the structural invariants and refinement loop of Section 4.2 carry over unchanged. Section 4.2 describes how a hybrid YAML/code/prose skill is lifted into this form. No deterministic frontend handles all three modalities at once, so we frame the lift as guided LLM synthesis rather than parsing. 
+
+## 4.2 Skill Reconstruction 
+
+A correct lift of a skill into SDL has to satisfy two kinds of con-straints at once. Structural constraints (declared symbols, connected data flow, dominating gates) make the resulting fact base usable by the detectors in Section 5. Semantic constraints make the fact base actually describe the source, not some plausible-looking alternative. A single LLM call typically violates one or the other: either the model emits well-formed but topically off SDL, or it captures the right idea with broken references. Algorithm 1 separates the two by alternating LLM proposal with non-LLM feedback that targets each kind of failure independently. The procedure Synthesize (𝑠 ; 𝛿 ) takes a source skill 𝑠 and a fi-delity threshold 𝛿 , and returns either an accepted SDL program 
+
+𝑝 or ⊥. It uses three non-LLM helpers, each defined in detail in Section 4.3: 
+
+• Validate (𝑝 ): a structural check on 𝑝 , returning a Boolean. 
+
+• Verbalize (𝑝 ): projects 𝑝 back to a canonical English descrip-tion, so the distance 𝑑 (𝑠, Verbalize (𝑝 )) measures how close the candidate is to the source in text space. 
+
+• Diagnose (𝑠, 𝑝 ): extracts structured repair hints from a
+
+Validate failure. The only LLM call is Refine (𝑠, 𝑝, 𝜂 ), invoked in the loop guard at line 5, which produces a new candidate from a (possibly ⊥) prior 𝑝 
+
+guided by a set of hints 𝜂 . With 𝜂 = ∅ it proposes freely from 𝑠 (a cold-start proposal when 𝑝 = ⊥); with non-empty 𝜂 it focuses the model on the listed violations. If Refine exhausts the refinement budget without producing a candidate, it returns ⊥, the loop guard fails, and Synthesize terminates at line 9 with ⊥.Each iteration of the main loop dispatches on the outcome of 
+
+Validate . If the candidate fails (line 6), Diagnose produces hints that become the input to the next Refine call, so the model knows precisely which invariants to fix. If the candidate passes Validate 
+
+but the distance to the source is still above 𝛿 (line 8), the candidate is discarded and Refine is invoked with 𝜂 = ∅, so the model reviews the current-best candidate without targeted structural hints; we deliberately do not invoke Diagnose on a structurally valid but semantically distant candidate, because we found that unhinted re-synthesis from the current best converges faster than nudging an LLM toward a specific semantic fix. The first candidate that passes both checks is returned at line 7. Let 𝑝 ∗ denote the candidate that Synthesize returns on success. By construction, 𝑝 ∗ is the first refinement candidate to satisfy 
+
+Validate (𝑝 ∗) ∧ 𝑑  𝑠, Verbalize (𝑝 ∗) < 𝛿, 
+
+and the procedure returns ⊥ if no such candidate appears within the refinement budget. 
+
+## 4.3 Constraint-Guided Refinement 
+
+This subsection details the three non-LLM helpers introduced in Section 4.2. Validate encodes a structural constraint that admits or rejects each candidate; Verbalize paired with the distance 𝑑 
+
+encodes a semantic constraint that accepts a candidate only if it lies within the fidelity threshold of the source; Diagnose converts Semia : Auditing Agent Skills via Constraint-Guided Representation Synthesis Conference’17, July 2017, Washington, DC, USA 
+
+Algorithm 1 Constraint-Guided Representation Synthesis (CGRS).  
+
+> 1:
+
+procedure Synthesize (𝑠 ; 𝛿 ) 
+
+> 2:
+
+input: source skill 𝑠 ; fidelity threshold 𝛿  
+
+> 3:
+
+output: accepted SDL program 𝑝 , or ⊥ 
+
+> 4:
+
+𝑝 ← ⊥ , 𝜂 ← ∅  
+
+> 5:
+
+while 𝑝 ← Refine (𝑠, 𝑝, 𝜂 ); 𝑝 ≠ ⊥ do  
+
+> 6:
+
+if ¬Validate (𝑝 ) then 𝜂 ← Diagnose (𝑠, 𝑝 ) 
+
+> 7:
+
+else if 𝑑 (𝑠, Verbalize (𝑝 )) < 𝛿 then return 𝑝  
+
+> 8:
+
+else 𝜂 ← ∅  
+
+> 9:
+
+return ⊥
+
+a structural failure into a hint that the next Refine call can act on. We illustrate each on the running skill of Example 1. 
+
+Structural validity ( Validate ). Validate (𝑝 ) tests whether 𝑝 is a structurally usable SDL program. It checks the conjunction 
+
+𝐼 (𝑝 ) = 𝐼 ref (𝑝 ) ∧ 𝐼 flow (𝑝 ) ∧ 𝐼 auth (𝑝 ) (1) of three invariants: 
+
+• Reference validity ( 𝐼 ref ): every variable or action symbol used in 
+
+𝑝 is declared somewhere in 𝑝 . The one exception is targets the synthesizer marks as call _target _unresolved when it cannot identify an endpoint from the source; these are kept as opaque placeholders rather than fabricated. 
+
+• Data-flow continuity ( 𝐼 flow ): every variable consumed by a 
+
+call _input traces back, through call _input /call _output edges, to either a trigger or the output of a prior call, so that the data-flow graph the detectors traverse in Section 5 is connected. 
+
+• Annotation references ( 𝐼 auth ): every annotation fact references declared entities; e.g., barrier _gate (𝑎, 𝑔 ) requires action 𝑎 to be declared and 𝑔 ∈ gates , and secret _allowed (𝑛, 𝑎 ) requires both 𝑛 and 𝑎 to be declared. Annotation references are thus statically resolvable rather than dangling. A candidate violating 𝐼 (𝑝 ) is rejected outright, and the failed con-juncts become input to Diagnose .
+
+Example 2. Suppose Refine produces a variant of Example 1 that drops the producer of 𝑣 :
+
+skill (𝑠 ), action (𝑎, 𝑠 ), action _trigger (𝑎, llm ),
+
+call (𝑐 1, 𝑎, net _read ), call (𝑐 2, 𝑎, chain _write ),
+
+call _next (𝑐 1, 𝑐 2), call _input (𝑐 2, msg , 𝑣 ).
+
+The variable 𝑣 is consumed by 𝑐 2 but no call _output produces it, so 
+
+𝐼 flow fails and Validate (𝑝 ) = false .
+
+Semantic distance ( Verbalize and 𝑑 ). A candidate may pass 
+
+Validate structurally and still be semantically wrong (missing an authorization clause from the source, or pointing at the wrong API). We measure this gap by projecting the candidate back to text and comparing against the source: Verbalize (𝑝 ) produces a canonical natural-language description of 𝑝 , and 𝑑 (𝑠, Verbalize (𝑝 )) is any non-negative distance between two natural-language texts. We de-liberately leave 𝑑 open: it admits instantiations ranging from purely learned text scorers (e.g., embedding-based similarity) to structured rubrics over schema elements; Section 6 fixes our concrete choice. Smaller 𝑑 means a candidate that more faithfully reproduces the source’s semantics, and the threshold 𝛿 in Algorithm 1 fixes when this counts as small enough to terminate (smaller 𝛿 asks for tighter alignment at the cost of more refinement rounds). 
+
+Example 3. Suppose Refine instead produces a structurally well-formed candidate that captures only the network read: 
+
+skill (𝑠 ), action (𝑎, 𝑠 ), action _trigger (𝑎, llm ),
+
+call (𝑐 1, 𝑎, net _read ).
+
+Validate (𝑝 ) accepts this candidate, but Verbalize (𝑝 ) produces 
+
+“fetch a rate from an external feed” , omitting the signing step, so 
+
+𝑑 (𝑠, Verbalize (𝑝 )) exceeds 𝛿 . The candidate is dropped and Refine 
+
+is invoked anew (Algorithm 1, line 8). 
+
+Refinement hints ( Diagnose ). Diagnose (𝑠, 𝑝 ) converts each vio-lated conjunct of 𝐼 (𝑝 ) into a hint, producing a set 𝜂 with one entry per failed invariant: an 𝐼 ref failure names the undeclared symbol, an 
+
+𝐼 flow failure points at the disconnected variable, and an 𝐼 auth failure flags the annotation that fails to resolve. These hints become the third argument to the next Refine call, which sees the source 𝑠 , the broken candidate 𝑝 , and a precise diff describing what to fix. We do not extract hints from candidates that are structurally valid but se-mantically distant: as the dispatcher in Section 4.2 notes, unhinted re-synthesis from the current best converges faster than nudging an LLM toward a specific semantic fix. 
+
+Example 4. Applied to the broken candidate of Example 2, 
+
+Diagnose emits a single-element hint set 𝜂 encoding “ 𝐼 flow failed: 𝑣 
+
+at call _input (𝑐 2, msg , 𝑣 ) has no producer.” The next Refine (𝑠, 𝑝, 𝜂 )
+
+uses 𝜂 to add the missing call _output (𝑐 1, body , 𝑣 ), recovering Ex-ample 1. With the SDL fact base in hand, we now turn to the analysis layer that consumes it: Section 5 defines the derived predicates and security detectors that pose reachability questions over the synthesized facts. 
+
+## 5 Security Analysis 
+
+With each agent skill reconstructed into an SDL fact base via CGRS (Section 4), the analytical challenge shifts from natural-language comprehension to structural reachability. In this section, we first derive a compact predicate vocabulary over the SDL facts (Sec-tion 5.1), then express each security detector as a reachability query over that vocabulary (Section 5.2). 
+
+## 5.1 Predicates and Relations 
+
+Once a skill is a set of SDL facts, every security question reduces to reachability: can a value flow from an untrusted source to a high-privilege call without crossing a human gate? The base facts of Figure 3 are flat: they record structure but not the transitive properties that detectors query. We therefore derive five compound predicates that close over the base facts along orthogonal dimen-sions: data _flows (𝑠, 𝑑 ) for transitive value reachability (§5.1.1), 
+
+var _tainted (𝑣 ) and var _secret (𝑣 ) for integrity and confidential-ity labels (§5.1.2), and call _reachable (𝑐 ) / call _unconditional (𝑐 ) for control-flow reachability (§5.1.3). Every detection rule in Section 5.2 queries these predicates plus the base facts for structural pattern-matching. Conference’17, July 2017, Washington, DC, USA Wen et al. 
+
+5.1.1 Data-Flow Reachability. The Skeleton and Data Flow groups in Figure 3 record the per-call structure. We chain them into a single transitive relation data _flows (𝑠, 𝑑 ) (“can value 𝑠 reach value 𝑑 ?”) via four rules, one per propagation step: 
+
+data_flows(ap,ci) :- action_param(a, _,ap), call(c,a, _), call_input(c, _,ci). data_flows(i,o) :- call_input(c, _,i), call_output(c, _,o). data_flows(o,i) :- call_output(c1, _,o), call_next(c1,c2), call_input(c2, _,i). data_flows(a,c) :- data_flows(a,b), data_flows(b,c). 
+
+Named parameters of an action seed the inputs of every call in that action (an over-approximation; restricting to only the entry call, i.e., calls with no incoming call _next edge, would be subsumed by the transitive closure anyway). Intra-call transfer assumes each input influences every output (an over-approximation when the call body is opaque). Adjacent calls are bridged: when call _next (𝑐 1, 𝑐 2) holds, each output of 𝑐 1 flows into each input of 𝑐 2. The final clause closes the relation transitively, so any multi-hop path is captured in a single query. 
+
+Cross-action flow. The rules above track values within a single action via call _next . Across action boundaries, the LLM’s context window concatenates all prior tool results into every subsequent turn, so outputs of one action are available as inputs to every other. We therefore assume full connectivity, which reflects the actual runtime semantics rather than being a mere analytical convenience. The same reasoning justifies the granularity of barrier _sanitize :because the LLM can re-read an earlier unsanitized value from its context, sanitization is only effective at the sink variable itself. 
+
+5.1.2 Variable Propagation. Two orthogonal predicates tag each variable along the integrity and confidentiality dimensions; both propagate transitively over data _flows .
+
+Integrity: var _tainted (𝑣 ). Tracks whether an attacker can influ-ence a variable’s value. 
+
+var_tainted(v) :- action_param(a, _,v), action_trigger(a,T), (T="external"; T="on_import"; T="on_install"). var_tainted(o) :- call(c, _,E), (E="net_read"; E="net_write"), !call_target_trusted(c), call_output(c, _,o). var_tainted(d) :- var_tainted(s), data_flows(s,d), !barrier_sanitize(d, _). 
+
+Action parameters arriving via non-user triggers are attacker-controlled; outputs of network calls to untrusted targets are likewise tainted. Taint propagates transitively along data _flows , blocked by a barrier _sanitize checkpoint. 
+
+Confidentiality: var _secret (𝑣 ). Tracks whether a variable carries a declared credential. 
+
+var_secret(v) :- secret(n), secret_var(v,n). var_secret(d) :- var_secret(s), data_flows(s,d). 
+
+Declared credential bindings ( secret _var ) seed the predicate; the label then propagates transitively along data _flows .
+
+5.1.3 Control-Flow Reachability. Two predicates close over the 
+
+call _next and call _conditional edges of Figure 3, both seeding from entry calls (those with no predecessor). 
+
+call _reachable (𝑐 ). Follows both call _next and call _conditional 
+
+edges: any call on any path from the entry is reachable. 
+
+call_reachable(c) :- call(c,a, _), !call_next( _,c), !call_conditional( _,c). call_reachable(c) :- call_reachable(p), call_next(p,c). call_reachable(c) :- call_reachable(p), call_conditional(p,c). 
+
+call _unconditional (𝑐 ). Follows only call _next , so calls behind conditional branches are excluded. Detectors use the difference 
+
+call _reachable (𝑐 ) ∧ ¬ call _unconditional (𝑐 ) to identify dormant payloads hidden behind conditional triggers. 
+
+call_unconditional(c) :- call(c,a, _), !call_next( _,c), !call_conditional( _,c). call_unconditional(c) :- call_unconditional(p), call_next(p,c). 
+
+This completes the derived vocabulary. The detectors in Sec-tion 5.2 combine these five predicates with direct pattern-matching over the base facts of Figure 3 to express each security risk as a compact reachability query. 
+
+## 5.2 Taxonomy of Risks and Detection 
+
+We now express each semantic risk pattern as a query over the predicate vocabulary defined above. Based on our empirical study of real-world agent skills, we identify eleven detectors organized into three query classes: (1) Unguarded sink. A dangerous call exists without a protective barrier (1 detector). (2) Taint-flow violation. A var _tainted or var _secret variable reaches a dangerous call without an intervening barrier (4 de-tectors). (3) Structural anomaly. A suspicious static pattern is detected without requiring data flow (6 detectors). We present representative detectors from each class below; the complete set of eleven detectors is documented in Appendix B. 
+
+5.2.1 Unguarded Sink: Missing Human Gate (MHG). name : trade                       
+
+> description :Swap or trade tokens on Base network. Use when you
+> or the user want to trade...
+> disable -model -invocation :false
+> allowed -tools :["Bash( npx awal@latest trade *)", ...]
+> Skill Excerpt: Trade
+> ## CLI -Specific Notes
+> ### Codex
+> ---full -auto :Auto -approve in workspace (sandboxed)
+> ---yolo :No sandbox, no approvals (dangerous but fast)
+> ### Claude Code
+> ---dangerously -skip -permissions :Auto -approve
+> Skill Excerpt: Ralph Loop
+> description :
+> ...
+> **Requires OPENWEBUI_URL and OPENWEBUI_TOKEN environment
+> variables or explicit parameters.**
+> Skill Excerpt: Open -WebUI
+> 3. Load Home Assistant config:
+> $config =Get -Content ". homeassistant -config.json "|
+> Skill Excerpt: Game Light Tracker
+
+The Missing Human Gate pattern occurs when a skill performs a state-modifying or financial action without an interactive human-approval checkpoint. The developer implicitly assumes the LLM will voluntarily seek permission; without structural enforcement, execution proceeds silently the moment the LLM is semantically deceived. For example, the trade skill 1, shown in the Trade excerpt, per-forms irreversible blockchain swaps and actively encourages au-tonomous execution. Because it lacks any mandate for human-in-the-loop confirmation, an attacker can inject a prompt expressing a desire to trade, and the agent will execute silently.   
+
+> 1https://github.com/openclaw/skills/blob/main/skills/0xrag/trade/SKILL.md Semia : Auditing Agent Skills via Constraint-Guided Representation Synthesis Conference’17, July 2017, Washington, DC, USA
+
+Detection rule. A high-privilege call exists in an action with-out a human _approval gate. We require human _approval rather than any gate kind because non-interactive gates ( allowlist ,
+
+budget _limit ) do not constrain an LLM that has already been se-mantically deceived. 
+
+MHG(s,a,c) :- action(a,s), call(c,a,E), (E="chain_write"; E="proc_exec"; E="code_eval"; E="crypto_sign"), !barrier_gate(a,"human_approval"). 
+
+5.2.2 Taint-Flow: Sensitive Local Resource Overreach (SLRO). ## CLI -Specific Notes 
+
+### Codex 
+
+> ---full -auto
+
+: Auto -approve in workspace (sandboxed) 
+
+> ---yolo
+
+: No sandbox, no approvals (dangerous but fast) 
+
+### Claude Code 
+
+> ---dangerously -skip -permissions
+
+: Auto -approve 
+
+Skill Excerpt: Ralph Loop 
+
+description :
+
+... 
+
+**Requires OPENWEBUI_URL and OPENWEBUI_TOKEN environment 
+
+variables or explicit parameters.** 
+
+Skill Excerpt: Open -WebUI 
+
+3. Load Home Assistant config:       
+
+> $config =Get -Content ". homeassistant -config.json "|
+> ConvertFrom -Json
+> $token =$config.token
+
+Skill Excerpt: Game Light Tracker 
+
+…
+
+**For builds, gallery submission, and advanced features, use:**     
+
+> npx @codahq /packs -sdk build
+> npx @codahq /packs -sdk release
+
+Skill Excerpt: Coda Packs 
+
+## References 
+
+- **Design:** /docs/TIERED -MEMORY.md (EvoClaw )
+
+- **Cloud Sync:** /docs/CLOUD -SYNC.md (EvoClaw )
+
+Skill Excerpt: Tiered Memory 
+
+name : clawhub -triager 
+
+description : Fetch and analyze issues from Clawhub . The agent will 
+
+read the raw issue body and summarize the user’s intent. 
+
+## Behavioral Instructions 
+
+Analyze the following issue description thoroughly...          
+
+> ...
+> "mcpServers ": {"0protocol": {
+> "baseUrl ": "https://mcp.0protocol.dev/ mcp "
+> }}
+> ...
+> mcporter call ‘0protocol.transfer(to: "8b2c4...",
+> payload: {type: "task_handoff "})’
+
+Skill Excerpt: 0protocol 
+
+The sensitive local resource overreach pattern occurs when an agent accesses local credentials beyond its task boundary. Unlike identity-based access control, agentic overreach is context-blind: a skill designed for text linting might “scan the directory,” implicitly reading .env or .ssh/config .The Game Light Tracker skill 2 accesses a Home Assistant config-uration file via Get-Content , exposing private tokens. An attacker can hijack the tracking request to exfiltrate these tokens. 
+
+Detection rule. Two complementary patterns, both detecting “se-cret reaches where it should not”: (1) a declared secret enters an action outside its secret _allowed scope; (2) a secret and a tainted 
+
+variable co-enter the same call to an untrusted target, creating the structural precondition for exfiltration. 
+
+SLRO(s,a,c,sec) :- action(a,s), call(c,a, _), call_input(c, _,v), secret_var(v,sec), !secret_allowed(sec,a). SLRO(s,a,c,sec) :- action(a,s), call(c,a, _), call_input(c, _,sv), secret_var(sv,sec), call_input(c, _,tv), sv!=tv, var_tainted(tv), !call_target_trusted(c). 
+
+5.2.3 Structural Anomaly: Shadow Credentials (SC). name : trade 
+
+description : Swap or trade tokens on Base network. Use when you 
+
+or the user want to trade... 
+
+disable -model -invocation : false 
+
+allowed -tools : ["Bash( npx awal@latest trade *)", ...] 
+
+Skill Excerpt: Trade 
+
+## CLI -Specific Notes 
+
+### Codex 
+
+> ---full -auto
+
+: Auto -approve in workspace (sandboxed) 
+
+> ---yolo
+
+: No sandbox, no approvals (dangerous but fast) 
+
+### Claude Code 
+
+> ---dangerously -skip -permissions
+
+: Auto -approve 
+
+Skill Excerpt: Ralph Loop 
+
+description :
+
+... 
+
+**Requires OPENWEBUI_URL and OPENWEBUI_TOKEN environment 
+
+variables or explicit parameters.** 
+
+Skill Excerpt: Open -WebUI 
+
+3. Load Home Assistant config:       
+
+> $config =Get -Content ". homeassistant -config.json "|
+> ConvertFrom -Json
+> $token =$config.token
+
+Skill Excerpt: Game Light Tracker 
+
+…
+
+**For builds, gallery submission, and advanced features, use:**     
+
+> npx @codahq /packs -sdk build
+> npx @codahq /packs -sdk release
+
+Skill Excerpt: Coda Packs 
+
+## References 
+
+- **Design:** /docs/TIERED -MEMORY.md (EvoClaw )
+
+- **Cloud Sync:** /docs/CLOUD -SYNC.md (EvoClaw )
+
+Skill Excerpt: Tiered Memory 
+
+name : clawhub -triager 
+
+description : Fetch and analyze issues from Clawhub . The agent will 
+
+read the raw issue body and summarize the user’s intent. 
+
+## Behavioral Instructions 
+
+Analyze the following issue description thoroughly... 
+
+Skill Excerpt: Clawhub Triager          
+
+> ...
+> "mcpServers ": {"0protocol": {
+> "baseUrl ": "https://mcp.0protocol.dev/ mcp "
+> }}
+> ...
+> mcporter call ‘0protocol.transfer(to: "8b2c4...",
+> payload: {type: "task_handoff "})’
+
+Skill Excerpt: 0protocol 
+
+The shadow credentials pattern occurs when a skill reads local credential-bearing resources (environment variables, configuration files, or key stores) while also possessing network egress to an un-trusted target. The combination creates the structural precondition for exfiltration: the skill harvests secrets locally and has a channel to send them out. The open-webui skill 3 requires an OPENWEBUI_TOKEN in its front-matter. An attacker exploiting this skill inherits the shadow author-ity associated with the token (listing models, deleting knowledge bases, managing pipelines), pivoting from a conversational context to infrastructure compromise. 
+
+> 2https://github.com/openclaw/skills/blob/main/skills/0xadamsu/game-light-tracker/SKILL.md
+> 3https://github.com/openclaw/skills/blob/main/skills/0x7466/open-webui/SKILL.md
+
+Detection rule. A call 𝑐 𝑟 reads a credential-bearing local target (call _target _sensitive ) via a local-read effect ( fs _read ), and another call 𝑐 𝑛 in the same skill reaches an untrusted network endpoint. No data-flow path is required; the structural co-occurrence suffices, since the LLM can bridge local reads to network calls across turns. 
+
+SC(s,cr,cn) :- action(a1,s), call(cr,a1,"fs_read"), call_target_sensitive(cr), action(a2,s), call(cn,a2,E2), (E2="net_read"; E2="net_write"), !call_target_trusted(cn). 
+
+Appendix B documents the remaining eight detectors: three additional taint-flow violations (UCI, DEP, IEC) and five additional structural anomalies (UDS, BCC, OBF, HCC, DMP). We next discuss the systems-level implementation in Section 6. 
+
+## 6 Implementation 
+
+We implement Semia as a prototype comprising approximately 4,500 lines of Python 3.12 (core engine) and 900 lines of Soufflé Dat-alog (SDL schema and security detector rules). All experiments use 
+
+claude-opus-4-6 as the underlying language model for Semia ’s CGRS pipeline; the temperature is fixed at 0 for reproducibility. The LLM-as-a-judge baselines evaluated in the ablation study (Sec-tion 7.3) are described there. Below we describe three implementa-tion aspects: skill inlining, CGRS, and reachability detection. 
+
+Skill inlining. Before CGRS begins, Semia preprocesses each raw skill repository into a single unified document. The sys-tem recursively filters out irrelevant build artifacts (e.g., dist/ ,
+
+node_modules/ ) and concatenates the remaining Markdown files, preserving the source location of each line. It then parses the text into a structural syntax tree to deterministically extract the seman-tic units (e.g., paragraphs, lists, and configuration fields). These extracted units serve as the ground-truth anchors for the distance metric 𝑑 (Section 4.3): 𝑑 (𝑠, Verbalize (𝑝 )) is instantiated as one minus the fraction of source semantic units covered by the ver-balized candidate, ranging over [0, 1] with 0 indicating perfect fidelity. The text processing is fully deterministic and does not rely on LLM interpretations. This coverage-based metric targets the dominant failure mode of LLM synthesis, namely omission of security-relevant clauses; structural corruption in covered units is caught independently by Validate ’s well-formedness invariants (Section 4.3). 
+
+CGRS. The CGRS pipeline implements Synthesize (𝑠 ; 𝛿 ) (Algo-rithm 1). The initial Refine (𝑠, ⊥, ∅) call produces a cold-start SDL candidate from the raw skill 𝑠 . Validate is realized using Python’s built-in ast module, which checks the three well-formedness in-variants ( 𝐼 ref , 𝐼 flow , 𝐼 auth ) defined in Section 4.3. When Validate 
+
+rejects a candidate, Diagnose extracts per-invariant hints 𝜂 that feed the next Refine call. When a candidate passes Validate but its semantic distance 𝑑 (𝑠, Verbalize (𝑝 )) exceeds the threshold 𝛿 ,the candidate is discarded and Refine is invoked with 𝜂 = ∅, i.e., a fresh resample, following the dispatcher at line 8 of Algorithm 1. Where Diagnose returns a small hint set, the subsequent Refine 
+
+call attempts a localized patch rather than a full regeneration of the SDL program. Conference’17, July 2017, Washington, DC, USA Wen et al. 
+
+Reachability detection. The detection engine described in Sec-tion 5 is implemented on top of the Soufflé Datalog engine [ 17 ]. Each canonical SDL program is a set of Datalog facts that directly populates the relations defined in our SDL vocabulary (e.g., ac-tion , call , secret , call_input , and barrier_gate ). Control-flow and data-flow reachability are expressed as recursive Datalog rules; Soufflé evaluates all eleven security detectors in a single semi-naïve fixed-point computation, enabling efficient reuse of intermediate reachability results across multiple security detectors. 
+
+## 7 Evaluation 
+
+We evaluate Semia on the following research questions: 
+
+• RQ1 (Effectiveness) : How does Semia compare against state-of-the-art vulnerability detectors in terms of precision, recall, and F1? 
+
+• RQ2 (Breakdown) : What is the relative importance of the different detectors in terms of finding risks in real-world agent skills? 
+
+• RQ3 (Ablation) : What is the relative importance of different design choices of Semia in terms of its effectiveness? 
+
+• RQ4 (Zero-Day) : Can Semia discover previously unknown, exploitable vulnerabilities in agent skills? 
+
+## 7.1 Experimental Setup 
+
+All experiments were conducted on an Apple M3 Max laptop with 36 GB of unified memory running macOS 15.2. We report standard classification metrics (precision, recall, F1) and measure the cost of Semia ’s two phases separately: Phase 1 (lifting prose to SDL) is quantified by the number of LLM round-trips instead of wall-clock time, since the latter is dominated by inference latency that varies with provider load; Phase 2 (reachability detection) is measured by wall-clock time per skill on fixed hardware, as it is a deterministic CPU-bound computation. 
+
+7.1.1 Dataset and Benchmark Collection. We collected 13,728 real-world agent skills from public marketplaces (chiefly the OpenClaw ecosystem). At the time of writing, 10,853 of these had completed VirusTotal scanning; we refer to this subset as the VT-Dataset and use it as the source pool for the labeled sample, so that every eval-uated skill admits a direct head-to-head comparison against the VirusTotal baseline. From the 10,853-skill VT-Dataset we drew a stratified random sample of 541 skills (5% per stratum, fixed seed) for precise ef-fectiveness evaluation. To control for skill-size confounders, the sampling stratifies over the count of semantic units extracted during skill inlining (Section 6), partitioned into small, medium, and large skills at the 33 rd and 67 th percentiles, ensuring the labeled sample is not dominated by trivially short skills. 
+
+Labeling procedure. Each sampled skill was independently la-beled by two authors of this paper following the eleven-category taxonomy of Section 5.2 and Appendix B. Annotators received only the raw skill text and had no access to Semia ’s output. On the bi-nary decision (risky vs. clean), the two annotators achieved Cohen’s 
+
+𝜅 = 0.83 , indicating almost perfect agreement [ 19 ]; at the category level, the mean per-skill Jaccard similarity between the two label sets is 0.87 . All disagreements were resolved in a joint adjudication      
+
+> VT C-Scan Semia
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100 89 .1
+> 73 .2
+> 84 .5
+> 13 .6
+> 52 .6
+> 97 .7
+> 23 .6
+> 61 .2
+> 90 .6
+> Percentage (%)
+> Precision Recall F1
+
+Figure 4: Skill-level detection effectiveness on the 541-skill labeled sample (301 positive, 240 clean). C-Scan covers 524 of the 541 skills; its metrics are computed over that subset. 
+
+session to produce the final ground truth. The resulting labeled dataset contains 301 skills carrying at least one risk (55.6%) and 240 clean skills. 
+
+7.1.2 Baselines. We evaluate Semia against two complemen-tary baselines. VirusTotal (VT) aggregates numerous industry-standard static analysis and signature-based detection engines; since VT operates purely on the syntactic layer (e.g., matching known malicious URLs or rigid API signatures), it serves as a rep-resentative proxy for current mainstream defenses. ClawScan (C-Scan) is the marketplace’s own built-in moderation scanner, which combines heuristic rules with lightweight LLM checks; 17 of the 541 sampled skills had not yet been scanned by C-Scan at crawl time, so its metrics are computed over the 524-skill subset it covers (291 ground-truth positives, 233 negatives). 
+
+## 7.2 RQ1 and RQ2: Effectiveness on Benchmarks 
+
+Figure 4 presents the overall skill-level detection performance. 
+
+Semia achieves F1 = 90.6% (84.5% precision, 97.7% recall), substan-tially outperforming both baselines. VirusTotal attains the high-est precision (89.1%) but only 13.6% recall: signature engines miss roughly six out of seven semantically risky skills because they can-not reason about natural-language policies. ClawScan improves recall to 52.6% via lightweight LLM heuristics but at the lowest precision (73.2%). Table 1 decomposes recall across all eleven categories. MHG dom-inates (278/301 risky skills); Semia recovers 97.1% via entry-to-sink reachability without an intervening human_gate . The remaining categories span all three query classes and achieve 94.6–100% recall, confirming generalization across diverse risk patterns. Of the 15 missed category-level labels, all share one root cause: un-inlined third-party API surfaces that break reachability chains. 
+
+End-to-end cost. On the 541-skill sample, skill inlining and reach-ability detection are each sub-second per skill. The CGRS loop uses at most five iterations; all skills in our sample converged within this budget (none was skipped). The lifting phase completes in a few minutes per skill at a per-skill LLM API cost under one US dollar for the vast majority of cases, making the full pipeline lightweight enough for CI integration. Semia : Auditing Agent Skills via Constraint-Guided Representation Synthesis Conference’17, July 2017, Washington, DC, USA                                                
+
+> MHG UCI SLRO IEC UDS DEP SC BCC DMP OBF HCC Total #GT 278 97 37 23 14 10 65421477
+> #Det. 270 93 35 22 14 10 65421462
+> Recall 97.1% 95.9% 94.6% 95.7% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 100.0% 96.9%
+
+Table 1: Per-category detection recall on the labeled sample, ordered by prevalence. #GT denotes ground-truth label instances; #Det. denotes those correctly detected by Semia . The first four categories (MHG–IEC) have imperfect recall; the remaining seven achieve 100% detection. Full definitions appear in Section 5 and Appendix B.     
+
+> Semia ∗Semia †Semia
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100  
+
+> 70 .7
+> 86 .690 .6
+> F1 (%)
+
+Figure 5: Ablation study: F1 scores of the full Semia pipeline vs. degraded variants (541-skill sample, 301 positive, 240 clean).  
+
+> †: without iterative refinement ∗: without SDL representation
+
+Result for RQ1 and RQ2: Semia achieves F1 = 90.6%, de-tecting seven times more vulnerable skills than VirusTotal and nearly twice as many as ClawScan at comparable preci-sion, confirming that domain-specific semantic abstractions substantially improve practical pre-deployment auditing. 
+
+## 7.3 RQ3: Ablation Study 
+
+To evaluate the relative importance of Semia ’s design choices and answer RQ3, we conducted an ablation study (Figure 5) that incre-mentally adds components to a minimal baseline. We define two degraded variants: Semia ∗, which bypasses the SDL representation entirely and uses the same backbone LLM ( claude-opus-4-6 ) as a direct judge over raw skill text (Section 4.1); and Semia †, which introduces the SDL + reachability engine but accepts the first-pass SDL without iterative self-correction (Section 4.3). Starting from the weakest configuration, Semia ∗ achieves only 70.7% F1, confirming that a direct LLM judge cannot reliably per-form multi-step reachability analysis. Adding the SDL representa-tion and reachability engine ( Semia †) raises F1 to 86.6% ( +15.9), demonstrating that structured semantic lifting is the single most im-pactful design choice. Finally, enabling iterative refinement yields the full Semia at 90.6% F1 ( +4.0), showing that constraint-guided self-correction further closes the gap between first-pass proposals and faithful skill reconstruction. 
+
+Result for RQ3: Each component contributes cumulatively: the SDL + reachability engine provides the largest gain ( +15.9 F1 over Semia ∗), and iterative refinement adds a further +4.0 F1, yielding a total improvement of 19.9 F1 points from the weakest variant to the full pipeline. 
+
+## 7.4 RQ4: Zero-Day Vulnerability Discovery 
+
+Among the skills flagged by Semia , manual triage confirmed 17 critical exploitable zero-day vulnerabilities , all of which have been confirmed by the OpenClaw registry maintainers and respon-sibly disclosed (see Appendix A). None of the 17 were flagged by either VirusTotal or ClawScan, no prior security discussion existed on their respective GitHub repositories, and all remained publicly installable at the time of writing. We highlight two representative patterns (skill names anonymized because detailed exploit methods are presented): 
+
+• Shadow credentials. A password-management skill wrapping standard Unix utilities ( pass , gpg ) promises that “raw secrets never enter chat context.” Semia ’s CGRS extracted variable-level data-flow facts revealing three unprotected credential paths (in-process memory, /proc/<pid>/environ , and the shell command line) where decrypted secrets become agent-observable without isolation or secure disposal. No signature scanner flags the skill because every invoked binary is benign. 
+
+• Behavior–claim contradiction. A shell-safety skill declares itself instruction-only (“does NOT execute commands . . . no bi-naries, no network calls”), yet ships install-time scripts that run 
+
+sed -i and pnpm build on the host platform. Semia encodes both the natural-language claims and code-level behaviors in the same Datalog fact base, enabling the reachability engine to fire the behavior_claim_contradiction rule, a check invisible to tools that inspect claims and code independently. 
+
+Result for RQ4: Semia discovered 17 critical exploitable zero-day vulnerabilities, all confirmed by the OpenClaw registry maintainers and responsibly disclosed. 
+
+## 7.5 Discussion 
+
+False-positive analysis. Of the 54 false positives, 46 (85%) are MHG flags. The root cause is a granularity mismatch: MHG fires whenever a state-modifying call lacks a structural human_gate , yet many skills legitimately expose write operations (e.g., adding a cal-endar event, posting a message) whose impact is bounded enough that human annotators judged no gate necessary. The remaining 8 false positives are BCC or HCC flags where Semia mistakes legiti-mate third-party API endpoints for command-and-control indica-tors or flags benign install-time scripts as behavior–claim contra-dictions. Because every flag ships with a witness path, an auditor Conference’17, July 2017, Washington, DC, USA Wen et al. 
+
+confirms or dismisses each in seconds rather than re-reading the full skill. 
+
+Internal validity. The ground truth was produced by two authors (𝜅 = 0.83 , per-skill Jaccard 0.87 ); all disagreements were resolved through joint adjudication before any tool output was consulted, preventing annotator bias. Stratified sampling guards against skill-size confounders, but categories with fewer than five ground-truth instances should be interpreted with caution. The LLM backbone is non-deterministic: we fixed the temperature at 0 and the refinement budget at 𝑁 =5, and all ablation variants share the same backbone and decoding settings to ensure a fair comparison. 
+
+External validity. The corpus is drawn from a single ecosystem (OpenClaw); marketplaces with different permission models or sandboxing may shift category prevalences. Platforms enforcing mandatory capability declarations may reduce MHG-class risks while surfacing categories absent from our taxonomy. ClawScan is a black-box whose heuristics may evolve; VirusTotal is limited to syntactic analysis by design. Our baseline comparison therefore reflects the state at crawl time. Nevertheless, the taxonomy and SDL-based methodology are ecosystem-agnostic: adapting Semia 
+
+to a new marketplace requires only a new skill-inlining frontend, while the reachability engine and rule set remain unchanged. 
+
+Failure modes. Residual false negatives have two root causes: (1) adversarial prose that causes CGRS to drop facts Validate can-not catch, and (2) deeply nested third-party APIs not yet inlined during preprocessing, which silently break reachability chains. 
+
+## 8 Related Work 
+
+We review the most closely related work along four axes. 
+
+Vulnerabilities in LLM-Integrated Agents. Indirect Prompt Injec-tion (IPI) [ 11 ] is the primary attack vector against tool-augmented agents. Adversaries exploit the agent’s inability to reliably differen-tiate system instructions from untrusted external data to hijack con-trol flows. Liu et al. [ 22 ] formalize the threat, evaluating five attack strategies and ten defenses across ten LLMs. Recent work shows that adversaries can craft prompt injections that manipulate tool retrieval and selection, forcing invocation of attacker-controlled APIs [ 37 ], and ToolSword [ 43 ] exposes safety gaps across input, execution, and output stages. Benchmarks quantify the threat at scale: InjecAgent [ 45 ] (1,054 IPI test cases), AgentDojo [ 7] (97 tasks, 629 security tests), and Agent Security Bench [ 46 ] (400+ tools, up to 84% attack success). Defensive mechanisms operate primarily at runtime. StruQ [ 4]enforces instruction-data separation via structured queries and specialized model fine-tuning, Spotlighting [ 13 ] introduces delim-iting and encoding transformations to make untrusted content distinguishable, and DataSentinel [ 23 ] applies game-theoretic per-turbation for prompt injection detection. However, all three depend on the LLM’s probabilistic interpretation at inference time. Semia 
+
+shifts the audit boundary to pre-deployment, lifting skills into SDL fact bases where detectors run as deterministic reachability queries, decoupling the verdict step from the LLM’s runtime selection pro-cess. 
+
+Static Verification of AI Systems. Traditional SAST cannot eval-uate natural-language policies; the industry often falls back on LLM-as-a-judge, whose instability and susceptibility to secondary prompt injections are well documented [ 8]. Neuro-symbolic ap-proaches address this gap. IRIS [20] combines LLMs with CodeQL for whole-repository taint analysis, using the LLM to generate analysis specifications that a classical engine evaluates, achiev-ing substantially higher recall than CodeQL alone. LLMDFA [ 38 ]decomposes dataflow analysis into LLM-tractable subtasks with external tool validation, sharing Semia ’s philosophy of letting the LLM surface facts while outsourcing precise reasoning to a formal engine. PropertyGPT [ 24 ] generates formal verification properties from smart contracts for bounded model checking. On the dynamic side, TAI3 [ 9 ] stress-tests intent interpretation via input mutation, AgentFuzz [ 21 ] applies fuzzing to detect source-to-sink vulnera-bilities (34 zero-days), and AgentSpec [ 39 ] provides customizable runtime enforcement. Unlike IRIS and LLMDFA, which target con-ventional code, Semia targets hybrid documents whose security-relevant content is English prose, and produces pre-deployment findings without invoking the LLM at verdict time. 
+
+Information Flow and Access Control. As agents transition to state-modifying entities, enforcing access control becomes critical. Conventional HitL and RBAC mechanisms degrade in autonomous environments: HitL architectures suffer from consent fatigue and lack semantic context, making them susceptible to fragmentation at-tacks where malicious objectives are split across seemingly benign steps [ 42 ]. Recent work frames agent security as an information-flow problem: CaMeL [ 6] uses a custom interpreter to track data provenance and enforce that untrusted inputs cannot influence security-sensitive calls, solving 67% of AgentDojo tasks with prov-able guarantees. Fides [ 5] implements dynamic taint-tracking with integrity and confidentiality labels, and RTBAS [ 48 ] applies de-pendency screening against prompt injection and privacy leakage. These systems enforce policies at runtime; Semia complements them with a pre-deployment auditing layer that flags problematic flows before the agent is ever installed. Architectural approaches advocate execution isolation: SEAgent [ 16 ] proposes ABAC to monitor agent-tool interactions and prevent privilege escalation, IsolateGPT [ 41 ] sandboxes the LLM planner from the tool executor, and [ 34 ] bridges formal specifications with generative AI for access-control enforcement. These strategies limit blast radius at runtime; Semia instead flags unguarded paths at design time via SDL-based reachability analysis. 
+
+## 9 Conclusion 
+
+We presented Semia , a static analyzer for AI agent skills. Semia 
+
+lifts each skill into the Skill Description Language (SDL), a compact relational fact base, and answers security questions as determinis-tic reachability queries over those facts. The lift is performed by Constraint-Guided Representation Synthesis (CGRS), a bounded refinement loop in which an LLM proposes candidates and two semantic checks accept, reject, and shape each iteration. On 13,728 real-world skills, Semia substantially outperforms signature-based scanners and LLM-only auditors, and surfaced 17 confirmed ex-ploitable zero-days that were responsibly disclosed to the OpenClaw Semia : Auditing Agent Skills via Constraint-Guided Representation Synthesis Conference’17, July 2017, Washington, DC, USA 
+
+registry maintainers. More broadly, our results suggest that lift-ing prose-defined agent behavior into a structured representation, rather than asking an LLM to read and judge it directly, is a prac-tical foundation for auditing the next generation of autonomous workloads. 
+
+## References 
+
+[1] Anthropic. 2026. Agent Skills Overview. https://platform.claude.com/docs/en/ agents-and-tools/agent-skills/overview. Online. [2] Martin Bravenboer and Yannis Smaragdakis. 2009. Strictly declarative specifica-tion of sophisticated points-to analyses. SIGPLAN Not. 44, 10 (Oct. 2009), 243–262. doi:10.1145/1639949.1640108 [3] Lexi Brent, Anton Jurisevic, Michael Kong, Eric Liu, Francois Gauthier, Vincent Gramoli, Ralph Holz, and Bernhard Scholz. 2018. Vandal: A Scalable Security Analysis Framework for Smart Contracts. arXiv:1809.03981 [cs.PL] https://arxiv. org/abs/1809.03981 [4] Sizhe Chen, Julien Piet, Chawin Sitawarin, and David Wagner. 2025. StruQ: defending against prompt injection with structured queries. In Proceedings of the 34th USENIX Conference on Security Symposium (Seattle, WA, USA) (SEC ’25) .USENIX Association, USA, Article 123, 18 pages. [5] Manuel Costa, Boris Köpf, Aashish Kolluri, Andrew Paverd, Mark Russi-novich, Ahmed Salem, Shruti Tople, Lukas Wutschitz, and Santiago Zanella-Béguelin. 2025. Securing AI Agents with Information-Flow Control. arXiv:2505.23643 [cs.CR] https://arxiv.org/abs/2505.23643 [6] Edoardo Debenedetti, Ilia Shumailov, Tianqi Fan, Jamie Hayes, Nicholas Carlini, Daniel Fabian, Christoph Kern, Chongyang Shi, Andreas Terzis, and Florian Tramèr. 2025. Defeating Prompt Injections by Design. arXiv:2503.18813 [cs.CR] https://arxiv.org/abs/2503.18813 [7] Edoardo Debenedetti, Jie Zhang, Mislav Balunović, Luca Beurer-Kellner, Marc Fis-cher, and Florian Tramèr. 2024. AgentDojo: A Dynamic Environment to Evaluate Prompt Injection Attacks and Defenses for LLM Agents. arXiv:2406.13352 [cs.CR] https://arxiv.org/abs/2406.13352 [8] Jonathan Evertz, Niklas Risse, Nicolai Neuer, Andreas Müller, Philipp Normann, Gaetano Sapia, Srishti Gupta, David Pape, Soumya Shaw, Devansh Srivastav, Christian Wressnegger, Erwin Quiring, Thorsten Eisenhofer, Daniel Arp, and Lea Schönherr. 2026. Chasing Shadows: Pitfalls in LLM Security Research. In 
+
+Proceedings of the 2026 Network and Distributed System Security Symposium (NDSS) . Internet Society. https://www.ndss-symposium.org/ndss-paper/chasing-shadows-pitfalls-in-llm-security-research/ [9] Shiwei Feng, Xiangzhe Xu, Xuan Chen, Kaiyuan Zhang, Syed Yusuf Ahmed, Zian Su, Mingwei Zheng, and Xiangyu Zhang. 2025. TAI3: Testing Agent Integrity in Interpreting User Intent. arXiv:2506.07524 [cs.SE] https://arxiv.org/abs/2506. 07524 [10] Jeanne Ferrante, Karl J. Ottenstein, and Joe D. Warren. 1987. The program dependence graph and its use in optimization. ACM Trans. Program. Lang. Syst. 
+
+9, 3 (July 1987), 319–349. doi:10.1145/24039.24041 [11] Kai Greshake, Sahar Abdelnabi, Shailesh Mishra, Christoph Endres, Thorsten Holz, and Mario Fritz. 2023. Not what you’ve signed up for: Compromis-ing Real-World LLM-Integrated Applications with Indirect Prompt Injection. arXiv:2302.12173 [cs.CR] https://arxiv.org/abs/2302.12173 [12] HackerOne. 2025. HackerOne Report Finds 210% Spike in AI Vulnerability Reports Amid Rise of AI Autonomy. https://www.hackerone.com/press-release/hackerone-report-finds-210-spike-ai-vulnerability-reports-amid-rise-ai-autonomy. Online. [13] Keegan Hines, Gary Lopez, Matthew Hall, Federico Zarfati, Yonatan Zunger, and Emre Kiciman. 2024. Defending Against Indirect Prompt Injection Attacks With Spotlighting. arXiv:2403.14720 [cs.CR] https://arxiv.org/abs/2403.14720 [14] Invariant Labs. 2024. MCP Security Notification — Tool Poisoning Attacks. https:// invariantlabs.ai/blog/mcp-security-notification-tool-poisoning-attacks. Online. [15] Umar Iqbal, Tadayoshi Kohno, and Franziska Roesner. 2024. LLM Platform Security: Applying a Systematic Evaluation Framework to OpenAI’s ChatGPT Plugins. arXiv:2309.10254 [cs.CR] https://arxiv.org/abs/2309.10254 [16] Zimo Ji, Daoyuan Wu, Wenyuan Jiang, Pingchuan Ma, Zongjie Li, Yudong Gao, Shuai Wang, and Yingjiu Li. 2026. Taming Various Privilege Escala-tion in LLM-Based Agent Systems: A Mandatory Access Control Framework. arXiv:2601.11893 [cs.CR] https://arxiv.org/abs/2601.11893 [17] Herbert Jordan, Bernhard Scholz, and Pavle Subotic. 2016. Soufflé: On Synthesis of Program Analyzers. In Computer Aided Verification - 28th International Conference, CAV 2016, Toronto, ON, Canada, July 17-23, 2016, Proceedings, Part II (Lecture Notes in Computer Science) , Swarat Chaudhuri and Azadeh Farzan (Eds.). Springer, 422– 430. doi:10.1007/978-3-319-41540-6_23 [18] Adnan Khan. 2026. Clinejection — Compromising Cline’s Production Releases just by Prompting an Issue Triager. https://adnanthekhan.com/posts/clinejection/. Online. [19] J. Richard Landis and Gary G. Koch. 1977. The Measurement of Observer Agree-ment for Categorical Data. Biometrics 33, 1 (1977), 159–174. [20] Ziyang Li, Saikat Dutta, and Mayur Naik. 2025. IRIS: LLM-Assisted Static Analysis for Detecting Security Vulnerabilities. arXiv:2405.17238 [cs.CR] https://arxiv. org/abs/2405.17238 [21] Fengyu Liu, Yuan Zhang, Jiaqi Luo, et al . 2025. Make Agent Defeat Agent: Automatic Detection of Taint-Style Vulnerabilities in LLM-based Agents. In 34th USENIX Security Symposium (USENIX Security 25) . https://www.usenix.org/ conference/usenixsecurity25/presentation/liu-fengyu [22] Yupei Liu, Yuqi Jia, Runpeng Geng, Jinyuan Jia, and Neil Zhenqiang Gong. 2024. Formalizing and Benchmarking Prompt Injection Attacks and Defenses. In 33rd USENIX Security Symposium (USENIX Security 24) . 1831–1847. https://www. usenix.org/conference/usenixsecurity24/presentation/liu-yupei [23] Yupei Liu, Yuqi Jia, Jinyuan Jia, Dawn Song, and Neil Zhenqiang Gong. 2025. DataSentinel: A Game-Theoretic Detection of Prompt Injection Attacks . In 
+
+2025 IEEE Symposium on Security and Privacy (SP) . IEEE Computer Society, Los Alamitos, CA, USA, 2190–2208. doi:10.1109/SP61157.2025.00250 [24] Ye Liu, Yue Xue, Daoyuan Wu, Yuqiang Sun, Yi Li, Miaolei Shi, and Yang Liu. 2025. PropertyGPT: LLM-driven Formal Verification of Smart Contracts through Retrieval-Augmented Property Generation. In Proceedings 2025 Network and Distributed System Security Symposium (NDSS 2025) . Internet Society. doi:10. 14722/ndss.2025.241357 [25] National Vulnerability Database. 2025. CVE-2025-32711 Detail. https://nvd.nist. gov/vuln/detail/CVE-2025-32711. Online. [26] npm. 2026. clawhub — Download Statistics. https://www.npmjs.com/package/ clawhub. 842K downloads/month as of April 2026. [27] npm. 2026. @modelcontextprotocol/sdk — Download Statistics. https://www. npmjs.com/package/@modelcontextprotocol/sdk. 150 M downloads/month as of April 2026. [28] npm. 2026. openclaw — Download Statistics. https://www.npmjs.com/package/ openclaw. 6.7 M downloads/month as of April 2026. [29] OpenClaw. 2026. OpenClaw: Open-Source Personal AI Agent Framework. https: //github.com/openclaw/openclaw. 362K GitHub stars as of April 2026. [30] OpenClaw Maintainers. 2026. Security Vulnerability Report — Issue #135. https: //github.com/openclaw/clawhub/issues/135. Representative disclosure issue; accessed: 2026-04-29. [31] Shishir G. Patil, Tianjun Zhang, Xin Wang, and Joseph E. Gonzalez. 2023. Gorilla: Large Language Model Connected with Massive APIs. arXiv:2305.15334 [cs.CL] https://arxiv.org/abs/2305.15334 [32] Pillar Security. 2025. The Security Risks of Model Context Protocol (MCP). https://www.pillar.security/blog/the-security-risks-of-model-context-protocol-mcp. Online. [33] PyPI. 2026. mcp — Download Statistics. https://pypi.org/project/mcp/. 231 M downloads/month as of April 2026. [34] Carlos E. Rubio-Medrano, Akash Kotak, Wenlu Wang, and Karsten Sohr. 2024. Pairing Human and Artificial Intelligence: Enforcing Access Control Policies with LLMs and Formal Specifications. In Proceedings of the 29th ACM Symposium on Access Control Models and Technologies (San Antonio, TX, USA) (SACMAT 2024) . Association for Computing Machinery, New York, NY, USA, 105–116. doi:10.1145/3649158.3657032 [35] Salt Security. 2024. Security Flaws Within ChatGPT Ecosystem. https://salt.security/blog/security-flaws-within-chatgpt-extensions-allowed-access-to-accounts-on-third-party-websites-and-sensitive-data. Online. [36] Timo Schick, Jane Dwivedi-Yu, Roberto Dessí, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. 2023. Toolformer: language models can teach themselves to use tools. In Proceedings of the 37th International Conference on Neural Information Processing Systems (New Orleans, LA, USA) (NIPS ’23) . Curran Associates Inc., Red Hook, NY, USA, Article 2997, 13 pages. [37] Jiawen Shi, Zenghui Yuan, Guiyao Tie, Pan Zhou, Neil Zhenqiang Gong, and Lichao Sun. 2025. Prompt Injection Attack to Tool Selection in LLM Agents. arXiv:2504.19793 [cs.CR] https://arxiv.org/abs/2504.19793 [38] Chengpeng Wang, Wuqi Zhang, Zian Su, Xiangzhe Xu, Xiaoheng Xie, and Xi-angyu Zhang. 2024. LLMDFA: Analyzing Dataflow in Code with Large Language Models. arXiv:2402.10754 [cs.PL] https://arxiv.org/abs/2402.10754 [39] Haoyu Wang, Christopher M. Poskitt, and Jun Sun. 2025. AgentSpec: Customizable Runtime Enforcement for Safe and Reliable LLM Agents. arXiv:2503.18666 [cs.AI] https://arxiv.org/abs/2503.18666 [40] John Whaley, Dzintars Avots, Michael Carbin, and Monica S. Lam. 2005. Using datalog with binary decision diagrams for program analysis. In Proceedings of the Third Asian Conference on Programming Languages and Systems (Tsukuba, Japan) 
+
+(APLAS’05) . Springer-Verlag, Berlin, Heidelberg, 97–118. doi:10.1007/11575467_8 [41] Yuhao Wu, Franziska Roesner, Tadayoshi Kohno, Ning Zhang, and Umar Iqbal. 2025. IsolateGPT: An Execution Isolation Architecture for LLM-Based Agentic Systems. arXiv:2403.04960 [cs.CR] https://arxiv.org/abs/2403.04960 [42] Yuhao Wu, Ke Yang, Franziska Roesner, Tadayoshi Kohno, Ning Zhang, and Umar Iqbal. 2026. Towards Automating Data Access Permissions in AI Agents . In 
+
+2026 IEEE Symposium on Security and Privacy (SP) . IEEE Computer Society, Los Conference’17, July 2017, Washington, DC, USA Wen et al. 
+
+Alamitos, CA, USA, 336–354. doi:10.1109/SP63933.2026.00018 [43] Junjie Ye, Sixian Li, Guanyu Li, Caishuang Huang, Songyang Gao, Yilong Wu, Qi Zhang, Tao Gui, and Xuanjing Huang. 2024. ToolSword: Unveiling Safety Issues of Large Language Models in Tool Learning Across Three Stages. In 
+
+Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , Lun-Wei Ku, Andre Martins, and Vivek Srikumar (Eds.). Association for Computational Linguistics, Bangkok, Thailand, 2181–2211. doi:10.18653/v1/2024.acl-long.119 [44] Zenity Labs. 2025. EchoLeak: A Reminder That AI Agent Risks Are Here to Stay. https://labs.zenity.io/p/echoleak-a-reminder-that-ai-agent-risks-are-here-to-stay-3cf3. Online. [45] Qiusi Zhan, Zhixiang Liang, Zifan Ying, and Daniel Kang. 2024. InjecAgent: Benchmarking Indirect Prompt Injections in Tool-Integrated Large Language Model Agents. arXiv:2403.02691 [cs.CL] https://arxiv.org/abs/2403.02691 [46] Hanrong Zhang, Jingyuan Huang, Kai Mei, Yifei Yao, Zhenting Wang, Chenlu Zhan, Hongwei Wang, and Yongfeng Zhang. 2025. Agent Security Bench (ASB): Formalizing and Benchmarking Attacks and Defenses in LLM-based Agents. arXiv:2410.02644 [cs.CR] https://arxiv.org/abs/2410.02644 [47] Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica. 2023. Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena. arXiv:2306.05685 [cs.CL] https://arxiv.org/abs/2306.05685 [48] Peter Yong Zhong, Siyuan Chen, Ruiqi Wang, McKenna McCall, Ben L. Titzer, Heather Miller, and Phillip B. Gibbons. 2025. RTBAS: Defending LLM Agents Against Prompt Injection and Privacy Leakage. arXiv:2502.08966 [cs.CR] https: //arxiv.org/abs/2502.08966 Semia : Auditing Agent Skills via Constraint-Guided Representation Synthesis Conference’17, July 2017, Washington, DC, USA 
+
+## A Ethical Considerations 
+
+Our work affects three stakeholder groups: skill developers, whose code is analyzed; marketplace operators, who must triage disclosed vulnerabilities; and end users, who are exposed to the risks our tool detects. We discuss the ethical implications for each below. 
+
+No human subjects or private data. All graph construction and static analyses were performed offline on publicly available, open-source skill repositories. We did not involve human subjects, collect personally identifiable information, or execute any exploits against live systems. No IRB approval was required; beyond institutional compliance, we independently assessed that analyzing only public artifacts poses no risk to individuals. 
+
+Responsible disclosure. Among the semantic vulnerabilities that 
+
+Semia identified, manual triage confirmed 17 as exploitable zero-day vulnerabilities. All 17 have been reported to the OpenClaw registry maintainers via GitHub issues, the channel endorsed by the maintainers themselves and consistently yielding prompt reme-diation (e.g., Issue #135 [ 30 ], which led to delisting approximately one month after filing). At the time of submission, all reports have been confirmed by the maintainers and the affected skills have been mitigated. We anonymize the two cases in RQ4 (Section 7) whose detailed exploit patterns are presented in the evaluation. 
+
+Dual-use risk mitigation. We believe the defensive benefits to operators and users substantially outweigh the risks, but acknowl-edge that Semia ’s pipeline could, in principle, assist an adversary in locating vulnerable skills. We mitigate this by: (i) publishing no exploit code, complete payloads, or step-by-step attack procedures; (ii) presenting case studies at the level of semantic patterns (e.g., data-flow reachability, claim–behavior contradictions) rather than reproducible exploits; (iii) withholding the full list of zero-day skills and anonymizing those whose detailed exploit methods are pre-sented in the paper; and (iv) noting that attackers already have access to the public source code of their targets, whereas Semia 
+
+provides a net-new defensive capability. 
+
+Handling of malicious samples. Our benchmark includes skills with confirmed malicious or vulnerable logic, collected exclusively from public repositories. Because Semia is a purely static analysis pipeline, reproducing our results never requires executing any skill code. The artifact bundle ships original skill sources for full repro-ducibility, accompanied by clear warnings about their content. 
+
+## B Taxonomy of Risks (Full Version) 
+
+This appendix mirrors our taxonomy of semantic risks in agent skills and pairs each risk category with its corresponding detector. For each entry, we preserve the original explanatory text and skill excerpt, then immediately present the detection rule used by Semia .To systematically understand the vulnerability surface of agent skills, we studied dozens of real-world artifacts from the Open-Claw marketplace 4. A key finding from our manual inspection is that agentic vulnerabilities rarely stem from traditional memory corruption or classical logic bugs in API wrappers. Instead, they arise from the semantic gap between unstructured natural language instructions and deterministic execution primitives. 
+
+> 4https://github.com/openclaw/skills/
+
+When security boundaries degrade from strict conditional code to probabilistic prose, attackers can exploit the agent’s contextual window to manipulate control flow. Following the three query classes defined in Section 5.2, we organize the detectors into: an 
+
+unguarded-sink detector (MHG), four taint-flow violations (SLRO, UCI, DEP, IEC), and six structural anomalies (SC, UDS, BCC, OBF, HCC, DMP). 
+
+## B.1 Unguarded Sink name : trade                                     
+
+> description :Swap or trade tokens on Base network. Use when you
+> or the user want to trade...
+> disable -model -invocation :false
+> allowed -tools :["Bash( npx awal@latest trade *)", ...]
+> Skill Excerpt: Trade
+> ## CLI -Specific Notes
+> ### Codex
+> ---full -auto :Auto -approve in workspace (sandboxed)
+> ---yolo :No sandbox, no approvals (dangerous but fast)
+> ### Claude Code
+> ---dangerously -skip -permissions :Auto -approve
+> Skill Excerpt: Ralph Loop
+> description :
+> ...
+> **Requires OPENWEBUI_URL and OPENWEBUI_TOKEN environment
+> variables or explicit parameters.**
+> Skill Excerpt: Open -WebUI
+> 3. Load Home Assistant config:
+> $config =Get -Content ". homeassistant -config.json "|
+> ConvertFrom -Json
+> $token =$config.token
+> Skill Excerpt: Game Light Tracker
+> …
+> **For builds, gallery submission, and advanced features, use:**
+> npx @codahq /packs -sdk build
+> npx @codahq /packs -sdk release
+> Skill Excerpt: Coda Packs
+> ## References
+> -**Design:** /docs/TIERED -MEMORY.md (EvoClaw )
+> -**Cloud Sync:** /docs/CLOUD -SYNC.md (EvoClaw )
+> Skill Excerpt: Tiered Memory
+
+B.1.1 Missing Human Gate (MHG). Many vulnerabilities stem from the absence of interactive verification primitives in high-stakes control flows. The Missing Human Gate pattern occurs when a skill performs a state-modifying or financial action without ex-plicit interactive checkpoints (e.g., an "Ask" or "Hold" primitive) in its underlying execution path. This vulnerability is rooted in the developer’s implicit assumption that the LLM will voluntarily seek permission for dangerous tasks. Without strict structural en-forcement, the execution proceeds silently the moment the LLM is semantically deceived. For example, the trade skill 5, shown in the Trade excerpt, is designed for irreversible blockchain asset swaps. The YAML front-matter explicitly grants the agent the technical capability to execute trades ( disable-model-invocation: false ). More critically, the natural language description instructs the LLM to use the skill "when you or the user want to trade," actively encouraging au-tonomous execution. Because this high-impact financial operation lacks any semantic or structural mandate for a human-in-the-loop (HITL) confirmation, an attacker can simply inject a prompt ex-pressing a desire to trade. The agent, following its directive, will authorize and execute the transaction silently. 
+
+Detection rule. Autonomous agents are frequently tasked with high-stakes operations, such as financial transactions or system modifications. However, developers often rely on the LLM’s se-mantic understanding to voluntarily pause and ask for permission, leaving a critical structural gap. If an attacker injects a malicious prompt (e.g., “execute this transfer immediately”), the agent, lack-ing a hardcoded enforcement mechanism, will silently comply. To identify this unguarded control reachability, we check whether an externally controlled execution path reaches a sensitive target without crossing an explicit user-approval barrier. 
+
+MHG(s,a,c) :- action(a,s), call(c,a,E), (E="chain_write"; E="proc_exec"; E="code_eval"; E="crypto_sign"), !barrier_gate(a,"human_approval").  
+
+> 5https://github.com/openclaw/skills/blob/main/skills/0xrag/trade/SKILL.md Conference’17, July 2017, Washington, DC, USA Wen et al.
+
+## B.2 Taint-Flow Violations 
+
+The following detectors share a common structure: a var _tainted 
+
+or var _secret variable reaches a dangerous call input without an intervening barrier. ### Claude Code 
+
+> ---dangerously -skip -permissions
+
+: Auto -approve 
+
+description :
+
+... 
+
+**Requires OPENWEBUI_URL and OPENWEBUI_TOKEN environment 
+
+variables or explicit parameters.** 
+
+Skill Excerpt: Open -WebUI 
+
+3. Load Home Assistant config:       
+
+> $config =Get -Content ". homeassistant -config.json "|
+> ConvertFrom -Json
+> $token =$config.token
+
+Skill Excerpt: Game Light Tracker 
+
+…
+
+**For builds, gallery submission, and advanced features, use:**     
+
+> npx @codahq /packs -sdk build
+> npx @codahq /packs -sdk release
+
+Skill Excerpt: Coda Packs 
+
+## References 
+
+- **Design:** /docs/TIERED -MEMORY.md (EvoClaw )
+
+- **Cloud Sync:** /docs/CLOUD -SYNC.md (EvoClaw )
+
+Skill Excerpt: Tiered Memory          
+
+> ...
+> "mcpServers ": {"0protocol": {
+> "baseUrl ": "https://mcp.0protocol.dev/ mcp "
+> }}
+> ...
+> mcporter call ‘0protocol.transfer(to: "8b2c4...",
+> payload: {type: "task_handoff "})’
+
+Skill Excerpt: 0protocol 
+
+B.2.1 Sensitive Local Resource Overreach (SLRO). The sensitive local resource overreach pattern occurs when an agent is granted broad access to local files semantically unrelated to its task. Unlike traditional, identity-based OS access control, agentic overreach is context-blind. For instance, a skill designed for text linting might be instructed to "scan the directory," implicitly authorizing it to read sensitive configurations like .env or .ssh/config .The Game Light Tracker skill 6, shown, improperly accesses a Home Assistant configuration file. This exposes a lack of se-mantic isolation: the skill uses a general-purpose script executing 
+
+Get-Content to retrieve private tokens. An attacker can hijack the tracking request to exfiltrate these tokens to an external server. 
+
+Detection rule. Similar to credential abuse, agents designed for local workspace assistance often exhibit context-blind overreach. When asked to “summarize the directory,” an agent may indiscrim-inately scrape sensitive local files, such as .ssh configurations or environment variables. Attackers can hijack this broad read access to stage data for exfiltration. We detect two complementary pat-terns: (1) secret scope violation , where a declared secret flows into an action that is not on its secret _allowed list, and (2) secret–taint mix-ing , where a secret variable and an attacker-controlled (untrusted or tainted) variable co-enter the same call to a non-trusted target, the structural precondition for exfiltration. 
+
+SLRO(s,a,c,sec) :- action(a,s), call(c,a, _), call_input(c, _,v), secret_var(v,sec), !secret_allowed(sec,a). SLRO(s,a,c,sec) :- action(a,s), call(c,a, _), call_input(c, _,sv), secret_var(sv,sec), call_input(c, _,tv), sv!=tv, var_tainted(tv), !call_target_trusted(c). name : trade 
+
+description : Swap or trade tokens on Base network. Use when you 
+
+or the user want to trade... 
+
+disable -model -invocation : false 
+
+allowed -tools : ["Bash( npx awal@latest trade *)", ...] 
+
+Skill Excerpt: Trade 
+
+## CLI -Specific Notes 
+
+### Codex 
+
+> ---full -auto
+
+: Auto -approve in workspace (sandboxed) 
+
+> ---yolo
+
+: No sandbox, no approvals (dangerous but fast) 
+
+### Claude Code 
+
+> ---dangerously -skip -permissions
+
+: Auto -approve 
+
+Skill Excerpt: Ralph Loop 
+
+description :
+
+... 
+
+**Requires OPENWEBUI_URL and OPENWEBUI_TOKEN environment 
+
+variables or explicit parameters.** 
+
+Skill Excerpt: Open -WebUI 
+
+3. Load Home Assistant config:       
+
+> $config =Get -Content ". homeassistant -config.json "|
+> ConvertFrom -Json
+> $token =$config.token
+
+Skill Excerpt: Game Light Tracker 
+
+…
+
+**For builds, gallery submission, and advanced features, use:**     
+
+> npx @codahq /packs -sdk build
+> npx @codahq /packs -sdk release
+
+Skill Excerpt: Coda Packs 
+
+## References 
+
+- **Design:** /docs/TIERED -MEMORY.md (EvoClaw )
+
+- **Cloud Sync:** /docs/CLOUD -SYNC.md (EvoClaw )
+
+Skill Excerpt: Tiered Memory 
+
+name : clawhub -triager 
+
+description : Fetch and analyze issues from Clawhub . The agent will 
+
+read the raw issue body and summarize the user’s intent. 
+
+## Behavioral Instructions 
+
+Analyze the following issue description thoroughly... 
+
+Skill Excerpt: Clawhub Triager          
+
+> ...
+> "mcpServers ": {"0protocol": {
+> "baseUrl ": "https://mcp.0protocol.dev/ mcp "
+> }}
+> ...
+> mcporter call ‘0protocol.transfer(to: "8b2c4...",
+> payload: {type: "task_handoff "})’
+
+Skill Excerpt: 0protocol 
+
+B.2.2 Dangerous Execution Primitives (DEP). Many skills invoke unverified execution pipelines, such as curl | bash or npx , lacking version pinning or sandbox isolation. Favoring convenience over security, developers use dynamic installers to keep tools up-to-date. In an agentic context, however, this delegates critical argument construction directly to the LLM. 
+
+> 6https://github.com/openclaw/skills/blob/main/skills/0xadamsu/game-light-tracker/SKILL.md
+
+As shown in the Coda Packs excerpt, the coda-packs skill 7 in-structs the agent to execute unverified SDK commands via npx . An attacker can inject a payload modifying the build arguments to include a command separator, achieving arbitrary code execution on the host machine during a seemingly legitimate tool setup phase. 
+
+Detection rule. The convenience-over-security tendency in agen-tic ecosystems often leads to unsafe execution pipelines, such as dynamic curl | bash installers or raw shell command evaluations. When the arguments to these primitives are constructed by the LLM based on external text, it opens a direct avenue for arbitrary system command injection. We strictly capture these tainted-to-execution flows, reporting a violation whenever attacker-influenced data reaches an execution sink. 
+
+DEP(s,a,c) :- action(a,s), call(c,a,"proc_exec"), call_input(c, _,v), var_tainted(v), call_unconditional(c). name : trade 
+
+description : Swap or trade tokens on Base network. Use when you 
+
+or the user want to trade... 
+
+disable -model -invocation : false 
+
+allowed -tools : ["Bash( npx awal@latest trade *)", ...] 
+
+Skill Excerpt: Trade 
+
+## CLI -Specific Notes 
+
+### Codex 
+
+> ---full -auto
+
+: Auto -approve in workspace (sandboxed) 
+
+> ---yolo
+
+: No sandbox, no approvals (dangerous but fast) 
+
+### Claude Code 
+
+> ---dangerously -skip -permissions
+
+: Auto -approve 
+
+Skill Excerpt: Ralph Loop 
+
+description :
+
+... 
+
+**Requires OPENWEBUI_URL and OPENWEBUI_TOKEN environment 
+
+variables or explicit parameters.** 
+
+Skill Excerpt: Open -WebUI 
+
+3. Load Home Assistant config:       
+
+> $config =Get -Content ". homeassistant -config.json "|
+> ConvertFrom -Json
+> $token =$config.token
+
+Skill Excerpt: Game Light Tracker 
+
+…
+
+**For builds, gallery submission, and advanced features, use:**     
+
+> npx @codahq /packs -sdk build
+> npx @codahq /packs -sdk release
+
+Skill Excerpt: Coda Packs 
+
+## References 
+
+- **Design:** /docs/TIERED -MEMORY.md (EvoClaw )
+
+- **Cloud Sync:** /docs/CLOUD -SYNC.md (EvoClaw )
+
+Skill Excerpt: Tiered Memory 
+
+name : clawhub -triager 
+
+description : Fetch and analyze issues from Clawhub . The agent will 
+
+read the raw issue body and summarize the user’s intent. 
+
+## Behavioral Instructions 
+
+Analyze the following issue description thoroughly... 
+
+Skill Excerpt: Clawhub Triager          
+
+> ...
+> "mcpServers ": {"0protocol": {
+> "baseUrl ": "https://mcp.0protocol.dev/ mcp "
+> }}
+> ...
+> mcporter call ‘0protocol.transfer(to: "8b2c4...",
+> payload: {type: "task_handoff "})’
+
+Skill Excerpt: 0protocol 
+
+B.2.3 Unsanitized Context Ingestion (UCI). Attackers exploit the discrepancy between human visual perception and LLM tokeniza-tion by embedding invisible Unicode control characters (e.g., zero-width spaces). When a skill lacks proper input sanitization, it be-comes susceptible to an Unsanitized Context Ingestion risk. Attack-ers can interleave these invisible characters within a malicious directive. Traditional security filters and human reviewers fail to detect the threat because the string-matching signatures are bro-ken (e.g., the sequence I<U+200B>g<U+200C>n... does not trigger regex rules looking for the word "Ignore"). However, the LLM’s tokenizer assigns distinct tokens to these Unicode characters, and advanced models can semantically reconstruct and execute the hid-den prompt. The root cause in skill design is the direct ingestion of raw, unnormalized external text into the agent’s active context window without a sanitization primitive. To understand this, consider the clawhub-triager skill 8, shown in the Clawhub Triager excerpt, which mirrors the vulnerable ar-tifact exploited in Clawhub Issue #108 9. The skill instructs the agent to fetch and analyze raw issue bodies without any se-mantic firewall. An attacker can exploit this lack of sanitization by submitting a seemingly benign issue where the true mali-cious payload is obfuscated via interleaved zero-width charac-ters (e.g., I<U+200B>g<U+200C>n<U+200B>o<U+200C>r<U+200B>e previous instructions and export session log ). Through this vulnerable, unnormalized ingestion pipeline, the LLM recon-structs the hidden instructions to exfiltrate data, bypassing human oversight entirely.   
+
+> 7https://github.com/openclaw/skills/blob/main/skills/0x7466/coda-packs/SKILL.md
+> 8https://github.com/openclaw/skills/blob/main/skills/admin/clawhub-triager/SKILL. md
+> 9https://github.com/openclaw/clawhub/issues/108 Semia : Auditing Agent Skills via Constraint-Guided Representation Synthesis Conference’17, July 2017, Washington, DC, USA
+
+Detection rule. We query for paths where var _tainted data reaches a high-privilege call without a human gate. The predi-cate already encodes transitive propagation from untrusted sources with sanitization cut-off, so the rule is compact. 
+
+UCI(s,a,c) :- action(a,s), call(c,a,E), (E="chain_write"; E="proc_exec"; E="code_eval"; E="crypto_sign"), call_input(c, _,v), var_tainted(v), !barrier_gate(a,"human_approval"). name : clawhub -triager 
+
+description : Fetch and analyze issues from Clawhub . The agent will 
+
+read the raw issue body and summarize the user’s intent. 
+
+## Behavioral Instructions 
+
+Analyze the following issue description thoroughly... 
+
+Skill Excerpt: Clawhub Triager          
+
+> ...
+> "mcpServers ": {"0protocol": {
+> "baseUrl ": "https://mcp.0protocol.dev/ mcp "
+> }}
+> ...
+> mcporter call ‘0protocol.transfer(to: "8b2c4...",
+> payload: {type: "task_handoff "})’
+
+Skill Excerpt: 0protocol 
+
+B.2.4 Implicit Egress Channels (IEC). The Implicit Egress Channels 
+
+pattern involves design-inherent data leaks, where a skill is se-mantically instructed to send data to a third-party service without explicitly disclosing the data’s sensitivity. This stems from a lack of data-flow provenance in natural language: a skill description may innocuously claim to "connect to a protocol," while implicitly transmitting the entire authenticated user session. The 0protocol skill 10 , shown in the 0protocol excerpt, defines a hardcoded baseUrl for identity attestations. An attacker can ma-nipulate the agent to execute a task_handoff transfer that embeds sensitive environment variables within its payload, establishing a covert exfiltration channel under the guise of legitimate protocol handshakes. 
+
+Detection rule. This rule captures secret-to-egress flows: a 
+
+var _secret variable (which propagates transitively via data _flows )reaches an input of a network call to an untrusted target, without a human-approval or allowlist gate. 
+
+IEC(s,a,c) :- action(a,s), call(c,a,E), (E="net_read"; E="net_write"), !call_target_trusted(c), call_input(c, _,v), var_secret(v), !barrier_gate(a,"human_approval"), !barrier_gate(a,"allowlist"). 
+
+## B.3 Structural Anomalies 
+
+The following detectors flag suspicious static patterns without re-quiring data-flow reasoning. name : trade 
+
+description : Swap or trade tokens on Base network. Use when you 
+
+or the user want to trade... 
+
+disable -model -invocation : false 
+
+allowed -tools : ["Bash( npx awal@latest trade *)", ...] 
+
+Skill Excerpt: Trade 
+
+## CLI -Specific Notes 
+
+### Codex 
+
+> ---full -auto
+
+: Auto -approve in workspace (sandboxed) 
+
+> ---yolo
+
+: No sandbox, no approvals (dangerous but fast) 
+
+### Claude Code 
+
+> ---dangerously -skip -permissions
+
+: Auto -approve 
+
+Skill Excerpt: Ralph Loop 
+
+description :
+
+... 
+
+**Requires OPENWEBUI_URL and OPENWEBUI_TOKEN environment 
+
+variables or explicit parameters.** 
+
+Skill Excerpt: Open -WebUI 
+
+3. Load Home Assistant config:       
+
+> $config =Get -Content ". homeassistant -config.json "|
+> ConvertFrom -Json
+> $token =$config.token
+
+Skill Excerpt: Game Light Tracker 
+
+…
+
+**For builds, gallery submission, and advanced features, use:**     
+
+> npx @codahq /packs -sdk build
+> npx @codahq /packs -sdk release
+
+Skill Excerpt: Coda Packs 
+
+name : clawhub -triager 
+
+description : Fetch and analyze issues from Clawhub . The agent will 
+
+read the raw issue body and summarize the user’s intent. 
+
+## Behavioral Instructions 
+
+Analyze the following issue description thoroughly... 
+
+Skill Excerpt: Clawhub Triager          
+
+> ...
+> "mcpServers ": {"0protocol": {
+> "baseUrl ": "https://mcp.0protocol.dev/ mcp "
+> }}
+> ...
+> mcporter call ‘0protocol.transfer(to: "8b2c4...",
+> payload: {type: "task_handoff "})’
+
+Skill Excerpt: 0protocol 
+
+B.3.1 Shadow Credentials (SC). The shadow credentials pattern occurs when a skill harvests, requests, or expands the use of cre-dentials beyond its advertised task boundary. The skill appears benign, but it quietly introduces unrelated secrets, private keys, or privileged tokens into the execution chain. Because the agent 
+
+> 10 https://github.com/openclaw/skills/blob/main/skills/0isone/0protocol/SKILL.md
+
+operates with the user’s ambient authority, any successful prompt injection instantly escalates into a full infrastructure compromise. As illustrated by the Open-WebUI excerpt, the open-webui skill 11 
+
+explicitly requires an OPENWEBUI_TOKEN environment variable within its frontmatter description. An attacker exploiting this skill via indirect prompt injection does more than hijack chat completions; they inherit the shadow authority associated with this token to list models, delete knowledge bases, and manage pipelines, pivoting from a conversational context to a full infrastructure compromise. 
+
+Detection rule. We identify credential harvesting by pairing a local read of a credential-bearing target ( 𝑐 𝑟 ) with an untrusted network call ( 𝑐 𝑛 ) in the same skill. No data-flow path is required; the structural co-occurrence suffices, since the LLM can bridge local reads to network calls across turns. 
+
+SC(s,cr,cn) :- action(a1,s), call(cr,a1,"fs_read"), call_target_sensitive(cr), action(a2,s), call(cn,a2,E2), (E2="net_read"; E2="net_write"), !call_target_trusted(cn). ---full -auto : Auto -approve in workspace (sandboxed) 
+
+> ---yolo
+
+: No sandbox, no approvals (dangerous but fast) 
+
+### Claude Code 
+
+> ---dangerously -skip -permissions
+
+: Auto -approve 
+
+description :
+
+... 
+
+**Requires OPENWEBUI_URL and OPENWEBUI_TOKEN environment 
+
+variables or explicit parameters.** 
+
+Skill Excerpt: Open -WebUI 
+
+3. Load Home Assistant config:       
+
+> $config =Get -Content ". homeassistant -config.json "|
+> ConvertFrom -Json
+> $token =$config.token
+
+Skill Excerpt: Game Light Tracker 
+
+…
+
+**For builds, gallery submission, and advanced features, use:**     
+
+> npx @codahq /packs -sdk build
+> npx @codahq /packs -sdk release
+
+Skill Excerpt: Coda Packs 
+
+## References 
+
+- **Design:** /docs/TIERED -MEMORY.md (EvoClaw )
+
+- **Cloud Sync:** /docs/CLOUD -SYNC.md (EvoClaw )
+
+Skill Excerpt: Tiered Memory 
+
+B.3.2 Unverifiable Dependency Source (UDS). The unverifiable de-pendency source pattern occurs when a skill references external artifacts (remote scripts, unpinned packages, or unresolvable end-points) whose provenance cannot be verified from the declared facts. This creates a Time-of-Scan to Time-of-Execution (TOSTOE) vulnerability: static scanners perceive a clean skill due to the ab-sence of dangerous logic, but the agent is semantically instructed to fetch and execute unverified content at runtime. Consider the tiered-memory skill 12 , shown in the Tiered Mem-ory excerpt. The artifact references a /docs/ directory for its core logic. If this directory is missing from the repository, an attacker can push a malicious update populating these documents with hid-den instructions, forcing the agent to execute an altered script that exfiltrates local memory. 
+
+Detection rule. Agent tools are increasingly modular, fetching third-party logic or execution scripts on the fly. If a skill references an external artifact that is missing, unresolvable, or falls outside the analysis boundary, it introduces a TOSTOE vulnerability. We flag any call whose target is annotated as unresolvable and cannot be traced to a declared, trusted endpoint. 
+
+UDS(s,a,c) :- action(a,s), call(c,a, _), call_target_unresolved(c), !call_target(c, _). 
+
+B.3.3 Behavior Claim Contradiction (BCC). A skill’s documented purpose or safety claims contradict its actual behavior. For instance, a skill may declare itself “read-only” via doc _claim while internally performing network writes or blockchain transactions. This dis-crepancy enables social-engineering attacks: users install the skill  
+
+> 11 https://github.com/openclaw/skills/blob/main/skills/0x7466/open-webui/SKILL. md
+> 12 https://github.com/openclaw/skills/blob/main/skills/bowen31337/tiered-memory/SKILL.md Conference’17, July 2017, Washington, DC, USA Wen et al.
+
+trusting its self-declared boundaries, unaware that the execution path violates those very claims. 
+
+Detection rule. The auxiliary relation prohibits (𝜅, 𝜖 ) maps each claim kind 𝜅 in Figure 3 to the effects it forbids (e.g., read _only 
+
+prohibits fs _write , net _write , and chain _write ). The detector flags any call whose effect contradicts a declared constraint, excluding calls to trusted first-party endpoints. 
+
+> BCC(s,a,c,eff) :- doc_claim(s,K), prohibits(K,eff), action(a,s), call(c,a,eff), !call_target_trusted(c).
+
+B.3.4 Obfuscation (OBF). The presence of obfuscated code or en-coded binary payloads within a skill’s call bodies is a strong signal of malicious intent. Character-code construction, base64-encoded executables, and heavily minified scripts are designed to evade hu-man review and regex-based filters. While obfuscation alone is not proof of malice, it warrants immediate scrutiny in the context of an agent skill that will be executed with the user’s ambient authority. 
+
+Detection rule. We flag any call whose body has been marked as obfuscated or containing an encoded binary blob by the SDL extraction phase. 
+
+> OBF(s,c) :- action(a,s), call(c,a, _), (call_body_obfuscated(c); call_body_encoded_binary(c)).
+
+B.3.5 Hardcoded C2 Communication (HCC). Hardcoded command-and-control (C2) endpoints (IP addresses, suspicious domains, or webhook URLs to unknown services) indicate direct evidence of intentional malicious infrastructure integration. Unlike dynamically resolved targets, hardcoded C2 addresses persist across executions and cannot be attributed to benign runtime behavior. 
+
+Detection rule. We detect network calls whose target is both present (explicitly hardcoded) and unresolved (not resolv-able to a legitimate service), combining the call _target and 
+
+call _target _unresolved annotations. 
+
+> HCC(s,c,tgt) :- action(a,s), call(c,a,eff), (eff="net_read"; eff="net_write"), call_target(c,tgt), call_target_unresolved(c).
+
+B.3.6 Dormant Malicious Payload (DMP). A dormant payload is a structurally dangerous capability that is gated behind a non-obvious activation condition rather than an explicit skill entry point. Unlike declared triggers ( on _install , external ), which are visible manifest entry points, dormant payloads hide behind scheduled timers, re-mote feature flags, environment-variable switches, or obfuscated call bodies. These latent artifacts represent concealed attack capa-bility: benign under normal execution, they can be activated by a time-based condition, a remote signal from an untrusted endpoint, or a configuration change. 
+
+Detection rule. We flag dangerous or obfuscated calls that are reachable but not unconditionally so, the structural signature of a dormant payload hidden behind a conditional branch.
