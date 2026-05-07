@@ -1,0 +1,770 @@
+Title: CAR: Query-Guided Confidence-Aware Reranking for Retrieval-Augmented Generation
+
+URL Source: https://arxiv.org/pdf/2605.04495v1
+
+Published Time: Thu, 07 May 2026 00:34:33 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# CAR: Query-Guided Confidence-Aware Reranking for Retrieval-Augmented Generation 
+
+## Zhipeng Song a, Yizhi Zhou b, Xiangyu Kong c, Jiulong Jiao a,d , Xuezhou Ye a, Chunqi Gao a,Xueqing Shi e, Yuhang Zhou f and Heng Qi a,∗
+
+> a
+
+School of Computer Science and Technology, Dalian University of Technology, No.2 Linggong Road, Ganjingzi District, Dalian, 116024, China 
+
+> b
+
+School of Information Engineering, Dalian Ocean University, No. 2-52, Heishijiao Street, Shahekou District, Dalian, 116023, China 
+
+> c
+
+School of Information Engineering, Liaodong University, No.116 Linjiang Back Street, Zhenan District, Dandong, 118001, China 
+
+> d
+
+Information Technology Center, Qinghai University, 251 Ningda Road, Chengbei District, Xining, 810016, China 
+
+> e
+
+College of Health-Preservation and Wellness, Dalian Medical University, No. 9 West Section of Lvshun South Road, Lvshunkou District, Dalian, 116044, China 
+
+> f
+
+Tencent (Dalian Northern Interactive Entertainment Technology Co., Ltd.), 21/F, Tencent Building, No. 26 Jingxian St, Ganjingzi District, Dalian, 116085, China 
+
+A R T I C L E I N F O 
+
+Keywords :large language models retrieval-augmented generation reranking model uncertainty 
+
+A B S T R A C T 
+
+Retrieval-Augmented Generation (RAG) depends on document ranking to provide useful ev-idence for generation, but conventional reranking methods mainly optimize query–document relevance rather than generation usefulness. A relevant document may still introduce noise, while a lower-ranked document may better reduce the generator’s uncertainty. We propose CAR 
+
+(Confidence-Aware Reranking), a query-guided, training-free, and plug-and-play reranking framework that uses generator confidence change as a document usefulness signal. CAR estimates confidence through the semantic consistency of multiple sampled answers under query-only and query–document conditions. Documents that significantly increase confidence are promoted, those that decrease confidence are demoted, and uncertain cases preserve the baseline order, while a query-level gate avoids unnecessary intervention on already confident queries. Experiments on four BEIR datasets show that CAR consistently improves NDCG@5 across sparse and dense retrievers, LLM-based and supervised rerankers, and four LLM backbones. Notably, CAR improves the YesNo reranker by 25.4% on average under Contriever retrieval, and its ranking gains strongly correlate with downstream generation F1 improvements, achieving Spearman 𝜌 = 0.964 .
+
+## 1. Introduction 
+
+Retrieval-Augmented Generation (RAG) has become an effective paradigm for mitigating factual hallucinations in large language models (LLMs) for open-domain question answering, fact verification, and domain-specific reasoning, by incorporating external knowledge into the generation process Lewis et al. (2020). In a RAG system, the retrieval and reranking modules determine which documents are ultimately provided to the generator. Consequently, the quality of the ranked document list directly affects the reliability of downstream generation. In general, more accurate rankings provide more sufficient evidence to the generator, thereby increasing the likelihood that the generated answer is factually correct. Most existing retrieval and reranking methods take query–document relevance as their primary optimization objective. That is, they aim to determine whether a candidate document matches the query at the lexical or semantic level and then adjust the ranking accordingly. However, in RAG scenarios, relevance does not necessarily coincide with 
+
+generation usefulness . A document that appears superficially relevant may contain noise, ambiguity, or information that conflicts with the intended answer direction, causing the generator to produce unstable or incorrect responses. 
+
+> ∗
+
+Corresponding author. 
+
+songzhipeng@mail.dlut.edu.cn ( Zhipeng Song); zhouyizhi@dlou.edu.cn ( Yizhi Zhou); xiangyukong@liaodongu.edu.cn (Xiangyu Kong); jiaojiulong@mail.dlut.edu.cn ( Jiulong Jiao); yexzh6@mail2.sysu.edu.cn ( Xuezhou Ye); 
+
+gaochunqi@mail.dlut.edu.cn ( Chunqi Gao); shixq@dmu.edu.cn ( Xueqing Shi); ginozhou@tencent.com ( Yuhang Zhou); 
+
+hengqi@dlut.edu.cn ( Heng Qi) 
+
+> ORCID
+
+(s): 0009-0009-6249-1988 ( Zhipeng Song); 0000-0002-6761-5953 ( Yizhi Zhou); 0000-0003-1940-8674 ( Xiangyu Kong); 
+
+0009-0001-9852-7999 ( Jiulong Jiao); 0009-0002-3421-5889 ( Xuezhou Ye); 0009-0008-8576-3141 ( Chunqi Gao); 
+
+0009-0008-3754-6396 ( Xueqing Shi); 0000-0002-8770-3934 ( Heng Qi) 
+
+Song et al.: Preprint submitted to Elsevier Page 1 of 22 
+
+> arXiv:2605.04495v1 [cs.CL] 6 May 2026 CAR
+
+Conversely, a document ranked lower by the retriever, despite weak lexical overlap with the query, may provide crucial evidence that helps the generator form a consistent and correct judgment. Therefore, relying solely on relevance signals from the retriever or reranker is insufficient to fully characterize a document’s actual contribution to the generation process Song, Zhou, et al. (2026). This observation suggests that reranking for RAG should not only ask whether a document “appears relevant,” but should further assess whether the document can reduce the generator’s uncertainty for the current query. The sampling behavior of LLMs provides a natural signal for this purpose. When a model is confident under a given input condition, repeatedly sampled answers tend to be semantically consistent. In contrast, when the model lacks sufficient evidence or faces multiple plausible answers, the sampled answers tend to disperse across several semantic clusters Farquhar et al. (2024). Thus, the semantic consistency of sampled answers can serve as an externally observable proxy for generator confidence, measuring the model’s certainty under a given query or query–document condition Song, Kong, et al. (2026). Based on this observation, we recast RAG reranking as a confidence-guided posterior correction problem. The initial ranking produced by a baseline retriever or reranker can be viewed as a prior preference over document usefulness, while the confidence change exhibited by the generator after conditioning on a candidate document provides 
+
+posterior evidence from the generator’s perspective. If introducing a document makes the generator’s answers more consistent, the document likely provides effective evidence and should be promoted. If introducing the document makes the generator less certain, the document likely introduces noise or interference and should be demoted. Therefore, RAG reranking can be understood as a conservative posterior correction process: the baseline ranking is respected as the prior structure, and local corrections are applied only when the generator provides sufficiently strong evidence. However, such correction should not be applied uniformly to all queries. For high-confidence queries, where the generator can already produce stable answers without external documents, the original retriever or reranker often provides a reliable ranking, and unnecessary intervention may disrupt an already reasonable ranking structure. For low-confidence queries, candidate documents have a greater impact on the generator’s judgment, making document-conditioned confidence signals more informative for rank correction. Therefore, an ideal RAG post-processing reranking method should satisfy two requirements simultaneously. First, it should identify which documents increase or decrease the generator’s confidence. Second, it should remain sufficiently conservative to avoid excessively modifying the baseline ranking when correction is unnecessary. To this end, we propose CAR (Confidence-Aware Reranking), a query-guided, training-free, and plug-and-play confidence-aware reranking framework. CAR first estimates query-only confidence through the semantic consistency of multiple sampled answers from the generator, thereby determining whether the current query requires posterior correction. For low-confidence queries, CAR further estimates the conditional confidence of each query–document input and compares it with the query-only confidence using a margin-based criterion. Based on the resulting confidence change, candidate documents are partitioned into promote, preserve, and demote bins. The final ranking is obtained by concatenating these bins while strictly preserving the baseline’s original relative order within each bin. This design endows CAR with three important properties. First, CAR is query-guided : it uses query-level confidence as a gating signal and initiates reranking correction only when the generator is uncertain. Second, CAR is 
+
+conservative : it neither retrains the ranking model nor completely overrides the baseline results, but instead performs bin-level adjustments only when the generator-side posterior evidence is sufficiently strong. Third, CAR is plug-and-play : it does not rely on calibrated relevance scores from the baseline, nor does it require access to model internals or additional training. Consequently, CAR can be applied on top of sparse retrievers, dense retrievers, LLM-based rerankers, and supervised neural rerankers. We systematically evaluate CAR on four representative datasets from the BEIR benchmark, covering open-domain question answering, fact verification, scientific literature retrieval, and biomedical retrieval. Experimental results show that CAR delivers consistent gains across both BM25 and Contriever retrievers, seven types of baseline methods, and four LLM backbone models. Further ablation studies validate the necessity of the query threshold and confidence margin: the former prevents excessive intervention on strong baselines, while the latter reduces misclassification caused by sampling fluctuations. End-to-end generation experiments further demonstrate that CAR’s NDCG@5 improvements effectively transfer to downstream generation quality, with a strong positive correlation between ranking improvements and generation F1 improvements. Our main contributions are as follows:   
+
+> Song et al.: Preprint submitted to Elsevier Page 2 of 22 CAR
+
+Inside CAR (Confidence -Aware Reranking)     
+
+> Figure 1: Overview of the proposed CAR framework. Given a user query, an initial retriever first returns a top-𝐾 candidate list based on similarity, and an optional reranker further refines it into a top-𝑁 list based on relevance. CAR then performs confidence-aware post-processing from the generator’s perspective. It first estimates the query-only confidence by sampling multiple answers from the LLM and clustering them semantically. If the query confidence is sufficiently high, CAR preserves the original ranking. Otherwise, CAR measures document-conditioned confidence for each candidate document, computes the confidence difference Δ( 𝑞, 𝑑 ) = Conf( 𝑞, 𝑑 ) − Conf( 𝑞 ), and assigns documents into promote, preserve, or demote bins according to the confidence margin. Documents that increase generator confidence are promoted, documents with insignificant confidence changes preserve their relative order, and documents that reduce confidence are demoted. The final ranking is obtained through order-preserving binning, providing a conservative plug-and-play reranking correction for RAG.
+
+• We propose CAR, a query-guided confidence-aware reranking framework. To address the mismatch between document relevance and generation usefulness in RAG scenarios, we propose CAR (Confidence-Aware 
+
+Reranking). CAR treats the baseline ranking as a prior preference over document usefulness, uses the confidence difference between query-only and query–document conditions as posterior usefulness evidence from the generator, and controls both the triggering condition and the evidence strength of posterior correction through a query threshold and a confidence margin. CAR ultimately partitions candidate documents into promote, preserve, and demote bins, preserving the baseline’s original relative order within each bin and thereby implementing a conservative Bayesian-style posterior reranking mechanism. 
+
+• We validate CAR’s deployment friendliness and cross-setting generalizability. CAR is a black-box, training-free, and plug-and-play post-processing module that requires no access to model internals, no additional training, and no modification to the underlying retriever or reranker. Experimental results demonstrate that CAR can be stably applied on top of sparse retrieval with BM25, dense retrieval with Contriever, LLM-based rerankers, and supervised neural rerankers, while producing consistent gains across four LLM backbone models. 
+
+• We show that confidence-aware reranking improves generation quality in the full RAG pipeline. Beyond retrieval ranking metrics, we further conduct end-to-end generation experiments. Results show that CAR’s NDCG@5 improvements are strongly correlated with downstream generation F1 improvements (Spearman 
+
+𝜌 = 0 .964 ), indicating that ranking correction based on generator confidence not only improves retrieval quality but also effectively enhances the output quality of the full RAG system.   
+
+> Song et al.: Preprint submitted to Elsevier Page 3 of 22 CAR
+
+The remainder of this paper is organized as follows. Section 2 reviews related work on RAG reranking, LLM confidence estimation, and uncertainty-aware retrieval. Section 3 presents the detailed design of CAR, including generator-side confidence estimation, the query threshold, the confidence margin, and the order-preserving binning reranking mechanism. Section 4 reports the experimental setup, main results, ablation analysis, cross-retriever and cross-model experiments, and end-to-end generation results. Finally, Section 5 summarizes the main findings and discusses practical implications, limitations, and future directions. 
+
+## 2. Related Work 
+
+2.1. RAG and Document Reranking 
+
+Retrieval-Augmented Generation (RAG) has become a mainstream paradigm for improving the factual reliability of large language models Gao et al. (2023). In a typical RAG pipeline, a retriever first selects candidate documents from an external corpus, and an optional reranking stage then refines the initial ranking before the selected documents are fed to the generator. Since the ranked document list determines what evidence is available to the generator, reranking plays a critical role in the overall performance of RAG systems. Traditional reranking methods can be broadly divided into two families. Supervised neural rerankers are trained on labeled relevance data to produce fine-grained query–document relevance judgments. Representative methods include ColBERT Khattab & Zaharia (2020), which performs late interaction over contextualized token embeddings; Cross-Encoder architectures Reimers & Gurevych (2019), which jointly encode the query and document for deep relevance matching; and RankT5 Zhuang et al. (2023), which fine-tunes T5 with ranking losses for text ranking. These methods achieve strong ranking performance on standard benchmarks, but they require task-specific training data and do not explicitly account for the downstream generator’s behavior. More recently, LLM-based rerankers have emerged as training-free alternatives. RankGPT Sun et al. (2023) leverages GPT-4 to perform listwise reranking through permutation-based prompting and a sliding-window strategy. RankVicuna Pradeep et al. (2023) distills this reranking capability into an open-source model. YesNo Qin et al. (2024) prompts an LLM to output binary relevance judgments, while QLM Sachan et al. (2022) estimates the likelihood of the query given a document. These methods rely on LLM prompting without additional training, but they still optimize query–document relevance rather than generation usefulness .A separate line of work seeks to unify ranking and generation. RankRAG Yu et al. (2024) fine-tunes a single LLM to perform both context ranking and answer generation, enabling the model to assess document usefulness from the generator’s perspective. However, this approach requires instruction fine-tuning on specific tasks and cannot be directly used as a plug-and-play module on top of arbitrary retrieval or reranking systems. CAR differs from the above methods in a fundamental way. Rather than defining usefulness through lexical matching, semantic matching, or relevance prompting, CAR uses the generator’s own confidence change as evidence of document usefulness. Importantly, CAR is orthogonal to existing rerankers and can be stacked on top of them as a post-processing module. 
+
+2.2. LLM Confidence Estimation 
+
+Estimating the confidence of large language models has attracted growing attention, as confidence signals are essential for hallucination detection, selective prediction, and downstream decision-making. One prominent approach leverages the consistency of sampled answers . Self-consistency Wang et al. (2023) generates multiple reasoning paths through temperature-based sampling and selects the most frequent answer by majority vote, implicitly using answer agreement as a confidence indicator. Semantic entropy Farquhar et al. (2024) extends this idea by clustering semantically equivalent answers and computing entropy over the resulting distribution, providing a principled black-box uncertainty estimator that does not require access to model logits. Another line of work investigates verbalized confidence . Kadavath et al. Kadavath et al. (2022) show that LLMs can provide reasonably calibrated probability estimates when asked to assess whether they know the answer to a question. Xiong et al. Xiong et al. (2024) systematically evaluate confidence elicitation methods and find that, although LLMs can express uncertainty through verbalization, they tend to be overconfident, making sampling-based approaches more reliable in black-box settings. CAR builds on the sampling-based confidence estimation paradigm. Similar to semantic entropy, CAR uses bidirectional entailment to identify semantically equivalent answers and defines confidence according to the maximum semantic-cluster proportion. However, CAR applies this estimator to a different objective: instead of detecting   
+
+> Song et al.: Preprint submitted to Elsevier Page 4 of 22 CAR
+
+hallucinations, it measures how a candidate document changes the generator’s confidence . By comparing query-only confidence with query–document confidence, CAR obtains a document-specific posterior evidence signal that directly informs reranking decisions. 
+
+2.3. Uncertainty-Aware Retrieval and Generation 
+
+Several recent methods incorporate model uncertainty or confidence signals into the retrieval process, although their objectives differ from that of CAR. Self-RAG Asai et al. (2024) trains an LLM to emit special reflection tokens that indicate when retrieval is needed, whether retrieved passages are relevant, and whether the generated output is supported by evidence. This enables adaptive retrieval based on the model’s self-assessment, but requires modifying the LLM through instruction fine-tuning. FLARE Jiang et al. (2023) performs forward-looking active retrieval by triggering document search during generation when the model produces low-confidence tokens. CRAG Yan et al. (2024) designs a lightweight retrieval evaluator that assesses retrieval quality and triggers corrective actions, such as web-search fallback, when confidence in the retrieved documents is low. These methods share the intuition that model uncertainty should guide retrieval behavior, but they mainly focus on 
+
+whether and when to retrieve, rather than on how to rank already-retrieved documents. In contrast, CAR operates at the reranking stage: it takes a given candidate document list as input and reorders documents according to how each document changes the generator’s confidence. This makes CAR complementary to adaptive retrieval methods. CAR can be applied on top of any retrieval strategy, whether fixed or adaptive. Unlike prior work that primarily focuses on retrieval triggering or query–document relevance assessment, CAR explicitly uses generator-side confidence changes as posterior evidence for reranking in RAG, while maintaining a conservative, training-free, and plug-and-play design. 
+
+## 3. Methodology 
+
+This section presents CAR (Confidence-Aware Reranking), a query-guided , training-free , and plug-and-play post-hoc reranking module. We recast the reranking problem from the perspective of Bayesian-style ranking updating: the ranking produced by a retriever or reranker reflects a prior preference over candidate documents from the ranking model’s perspective, while the generation confidence exhibited by the generator when conditioned on a query and document provides posterior evidence from the generation model’s perspective. The goal of CAR is to leverage generator confidence to perform conservative posterior correction of the baseline ranking, without modifying the underlying retrieval or reranking system. Specifically, let the original retriever or reranker be 𝜓 , and let the generator be 𝜙 . For a query 𝑞 and a candidate document 𝑑 , the relevance judgment produced by the baseline model 𝜓 can be understood as a prior distribution over document usefulness, denoted by 𝑃 𝜓 (𝑑 ∣ 𝑞 ). In practice, some baselines explicitly output relevance scores 𝑠 𝜓 (𝑞, 𝑑 ),from which prior probabilities can be obtained through normalization. For models that only output rankings without scores, CAR directly treats the permutation order as the prior preference. On the other hand, the generator 𝜙 produces answers given the query and document. If a document 𝑑 helps the generator produce more stable and consistent answers, then 𝑑 has higher usefulness from the generator’s perspective. We denote this conditional usefulness signal as 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 ), where 𝑢 = 1 indicates that document 𝑑 is useful for generator 𝜙 in answering query 𝑞 . Ideally, the posterior ranking of candidate documents can be expressed as: 
+
+𝑃 (𝑑 ∣ 𝑞, 𝑢 = 1; 𝜓, 𝜙 ) ∝ 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 ) 𝑃 𝜓 (𝑑 ∣ 𝑞 ). (1) This expression shows that the final ranking should incorporate information from two sources: the prior relevance signal provided by the baseline ranker 𝜓 , and the posterior usefulness evidence provided by the generator 𝜙 .However, CAR does not directly estimate the continuous value of 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 ), nor does it require the baseline to output calibrated probability scores. Instead, CAR adopts a conservative and discretized posterior correction mechanism. It estimates query-only confidence and query–document confidence through the semantic consistency of multiple sampled answers from the generator, and determines whether a document provides sufficiently positive or negative posterior evidence according to the difference between the two. CAR adjusts a document’s bin only when significant posterior evidence is observed, and preserves the baseline’s original relative order within each bin.   
+
+> Song et al.: Preprint submitted to Elsevier Page 5 of 22
+
+CAR 
+
+Table 1 Summary of the main notation used in CAR. The table defines the symbols for the baseline ranker, generator, confidence estimates, correction labels, and posterior bins used in the methodology. 
+
+Symbol Description 
+
+𝜓 Baseline ranker (retriever or reranker) 
+
+𝜙 Generator (large language model) 
+
+𝑞 Query 
+
+𝑑 Candidate document 
+
+𝑛 Number of candidate documents 
+
+𝑘 Number of samples per input 
+
+𝜋 𝜓 𝑞 Baseline 𝜓 ’s prior permutation of candidates ̂𝜋 𝑞 New permutation after CAR reranking 
+
+𝑃 𝜓 (𝑑 ∣ 𝑞 ) Prior probability from baseline 𝜓 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 ) Conditional usefulness probability from generator 𝜙 𝐴 𝜙 𝑥 Set of sampled answers for input 𝑥 𝑍 𝜙 𝑥 Semantic cluster labels for input 𝑥 𝑐 𝜙 𝑞 Query-only confidence Conf 𝜙 (𝑞 )
+
+𝑐 𝜙 𝑞,𝑑 Query-document confidence Conf 𝜙 (𝑞, 𝑑 )Δ𝜙 (𝑞, 𝑑 ) Confidence change 𝑐 𝜙 𝑞,𝑑 − 𝑐 𝜙 𝑞 
+
+𝑇 𝑞 Query threshold (QT) 
+
+𝑚 Confidence margin (CM) 
+
+𝑏 𝜙 (𝑞, 𝑑 ) Posterior correction label, ∈ {+1 , 0, −1} 
+
++ 
+
+> 𝜙
+
+/ 0 
+
+> 𝜙
+
+/ − 
+
+> 𝜙
+
+Promote / preserve / demote bin 
+
+3.1. Problem Definition 
+
+Given a query 𝑞 , the baseline ranker 𝜓 returns a candidate document permutation 𝜋 𝜓 𝑞 = [ 𝑑 1, 𝑑 2, … , 𝑑 𝑛 ], which represents 𝜓 ’s prior ranking preference over the candidate documents. If 𝜓 outputs relevance scores 𝑠 𝜓 (𝑞, 𝑑 ), the ranking prior can be formally defined as: 
+
+𝑃 𝜓 (𝑑 𝑖 ∣ 𝑞 ) = exp( 𝑠 𝜓 (𝑞, 𝑑 𝑖 )) 
+
+∑𝑛 𝑗 =1 exp( 𝑠 𝜓 (𝑞, 𝑑 𝑗 )) . (2) If 𝜓 only outputs a ranking without scores, CAR does not explicitly compute this probability. Instead, it treats the permutation 𝜋 𝜓 𝑞 itself as the prior order, i.e., 𝑑 𝑖 ≻𝜓 𝑑 𝑗 if and only if rank 𝜓 (𝑑 𝑖 ) < rank 𝜓 (𝑑 𝑗 ).The goal of this work is to construct a new ranking ̂𝜋 𝑞 by introducing posterior confidence signals from the generator 
+
+𝜙 , without retraining 𝜓 or modifying its internal structure. From a probabilistic perspective, the ideal objective is to perform posterior updating of the baseline prior based on document usefulness from the generator’s viewpoint, as formalized in Eq. 1. Here, 𝑃 𝜓 (𝑑 ∣ 𝑞 ) comes from the retriever or reranker’s perspective and represents the prior probability that the document is relevant to the query or should be ranked higher. In contrast, 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 ) comes from the generator’s perspective and represents the posterior correction signal indicating whether document 𝑑 helps generator 𝜙 produce stable answers for query 𝑞 .Since 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 ) is difficult to observe directly, CAR uses the consistency of the generator’s sampled answers as a proxy estimate. Specifically, CAR estimates query-only confidence 𝑐 𝜙 𝑞 = Conf 𝜙 (𝑞 ) and query–document confidence 𝑐 𝜙 𝑞,𝑑 = Conf 𝜙 (𝑞, 𝑑 ), where 𝑐 𝜙 𝑞 denotes the confidence of generator 𝜙 on query 𝑞 without external documents, and 𝑐 𝜙 𝑞,𝑑 denotes the conditional confidence of generator 𝜙 given document 𝑑 . Their difference, Δ𝜙 (𝑞, 𝑑 ) = 𝑐 𝜙 𝑞,𝑑 − 𝑐 𝜙 𝑞 ,is used to approximate the posterior impact of document 𝑑 on generator 𝜙 .If Δ𝜙 (𝑞, 𝑑 ) is significantly positive, document 𝑑 improves the consistency of the generator’s answers, corresponding to a large value of 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 ), and should be promoted. If Δ𝜙 (𝑞, 𝑑 ) is significantly negative, document 𝑑 reduces the consistency of the generator’s answers, corresponding to a small value of 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 ), and should be demoted. If the difference is not significant, the posterior evidence is considered insufficient, and the prior ranking of 𝜓 should be preserved. 
+
+Song et al.: Preprint submitted to Elsevier Page 6 of 22 CAR 
+
+3.2. Generator-side Posterior Confidence Estimation 
+
+CAR uses the generator 𝜙 ’s multiple-sampling behavior to estimate the posterior usefulness signal of documents. The core assumption is as follows: if the generator produces semantically consistent answers under a given input condition across multiple samples, then the input provides the generator with high certainty. Conversely, if the sampled answers disperse across multiple semantic clusters, the generator exhibits high uncertainty under that input condition. For each query 𝑞 , CAR constructs two types of inputs: 
+
+• Query-only input. Only the query 𝑞 is provided. This input is used to estimate the generator 𝜙 ’s baseline confidence 𝑐 𝜙 𝑞 without external documents. 
+
+• Query–document input. The query 𝑞 and a candidate document 𝑑 are provided together. This input is used to estimate the generator 𝜙 ’s conditional confidence 𝑐 𝜙 𝑞,𝑑 under the document condition. For any input 𝑥 , the generator 𝜙 is sampled 𝑘 times to obtain the answer set 𝐴 𝜙 𝑥 = { 𝑎 1, 𝑎 2, … , 𝑎 𝑘 }. CAR then performs semantic clustering over these answers to obtain semantic cluster labels 𝑍 𝜙 𝑥 = { 𝑧 1, 𝑧 2, … , 𝑧 𝑘 }.To determine whether two answers are semantically equivalent, we adopt a strict bidirectional entailment criterion. Given two answers 𝑎 𝑖 and 𝑎 𝑗 , they are considered to belong to the same semantic cluster only when both 𝑎 𝑖 → 𝑎 𝑗 and 
+
+𝑎 𝑗 → 𝑎 𝑖 are judged as entailment. Let the 𝑗 -th cluster contain 𝑛 𝑗 answers among a total of 𝑘 samples, and let its proportion be 𝑝 𝑗 = 𝑛 𝑗 ∕𝑘 . CAR defines the maximum cluster proportion as the confidence of generator 𝜙 on input 𝑥 :
+
+Conf 𝜙 (𝑥 ) = max  
+
+> 𝑗
+
+𝑝 𝑗 . (3) Thus, the query-only confidence and query–document confidence are respectively 𝑐 𝜙 𝑞 = Conf 𝜙 (𝑞 ) and 𝑐 𝜙 𝑞,𝑑 =Conf 𝜙 (𝑞, 𝑑 ).From a Bayesian-style interpretation, 𝑐 𝜙 𝑞,𝑑 serves as a proxy signal for 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 ), while 𝑐 𝜙 𝑞 provides a query-specific reference point for the current query without documents. CAR does not directly use the absolute value of 𝑐 𝜙 𝑞,𝑑 . Instead, it uses the increase or decrease of 𝑐 𝜙 𝑞,𝑑 relative to 𝑐 𝜙 𝑞 to determine whether a document provides positive or negative posterior evidence. 
+
+3.3. Confidence-Aware Bayesian-style Reranking 
+
+After obtaining the baseline prior ranking 𝜋 𝜓 𝑞 and the generator confidence values 𝑐 𝜙 𝑞 and 𝑐 𝜙 𝑞,𝑑 , CAR performs Bayesian-style posterior correction on the prior ranking. Rather than directly computing continuous posterior proba-bilities, CAR adopts a discretized binning approach to approximate posterior updating, thereby avoiding dependence on calibrated baseline scores or generation probabilities. In CAR, 𝑃 𝜓 (𝑑 ∣ 𝑞 ) is represented by the baseline ranking 𝜋 𝜓 𝑞 , and 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 ) is approximated by the generator confidence change Δ𝜙 (𝑞, 𝑑 ) = 𝑐 𝜙 𝑞,𝑑 − 𝑐 𝜙 𝑞 . CAR further controls the triggering condition and update strength of posterior correction through the query threshold (QT) and confidence margin (CM). Based on these confidence estimates, CAR performs query-threshold gating, confidence-margin-based document binning, and prior-order-preserving reranking. The overall procedure is summarized in Algorithm 1. 
+
+3.3.1. Query Threshold: Deciding Whether to Update the Prior 
+
+CAR first determines whether posterior correction of the prior ranking is necessary according to the query-only confidence 𝑐 𝜙 𝑞 . Given a query threshold 𝑇 𝑞 , if 𝑐 𝜙 𝑞 ≥ 𝑇 𝑞 , the generator 𝜙 can already produce stable answers for the current query without external documents. In this case, CAR considers posterior correction unnecessary and directly trusts the prior ranking produced by the baseline 𝜓 , i.e., ̂𝜋 𝑞 = 𝜋 𝜓 𝑞 .If 𝑐 𝜙 𝑞 < 𝑇 𝑞 , the generator exhibits high uncertainty on the current query, and candidate documents are expected to provide additional evidence. CAR therefore initiates the subsequent document-level posterior correction process. Thus, QT can be understood as a posterior-update gating mechanism: when the generator is already sufficiently certain, the prior ranking is preserved; when the generator is uncertain, document-conditioned confidence is used to correct the prior ranking.   
+
+> Song et al.: Preprint submitted to Elsevier Page 7 of 22
+
+CAR 
+
+Algorithm 1 CAR Reranking 
+
+Require: Query 𝑞 , ranked list 𝜋 𝑞 , generator 𝜙 , sample count 𝑘 , query threshold 𝑇 𝑞 , confidence margin 𝑚 
+
+Ensure: Reranked list ̂𝜋 𝑞  
+
+> 1:
+
+// Stage 1: Query-only Confidence Estimation  
+
+> 2:
+
+𝐴 𝑞 ← SAMPLE (𝜙, 𝑞, 𝑘 ) 
+
+> 3:
+
+𝑍 𝑞 ← SEMANTIC CLUSTER (𝐴 𝑞 ) 
+
+> 4:
+
+𝑐 𝑞 ← max 𝑗 (𝑛 𝑗 ∕𝑘 ) ⊳ query-only confidence  
+
+> 5:
+
+// Stage 2: Query Threshold Gating  
+
+> 6:
+
+if 𝑐 𝑞 ≥ 𝑇 𝑞 then 
+
+> 7:
+
+̂ 𝜋 𝑞 ← 𝜋 𝑞  
+
+> 8:
+
+return ̂𝜋 𝑞 ⊳ preserve the baseline ranking  
+
+> 9:
+
+end if  
+
+> 10:
+
+// Stage 3: Document-conditioned Confidence Estimation  
+
+> 11:
+
+for each 𝑑 𝑖 ∈ 𝜋 𝑞 do  
+
+> 12:
+
+𝐴 𝑞,𝑑 𝑖 ← SAMPLE (𝜙, (𝑞, 𝑑 𝑖 ), 𝑘 ) 
+
+> 13:
+
+𝑍 𝑞,𝑑 𝑖 ← SEMANTIC CLUSTER (𝐴 𝑞,𝑑 𝑖 ) 
+
+> 14:
+
+𝑐 𝑞,𝑑 𝑖 ← max 𝑗 (𝑛 𝑗 ∕𝑘 ) ⊳ query–document confidence  
+
+> 15:
+
+end for  
+
+> 16:
+
+// Stage 4: Confidence-based Binning  
+
+> 17:
+
+for each 𝑑 𝑖 ∈ 𝜋 𝑞 do  
+
+> 18:
+
+if 𝑐 𝑞,𝑑 𝑖 ≥ 𝑐 𝑞 + 𝑚 then  
+
+> 19:
+
+𝑏 𝑖 ← +1 ⊳ promote  
+
+> 20:
+
+else if 𝑐 𝑞,𝑑 𝑖 ≤ 𝑐 𝑞 − 𝑚 then  
+
+> 21:
+
+𝑏 𝑖 ← −1 ⊳ demote  
+
+> 22:
+
+else  
+
+> 23:
+
+𝑏 𝑖 ← 0 ⊳ preserve  
+
+> 24:
+
+end if  
+
+> 25:
+
+end for  
+
+> 26:
+
+// Stage 5: Prior-order-preserving Reranking 
+
+> 27:
+
+̂ 𝜋 𝑞 ← STABLE SORT (𝜋 𝑞 , key = (− 𝑏 𝑖 , rank 𝜋 𝑞 (𝑑 𝑖 )) ) 
+
+> 28:
+
+return ̂𝜋 𝑞 
+
+3.3.2. Confidence Margin: Evidence Strength for Posterior Correction 
+
+To avoid excessive updates caused by sampling fluctuations, CAR introduces a confidence margin 𝑚 around the query confidence 𝑐 𝜙 𝑞 , defining the upper and lower boundaries as 𝑡 upper = 𝑐 𝜙 𝑞 + 𝑚 and 𝑡 lower = 𝑐 𝜙 𝑞 − 𝑚 . For a candidate document 𝑑 , CAR determines its posterior evidence strength according to the position of 𝑐 𝜙 𝑞,𝑑 relative to this interval: 
+
+𝑏 𝜙 (𝑞, 𝑑 ) = 
+
+⎧⎪⎨⎪⎩
+
++1 , 𝑐 𝜙 𝑞,𝑑 ≥ 𝑐 𝜙 𝑞 + 𝑚, 
+
+0, 𝑐 𝜙 𝑞 − 𝑚 < 𝑐 𝜙 𝑞,𝑑 < 𝑐 𝜙 𝑞 + 𝑚, 
+
+−1 , 𝑐 𝜙 𝑞,𝑑 ≤ 𝑐 𝜙 𝑞 − 𝑚. 
+
+(4) Here, 𝑏 𝜙 (𝑞, 𝑑 ) represents the posterior correction label of document 𝑑 for query 𝑞 from the perspective of generator 𝜙 :
+
+• 𝑏 𝜙 (𝑞, 𝑑 ) = +1 : the document significantly improves the generator’s confidence, corresponding to positive posterior evidence, and should be promoted; 
+
+Song et al.: Preprint submitted to Elsevier Page 8 of 22 CAR 
+
+• 𝑏 𝜙 (𝑞, 𝑑 ) = 0 : the document’s impact is not significant, and the posterior evidence is insufficient to override the prior, so the original order should be preserved; 
+
+• 𝑏 𝜙 (𝑞, 𝑑 ) = −1 : the document significantly reduces the generator’s confidence, corresponding to negative posterior evidence, and should be demoted. From a probabilistic interpretation, CM sets a minimum evidence threshold for posterior updates. Only when the generator-side evidence is sufficiently strong does CAR allow it to modify the baseline’s prior ranking. Otherwise, CAR preserves the original ranking preference of 𝜓 .
+
+3.3.3. Posterior Binning with Prior Order Preservation 
+
+For queries satisfying 𝑐 𝜙 𝑞 < 𝑇 𝑞 , CAR partitions the candidate documents into three posterior bins according to 
+
+𝑏 𝜙 (𝑞, 𝑑 ):
+
++ 
+
+> 𝜙
+
+= { 𝑑 ∣ 𝑏 𝜙 (𝑞, 𝑑 ) = +1} , 0 
+
+> 𝜙
+
+= { 𝑑 ∣ 𝑏 𝜙 (𝑞, 𝑑 ) = 0} , − 
+
+> 𝜙
+
+= { 𝑑 ∣ 𝑏 𝜙 (𝑞, 𝑑 ) = −1} . (5) The final ranking follows the bin order + 
+
+> 𝜙
+
+≻ 0 
+
+> 𝜙
+
+≻ − 
+
+> 𝜙
+
+.Within each bin, CAR strictly preserves the original relative order given by the baseline ranker 𝜓 . Formally, for any two documents 𝑑 𝑖 , 𝑑 𝑗 , if they have the same posterior correction label, their relative order is inherited from the baseline: 
+
+𝑏 𝜙 (𝑞, 𝑑 𝑖 ) = 𝑏 𝜙 (𝑞, 𝑑 𝑗 ) ⇒ (𝑑 𝑖 ≻̂𝜋 𝑑 𝑗 ⟺ 𝑑 𝑖 ≻𝜓 𝑑 𝑗 
+
+) . (6) Therefore, CAR’s final ranking can be expressed as: ̂𝜋 𝑞 =
+
+{
+
+𝜋 𝜓 𝑞 , 𝑐 𝜙 𝑞 ≥ 𝑇 𝑞 ,
+
+StableSort (𝜋 𝜓 𝑞 , −𝑏 𝜙 (𝑞, 𝑑 )) , 𝑐 𝜙 𝑞 < 𝑇 𝑞 . (7) Here, StableSort denotes a stable sorting operation, i.e., sorting primarily by the generator’s posterior correction label while preserving the baseline’s prior order among documents with the same label. This process can be viewed as a discretized Bayesian-style posterior update. The baseline 𝜓 provides the prior ranking 𝑃 𝜓 (𝑑 ∣ 𝑞 ), the generator 𝜙 provides a confidence-based proxy for posterior usefulness evidence 𝑃 𝜙 (𝑢 =1 ∣ 𝑞, 𝑑 ), and CAR performs conservative correction of the prior ranking through binning and order-preserving mechanisms. 
+
+3.4. Discussion: Relation to Bayesian Posterior Ranking 
+
+CAR shares the structural intuition of standard Bayesian updating. The normalized posterior ranking probability can be written as: 
+
+𝑃 (𝑑 ∣ 𝑞, 𝑢 = 1; 𝜓, 𝜙 ) = 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 )𝑃 𝜓 (𝑑 ∣ 𝑞 )
+
+∑𝑑 ′∈𝜋 𝜓 𝑞 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 ′)𝑃 𝜓 (𝑑 ′ ∣ 𝑞 ) . (8) Here, 𝑃 𝜓 (𝑑 ∣ 𝑞 ) represents the prior probability from the retriever or reranker’s perspective, while 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 )
+
+represents document usefulness likelihood, or posterior evidence, from the generator’s perspective. If both probabilities could be accurately estimated, documents could be ranked directly by their posterior probabilities. However, in practical black-box RAG scenarios, 𝜓 may output only a ranking without calibrated scores, and 𝜙 
+
+cannot directly provide document usefulness probabilities. Therefore, CAR adopts the following approximations: 
+
+• It uses the baseline permutation 𝜋 𝜓 𝑞 to approximately express the relative magnitude of the prior 𝑃 𝜓 (𝑑 ∣ 𝑞 );
+
+• It uses the generator’s sampling consistency 𝑐 𝜙 𝑞,𝑑 to approximately express 𝑃 𝜙 (𝑢 = 1 ∣ 𝑞, 𝑑 );
+
+• It uses 𝑐 𝜙 𝑞 as a query-specific reference point to reduce confidence-scale differences across queries; 
+
+• It uses CM to discretize the continuous posterior signal into promote, preserve, and demote categories;   
+
+> Song et al.: Preprint submitted to Elsevier Page 9 of 22 CAR
+
+• It uses stable sorting to preserve the relative structure of the prior ranking. Thus, CAR does not attempt to estimate continuous Bayesian posterior probabilities exactly. Instead, it implements a conservative approximation that follows the intuition of Bayesian posterior updating: only when generator 𝜙 provides sufficiently strong posterior evidence does CAR adjust the prior ranking given by baseline 𝜓 ; otherwise, the original ranking structure is preserved. 
+
+3.5. Efficiency Analysis 
+
+The additional overhead of CAR mainly comes from generator-side confidence estimation, including answer sampling and semantic clustering. In contrast, confidence computation, binning decisions, and stable reranking require only simple statistics and linear scans, whose computational cost is negligible. Therefore, this section focuses on CAR’s computational overhead and latency characteristics in terms of generator calls. Given a query 𝑞 , let the baseline ranker 𝜓 return 𝑛 candidate documents, and let 𝑘 be the number of samples per input. CAR first constructs one query-only input 𝑞 to estimate 𝑐 𝜙 𝑞 . If the query passes the QT gate, i.e., 𝑐 𝜙 𝑞 ≥ 𝑇 𝑞 , CAR directly returns the baseline ranking and avoids document-level confidence estimation. For queries satisfying 𝑐 𝜙 𝑞 < 𝑇 𝑞 ,CAR additionally constructs 𝑛 query–document inputs (𝑞, 𝑑 1), … , (𝑞, 𝑑 𝑛 ). Therefore, in the worst case or for a query requiring posterior correction, CAR obtains a total of (𝑛 + 1) 𝑘 generation samples. Denoting the average time per generation call as 𝑇 gen , the sampling cost can be summarized as: 
+
+𝐶 serial sample = 𝑂 (( 𝑛 + 1) 𝑘𝑇 gen ), 𝐶 parallel sample = 𝑂 (𝑇 gen ). (9) The parallel form follows from the fact that different query–document inputs are mutually independent, and the 𝑘 
+
+samples under the same input are also mutually independent. Therefore, under ideal parallel conditions, if all sampling requests can be issued simultaneously and the generation service has sufficient throughput, the wall-clock time of the sampling stage can be approximately reduced to a single generation call. This means that although CAR’s total generation volume grows linearly with 𝑛 and 𝑘 , its actual latency is primarily determined by the generation service’s concurrency capacity rather than necessarily growing linearly with the number of samples. In the semantic clustering stage, CAR determines whether the 𝑘 sampled answers under the same input are semantically equivalent. We use bidirectional entailment as the semantic equivalence criterion: two answers 𝑎 𝑖 and 
+
+𝑎 𝑗 are considered to belong to the same semantic cluster only when both 𝑎 𝑖 → 𝑎 𝑗 and 𝑎 𝑗 → 𝑎 𝑖 hold. This stage is also performed by the generator 𝜙 , so its main overhead is generator-side call cost rather than local sorting or statistical computation. For semantic clustering, CAR can adopt two implementation modes. 
+
+Token-efficient mode. In token-efficient mode, CAR employs a greedy clustering strategy to reduce the number of entailment judgments. Specifically, the algorithm processes sampled answers sequentially and determines which existing semantic cluster the current answer should be assigned to. The current answer only needs to be compared with the representative answer of each existing semantic cluster, rather than with all previously observed answers. If the current answer is semantically equivalent to a cluster representative, it is assigned to that cluster; otherwise, a new cluster is created. Let the final number of semantic clusters be 𝑟 , where 𝑟 ≤ 𝑘 . For each input, greedy clustering requires at most 𝑂 (𝑘𝑟 )
+
+bidirectional entailment judgments. In the worst case where 𝑟 = 𝑘 , the complexity degenerates to 𝑂 (𝑘 2). In practice, however, when the generator’s answers are highly consistent, typically 𝑟 ≪ 𝑘 , and the number of comparisons is much smaller than that of full pairwise comparison. Therefore, the token-efficient mode can effectively reduce total token consumption and the number of generator calls, making it suitable for cost-sensitive or throughput-limited deployment scenarios. 
+
+Low-latency mode. In low-latency mode, CAR does not prioritize minimizing the total call volume, but instead aims to minimize actual waiting time. For the 𝑘 sampled answers under each input, CAR can concurrently execute bidirectional entailment judgments for all answer pairs. Full pairwise comparison requires considering (𝑘 
+
+> 2
+
+) answer pairs. Since each pair requires bidirectional entailment judgment, the total number of unidirectional entailment judgments is 2(𝑘 
+
+> 2
+
+) = 𝑘 (𝑘 − 1) . For 𝑛 + 1 inputs, full pairwise clustering therefore requires (𝑛 + 1) 𝑘 (𝑘 − 1) unidirectional entailment judgments, and the corresponding costs are: 
+
+𝐶 serial cluster = 𝑂 (( 𝑛 + 1) 𝑘 2𝑇 ent ), 𝐶 parallel cluster = 𝑂 (𝑇 ent ). (10)   
+
+> Song et al.: Preprint submitted to Elsevier Page 10 of 22 CAR
+
+Here, 𝑇 ent denotes the average time per entailment judgment. The parallel form follows because these entailment judgments are mutually independent and can be highly parallelized. Under ideal parallel conditions, if all pairwise entailment judgments can be executed simultaneously with sufficient server-side concurrency, the wall-clock time of the semantic clustering stage can be approximately reduced to a single entailment judgment. If entailment judgments are also performed by generator 𝜙 , and their call latency is on the same order as regular generation calls, the latency of this stage can be approximately regarded as one generation-call duration. Thus, the low-latency mode sacrifices more tokens and concurrent requests in exchange for near-constant actual waiting time. After sampling and semantic clustering, CAR only needs to compute the maximum cluster proportion according to the clustering results to obtain the query-only confidence 𝑐 𝜙 𝑞 and query–document confidence 𝑐 𝜙 𝑞,𝑑 . This step involves only counting operations. Subsequently, CAR determines whether reranking is needed based on QT, and when reranking is needed, partitions documents into promote, preserve, and demote bins based on CM. Since this process only requires traversing 𝑛 candidate documents and concatenating the bins, its complexity is 𝑂 (𝑛 ), which is negligible compared with the overhead of generator sampling and entailment judgments. Overall, CAR’s total computational overhead consists of two main parts: (𝑛 + 1) 𝑘 generator samples in the worst-case sampling stage, and a number of bidirectional entailment judgments in the semantic clustering stage. If full pairwise comparison is adopted, the worst case requires 𝑘 (𝑘 − 1) unidirectional entailment judgments per input, for a total of 𝑂 (( 𝑛 +1) 𝑘 2) generator-side calls. If greedy clustering is adopted, the call volume can be reduced to 𝑂 (( 𝑛 +1) 𝑘𝑟 ),where 𝑟 is the average number of semantic clusters and typically satisfies 𝑟 ≪ 𝑘 .From a wall-clock latency perspective, both the sampling and clustering stages of CAR can be parallelized. Under ideal concurrency conditions, the sampling stage can be approximately reduced to one generation-call duration, and low-latency clustering can also be approximately reduced to one entailment-judgment duration. Therefore, CAR’s actual latency does not necessarily grow linearly or quadratically with 𝑛 and 𝑘 , but is primarily determined by the generation service’s concurrency capacity, throughput limits, and token budget. Overall, CAR provides a flexible efficiency trade-off between token-efficient and low-latency modes: the former reduces total token consumption, while the latter reduces actual waiting time, allowing CAR to adapt to different RAG deployment requirements. 
+
+## 4. Experiments 
+
+This section evaluates the effectiveness, robustness, and downstream impact of CAR. We organize the experiments around six research questions that correspond to CAR’s key design goals: improving reranking quality, validating the roles of its conservative correction mechanisms, and examining whether the resulting ranking improvements generalize across retrieval settings, model families, sampling budgets, and the full RAG pipeline. Specifically, we investigate the following research questions: RQ1 (§ 4.2): Does CAR consistently improve document reranking performance? RQ2 (§ 4.3): How do CAR’s two core components, QT and CM, affect perfor-mance? RQ3 (§ 4.4.1): Does CAR remain effective across different retrievers? RQ4 (§ 4.4.2): Does CAR provide consistent gains across different generation model families? RQ5 (§ 4.4.3): How does the sample number 𝑘 affect CAR performance? RQ6 (§ 4.4.4): Can retrieval ranking improvements transfer to end-to-end generation quality? We first describe the experimental setup, including datasets, baselines, implementation details, and evaluation metrics in § 4.1. We then present the main results, ablation studies, extended robustness analyses, and end-to-end generation experiments. Finally, § 4.5 summarizes the key findings by directly answering each research question. 
+
+4.1. Experimental Setup 
+
+4.1.1. Datasets 
+
+We select four representative datasets from the BEIR benchmark Thakur et al. (2021): NQ (Natural Ques-tions Kwiatkowski et al. (2019)), FEVER Thorne et al. (2018), SCIDOCS Cohan et al. (2020), and TREC-COVID Voorhees et al. (2021). These four datasets cover open-domain question answering, fact verification, scientific literature retrieval, and biomedical retrieval, respectively, enabling us to evaluate CAR’s generalizability across different task types and domains. Table 2 summarizes the test-set statistics of the four datasets. 
+
+4.1.2. Baselines 
+
+We compare CAR against three categories of methods:                                  
+
+> Song et al.: Preprint submitted to Elsevier Page 11 of 22 CAR
+> Dataset Task Domain #Query #Corpus Avg. D/Q Avg. #Words (Q/D)
+> NQ Question Answering Wikipedia 3,452 2,681,468 1.2 9.16 / 78.88 FEVER Fact Checking Wikipedia 6,666 5,416,568 1.2 8.13 / 84.76 SCIDOCS Citation Prediction Scientific 1,000 25,657 4.9 9.38 / 176.19 TREC-COVID Bio-Medical IR Bio-Medical 50 171,332 493.5 10.60 / 160.77
+> Table 2 Test-set statistics of the four BEIR datasets. Avg. D/Q denotes the average number of relevant documents per query, and Avg. #Words (Q/D) reports the average number of words in queries and documents, respectively.
+
+• Retriever Only. This setting directly uses the output of the initial retriever without further reranking. We adopt BM25 Jones et al. (2000) and Contriever Izacard et al. (2022) as representative retrievers. BM25 is a classic sparse lexical matching method and reflects the traditional keyword-based retrieval paradigm. Contriever is an unsupervised dense retrieval model and represents the neural retrieval paradigm based on semantic representation matching. Together, they cover both sparse and dense retrieval settings, allowing us to evaluate CAR’s generalizability across different initial retrieval paradigms. 
+
+• LLM-based Rerankers. Given the candidate document set returned by the initial retriever, these methods leverage large language models for zero-shot reranking. We include YesNo Qin et al. (2024), QLM Sachan et al. (2022), and RankGPT Sun et al. (2023). These methods do not independently retrieve documents from the entire corpus. Instead, they take the top-𝑛 candidate documents returned by BM25 or Contriever as input, prompt the LLM to assess document relevance through different strategies, and rerank the candidate documents accordingly. 
+
+• Supervised Neural Rerankers. Supervised neural reranking models also operate on the candidate document set returned by the initial retriever, rather than independently performing full-corpus retrieval. We use Col-BERT Khattab & Zaharia (2020), Cross-Encoder Reimers & Gurevych (2019), and RankT5 Zhuang et al. (2023) as representative supervised rerankers. These methods are typically trained on labeled data and can output more fine-grained relevance judgments for query–document pairs, representing strong supervised reranking baselines. CAR serves as a post-processing module that can be applied on top of any of the above baselines. In the Retriever Only setting, CAR is applied directly to the raw retrieval results of BM25 or Contriever. For LLM-based rerankers and supervised neural rerankers, CAR is applied to the reranked candidate document lists produced by the corresponding rerankers. In the tables, “ +CAR” denotes applying CAR to the output of the corresponding baseline. 
+
+4.1.3. Implementation Details 
+
+The main experiments use Qwen2.5-7B-Instruct Yang et al. (2024) (abbreviated as Qwen) as the generation model. For each query and query–document pair, we sample 𝑘 = 10 times to estimate confidence. Semantic clustering uses the strict entailment-based judgment mode. QT is searched over 𝑇 𝑞 ∈ {0 , 0.1, 0.2, … , 1.0} , and CM is searched over 
+
+𝑚 ∈ {0 , 0.1, 0.2, … , 1.0} . CAR reranks the top-10 documents for each baseline. For model-family experiments (RQ4), we additionally use Llama-3-8B-Instruct Meta AI (2024) (abbreviated as Llama), GLM-4-9B-Chat Zeng et al. (2024) (abbreviated as GLM), and InternLM2.5-Chat-7B Cai et al. (2024) (abbreviated as InternLM). 
+
+4.1.4. Evaluation Metrics 
+
+We evaluate performance from two perspectives: retrieval ranking quality and end-to-end generation quality. 
+
+NDCG@5. For retrieval and reranking experiments, we adopt NDCG@5 (Normalized Discounted Cumulative Gain at 5) as the primary evaluation metric. NDCG@5 measures the overall quality of document relevance in the top 5 positions of the ranked list and accounts for the positions at which relevant documents appear. Its basic intuition is that more relevant documents should be ranked higher; relevant documents appearing at lower positions contribute less due to discounting. Specifically, given the top 𝐾 ranked results for a query, DCG@ 𝐾 and NDCG@ 𝐾 are defined as: 
+
+DCG@ 𝐾 =
+
+> 𝐾
+
+∑
+
+> 𝑖 =1
+
+2𝑟𝑒𝑙 𝑖 − 1 log 2(𝑖 + 1) , NDCG@ 𝐾 = DCG@ 𝐾 
+
+IDCG@ 𝐾 . (11)                                                                                                                                                              
+
+> Song et al.: Preprint submitted to Elsevier Page 12 of 22 CAR
+> Table 3 Performance comparison. LLM: Qwen2.5-7B-Instruct. Retriever: Contriever. All scores are in percentage (NDCG@5).
+> Method NQ FEVER SCID COVID AVG Score Δ%Score Δ%Score Δ%Score Δ%Score Δ%
+> Retriever Only
+> Contriever 45.537 -74.253 -11.800 -61.078 -48.167 -+CAR 45.689 +0.3% 74.253 +0.0% 11.857 +0.5% 64.371 +5.4% 49.042 +1.8%
+> LLM-based Rerankers
+> YesNo 23.117 -25.462 -7.781 -55.624 -27.996 -+CAR 29.823 +29.0% 41.326 +62.3% 8.910 +14.5% 60.314 +8.4% 35.093 +25.4%
+> QLM 34.862 -55.687 -12.177 -65.401 -42.032 -+CAR 37.536 +7.7% 57.820 +3.8% 12.216 +0.3% 67.029 +2.5% 43.650 +3.9%
+> RankGPT 45.630 -74.268 -11.800 -61.201 -48.225 -+CAR 45.752 +0.3% 74.268 +0.0% 11.857 +0.5% 64.630 +5.6% 49.127 +1.9%
+> Supervised Neural Rerankers
+> ColBERT 47.779 -76.169 -12.468 -69.700 -51.529 -+CAR 47.809 +0.1% 76.169 +0.0% 12.486 +0.1% 70.103 +0.6% 51.642 +0.2%
+> Cross-Encoder 48.699 -78.457 -13.063 -68.792 -52.253 -+CAR 48.699 +0.0% 78.457 +0.0% 13.066 +0.0% 68.923 +0.2% 52.286 +0.1%
+> RankT5 50.969 -81.556 -13.913 -70.883 -54.330 -+CAR 50.979 +0.0% 81.556 +0.0% 13.919 +0.0% 71.038 +0.2% 54.373 +0.1%
+
+Here, 𝑟𝑒𝑙 𝑖 denotes the relevance label of the document at position 𝑖 , and IDCG@ 𝐾 denotes the DCG value under the ideal ranking. We set 𝐾 = 5 and report NDCG@5. NDCG@5 is suitable for RAG evaluation because RAG systems typically feed only a small number of top-ranked documents to the generator, making the ranking quality of the top positions directly relevant to final generation performance. 
+
+F1. In end-to-end generation experiments, we adopt the F1 score to measure token-level overlap between the generated answer and the reference answer. F1 considers both precision and recall, where precision measures how many tokens in the generated answer appear in the reference answer, and recall measures how many tokens in the reference answer are covered by the generated answer. They are defined as follows: 
+
+Precision = |Pred ∩ Gold ||Pred | , Recall = |Pred ∩ Gold ||Gold | , F1 = 2 ⋅ Precision ⋅ Recall Precision + Recall . (12) Here, Pred denotes the set of tokens in the generated answer, and Gold denotes the set of tokens in the reference answer. F1 is high only when both precision and recall are high, and thus provides a balanced measure of answer accuracy and completeness. We report F1 in end-to-end RAG experiments to assess whether CAR’s retrieval ranking improvements further translate into generation quality gains. Additionally, Δ% in the tables denotes the relative improvement of CAR over the corresponding baseline, calculated as: 
+
+Δ% = Score CAR − Score Baseline 
+
+Score Baseline 
+
+× 100% . (13) 
+
+4.2. Main Results (RQ1) 
+
+Table 3 reports the NDCG@5 results under Contriever retrieval. Overall, CAR consistently improves all seven baselines in terms of average performance, with no degradation on any dataset. The largest gains appear on LLM-based rerankers, especially YesNo, where CAR achieves an average relative improvement of +25 .4% . QLM and RankGPT also benefit from CAR, obtaining average improvements of +3 .9% and +1 .9% , respectively. These results indicate that    
+
+> Song et al.: Preprint submitted to Elsevier Page 13 of 22 CAR
+> Table 4 Ablation study on CAR. LLM: Qwen2.5-7B-Instruct. Retriever: Contriever. All scores are in percentage (NDCG@5).
+
+## Method Baseline w/o QT w/o CM CAR Score Score Δ% Score Δ% Score Δ%
+
+## Retriever Only 
+
+## Contriever 48.167 47.630 -1.1% 48.912 +1.5% 49.042 +1.8% 
+
+## LLM-based Rerankers 
+
+## YesNo 27.996 35.093 +25.4% 34.044 +21.6% 35.093 +25.4% QLM 42.032 43.459 +3.4% 43.235 +2.9% 43.650 +3.9% RankGPT 48.225 47.724 -1.0% 49.090 +1.8% 49.127 +1.9% 
+
+## Supervised Neural Rerankers 
+
+## ColBERT 51.529 49.364 -4.2% 51.555 +0.0% 51.642 +0.2% Cross-Encoder 52.253 49.687 -4.9% 52.286 +0.1% 52.286 +0.1% RankT5 54.330 51.203 -5.8% 54.373 +0.1% 54.373 +0.1% 
+
+generator-side confidence changes provide useful complementary evidence for correcting relevance-based rankings, particularly when the baseline reranker is relatively weak. 
+
+Effect on weak LLM-based rerankers. CAR brings the most substantial improvements to LLM-based rerankers. In particular, YesNo improves by +25 .4% on average, showing that confidence-aware posterior correction is especially effective when the initial reranking signal is relatively coarse or noisy. QLM and RankGPT also obtain consistent gains, indicating that CAR can further refine rankings even when the baseline already uses LLM-based relevance assessment. These results suggest that generation confidence captures a usefulness signal that is complementary to query–document relevance. 
+
+Effect on strong supervised rerankers. For stronger supervised rerankers, CAR still brings stable but smaller improvements: ColBERT, Cross-Encoder, and RankT5 obtain average gains of +0 .2% , +0 .1% , and +0 .1% , respec-tively. This suggests that CAR remains safe when applied to strong baselines, since the QT and CM mechanisms prevent unnecessary ranking perturbation. Rather than aggressively overriding the baseline ranking, CAR performs conservative correction only when the generator-side confidence evidence is sufficiently strong. 
+
+Dataset-level observations. Across datasets, the most notable improvements are observed on TREC-COVID, where several methods obtain larger gains, while FEVER shows many zero-gain cases because the baseline rankings are already highly reliable. These patterns are consistent with CAR’s conservative design: it mainly corrects uncertain cases while preserving strong prior rankings when further intervention is unnecessary. 
+
+4.3. Ablation Study (RQ2) 
+
+Table 4 reports the ablation results under Contriever retrieval. We compare the original baseline, CAR without the query threshold ( w/o QT ), CAR without the confidence margin ( w/o CM ), and the full CAR. Overall, the full CAR achieves the best or tied-best performance for all seven baselines, showing that QT and CM jointly support CAR’s conservative posterior correction mechanism. In particular, CAR brings large gains for weak LLM-based rerankers, such as YesNo with +25 .4% , while maintaining small but non-negative gains for strong supervised rerankers. 
+
+Effect of QT. Removing QT makes CAR apply confidence-based correction to all queries, which can harm strong baselines substantially. For supervised rerankers, w/o QT leads to clear drops: ColBERT decreases by −4 .2% , Cross-Encoder by −4 .9% , and RankT5 by −5 .8% . This indicates that many high-confidence queries already have reliable prior rankings, and forcing posterior correction may disturb them. In contrast, YesNo still obtains +25 .4% without QT, matching the full CAR result, suggesting that weak baselines contain more uncertain cases where correction is broadly useful. Thus, QT mainly serves as a safety gate that protects strong rankings from unnecessary intervention.   
+
+> Song et al.: Preprint submitted to Elsevier Page 14 of 22
+
+CAR 
+
+Effect of CM. Removing CM weakens the stability of confidence-based document assignment. For example, Contriever improves by +1 .5% without CM, but the full CAR further increases the gain to +1 .8% ; QLM improves from +2 .9% without CM to +3 .9% with full CAR; RankGPT also rises from +1 .8% to +1 .9% . These results show that CM helps avoid overreacting to small confidence fluctuations by requiring stronger evidence before promotion or demotion. Therefore, QT controls when CAR should intervene, while CM controls how confidently each document should be moved, and their combination yields the most robust reranking behavior. 
+
+4.4. Extended Experiments 
+
+4.4.1. Impact of Different Retrievers (RQ3) 0 20 40 60 
+
+# BM25 %
+
+# 0
+
+# 10 
+
+# 20 
+
+# 30 
+
+# 40 
+
+# 50 
+
+# 60 
+
+# 70 
+
+> Contriever  %
+
+Figure 2: Retriever robustness of CAR. Scatter plot of BM25 Δ% vs. Contriever Δ% on BEIR (Qwen2.5-7B-Instruct, NDCG@5). Each point represents one (reranker, dataset) pair (rerankers: Retriever-Only, YesNo, QLM, RankGPT, ColBERT, Cross-Encoder, RankT5; n=28). The dashed diagonal line indicates equal gain for both retrievers; points above the diagonal suggest Contriever benefits more from CAR, while points below suggest BM25 benefits more. Spearman 𝜌 =0.401 (p = 0.0345). 
+
+Figure 2 reports CAR’s NDCG@5 gains under BM25 and Contriever retrieval across all rerankers and datasets. Overall, CAR consistently improves ranking performance under both sparse and dense retrieval settings . Across 
+
+Song et al.: Preprint submitted to Elsevier Page 15 of 22 CAR 
+
+7 rerankers and 4 datasets, CAR achieves non-negative gains on all 28 data points for both BM25 and Contriever, with strictly positive gains on 22 data points under each retriever. These results show that CAR is not tied to a specific retrieval paradigm and can be effectively applied to both lexical and neural retrievers. 
+
+Consistency across retrievers. The improvement trends under BM25 and Contriever are positively correlated, with Spearman 𝜌 = 0 .401 , 𝑝 = 0 .0345 , and 𝑛 = 28 . This indicates that cases benefiting from CAR under sparse retrieval also tend to benefit under dense retrieval. Therefore, the generator-side confidence signal used by CAR provides a retriever-agnostic usefulness cue that complements different types of initial retrieval results. 
+
+Retriever-independent robustness. Although BM25 and Contriever produce candidate lists based on different matching mechanisms, CAR maintains the same conservative correction behavior in both settings. Since CAR only relies on the baseline order and generator-side confidence changes, it does not require retriever-specific scores, calibration, or architectural assumptions. This explains why CAR can be used as a plug-and-play reranking layer across heterogeneous retrieval backbones. 
+
+4.4.2. Impact of Different Models (RQ4) Retriever            
+
+> YesNo
+> QLM
+> RankGPT
+> ColBERT
+> Cross-Encoder
+> RankT5
+> 4.3 4.9 5.5 6.1 6.7
+> 26.6  33.1  39.6  46.1  52.6
+> 0.9 1.5 2.0 2.6 3.2
+> 4.0 4.7 5.3 6.0 6.7
+> 0.2 0.3 0.5 0.6 0.7
+> 0.1 0.1 0.2 0.2 0.3
+> 0.1  0.2  0.3  0.4  0.5
+> (a) BM25
+> Retriever
+> YesNo
+> QLM
+> RankGPT
+> ColBERT
+> Cross-Encoder
+> RankT5
+> 1.5 1.9 2.3 2.7 3.1
+> 21.9  27.1  32.2  37.4  42.6
+> 3.6 4.3 5.0 5.8 6.5
+> 1.4 1.9 2.3 2.8 3.3
+> 0.2 0.6 0.9 1.3 1.7
+> 0.1 0.3 0.5 0.7 1.0
+> 0.1  0.2  0.3  0.4  0.5
+> (b) Contriever
+> Qwen Llama GLM InternLM
+
+Figure 3: Model family comparison of CAR. Radar chart of average NDCG@5 score gain ( Δ% ) across rerankers on BEIR. The two panels show results with BM25 and Contriever as the retriever. Each vertex corresponds to a reranker method (Retriever, YesNo, QLM, RankGPT, ColBERT, Cross-Encoder, RankT5); each line represents one LLM family (Qwen, Llama, GLM, InternLM) with distinct color, linestyle, and marker. Radial axes use per-vertex independent scales: tick values along each axis indicate the actual Δ% range for that reranker. A larger enclosed area indicates more consistent gains across rerankers for that model family. 
+
+Figure 3 reports CAR’s average NDCG@5 gains across four LLM backbones, including Qwen, Llama, GLM, and InternLM. Overall, CAR consistently improves ranking performance across all model families . Across BM25 and Contriever retrieval, all model–reranker combinations obtain positive gains, demonstrating that CAR is not tied to a specific generator backbone and can generalize across different LLM families. The radar charts further reveal clear cross-model differences. InternLM produces the largest and most stable improvement area under both BM25 and Contriever, indicating that its confidence signals are the most effective for posterior correction. GLM generally ranks second and shows strong gains in several settings, while Qwen and Llama also improve performance consistently but with smaller and more uneven gains. These results suggest that CAR is model-agnostic in applicability, but its improvement magnitude is influenced by the quality and discriminability of the generator’s confidence estimates. A secondary pattern is that larger gains are typically observed on weaker baselines such as YesNo, whereas stronger supervised rerankers receive smaller but still positive improvements. This trend remains visible under both BM25 and 
+
+Song et al.: Preprint submitted to Elsevier Page 16 of 22 CAR 
+
+Contriever retrieval, further suggesting that CAR’s cross-model behavior is robust across retrieval settings while still reflecting differences in generator-side confidence quality. 
+
+4.4.3. Impact of Sample Number (RQ5) 1 2 3 4 5 6 7 8 9 10 
+
+k (Number of Samples) 
+
+20 
+
+22 
+
+24 
+
+26 
+
+28 
+
+30 
+
+32 
+
+34 
+
+> Best NDCG@5 (%)
+
+BM25 
+
+YesNo 
+
+QLM 
+
+RankGPT 
+
+ColBERT 
+
+Cross-Encoder 
+
+RankT5    
+
+> Figure 4: Sensitivity analysis of parameter 𝑘 on BEIR average with BM25. All scores are in percentage (NDCG@5).
+
+CAR benefits from multiple samples and reaches stable performance with moderate sampling. Figure 4 reports the effect of the sampling number 𝑘 on CAR under BM25 retrieval. The CAR sampling process starts from 
+
+𝑘 = 2 , while 𝑘 = 1 denotes the w/o CAR baseline score included as a reference. Using multiple samples consistently improves NDCG@5 across baselines, indicating that multi-sample confidence estimation provides more reliable signals for query-only and query–document conditions. As 𝑘 increases, the gains generally show an approximately monotonic relationship and gradually saturate, suggesting diminishing marginal returns from additional samples. The improvement is more pronounced for weaker baselines such as YesNo, whereas stronger rerankers such as Cross-Encoder and RankT5 show flatter trends because their initial rankings are already relatively reliable. These results suggest that 𝑘 = 5 –10 offers a practical balance between reranking effectiveness and inference cost. 
+
+4.4.4. End-to-end Generation Quality (RQ6) 
+
+CAR’s ranking improvements effectively transfer to downstream generation quality. Table 5 reports end-to-end generation results on NQ using BM25 as the initial retriever and Qwen2.5-7B-Instruct as the generator. Overall, methods with larger NDCG@5 gains also obtain larger F1 improvements, and the relative improvements of the two metrics show a strong positive correlation (Spearman 𝜌 = 0 .964 , 𝑝 < 0.001 , 𝑛 = 7 ). In particular, YesNo achieves the largest ranking gain, improving NDCG@5 by +43 .1% , and also obtains the largest generation gain, improving F1 by +17 .1% . BM25 and RankGPT show similar patterns, with double-digit improvements in both ranking and generation quality. For stronger supervised rerankers, CAR produces smaller but still positive F1 gains, consistent with their smaller NDCG@5 improvements. These results indicate that confidence-aware reranking not only improves top-ranked document quality, but also provides more useful evidence for the generator, thereby enhancing the final output quality of the full RAG pipeline.                                                           
+
+> Song et al.: Preprint submitted to Elsevier Page 17 of 22 CAR
+> Table 5 Relationship between reranking quality and end-to-end generation quality on NQ. Qwen2.5-7B-Instruct is used as the generator and BM25 as the initial retriever. Ranking quality is measured by NDCG@5, generation quality by token-level F1, and all scores are reported in percentage. Spearman’s 𝜌 = 0 .964 ,𝑝 < 0.001 ,𝑛 = 7 , between relative NDCG@5 improvement and relative F1 improvement. Method Ranking (NDCG@5) Generation (F1) Baseline +CAR Δ%Baseline +CAR Δ%BM25 4.877 5.478 +12.3% 13.789 15.228 +10.4% YesNo 3.215 4.602 +43.1% 12.974 15.192 +17.1% QLM 6.104 6.292 +3.1% 15.462 15.741 +1.8% RankGPT 4.888 5.486 +12.2% 13.886 15.291 +10.1% ColBERT 7.913 7.994 +1.0% 15.635 15.733 +0.6% Cross-Encoder 8.117 8.158 +0.5% 15.681 15.724 +0.3% RankT5 8.312 8.339 +0.3% 15.735 15.818 +0.5%
+
+4.5. Takeaways 
+
+The experimental findings can be summarized as direct answers to the six research questions introduced at the beginning of this section: 
+
+• RQ1: Does CAR consistently improve document reranking performance? Yes. CAR improves the average NDCG@5 of all seven baselines under Contriever retrieval, with especially large gains for weaker LLM-based rerankers such as YesNo, while maintaining non-negative gains for strong supervised rerankers. 
+
+• RQ2: How do QT and CM affect performance? QT and CM are both necessary for conservative and stable posterior correction: QT prevents unnecessary intervention on high-confidence queries, while CM reduces unstable document movements caused by small sampling fluctuations. 
+
+• RQ3: Does CAR remain effective across different retrievers? Yes. CAR produces consistent non-negative improvements under both BM25 and Contriever, indicating that generator-side confidence changes provide a retriever-agnostic usefulness signal. 
+
+• RQ4: Does CAR generalize across different generation model families? Yes. CAR yields positive gains across Qwen, Llama, GLM, and InternLM, showing that the framework is not tied to a specific LLM backbone, although the magnitude of improvement depends on the quality of each model’s confidence estimates. 
+
+• RQ5: How does the sample number 𝑘 affect CAR performance? Multiple samples are necessary for reliable confidence estimation. Performance improves as the sampling budget increases and gradually saturates, suggesting that 𝑘 = 5 –10 provides a practical effectiveness–cost trade-off. 
+
+• RQ6: Do ranking improvements transfer to end-to-end generation quality? Yes. On NQ, CAR’s NDCG@5 improvements are strongly correlated with downstream F1 improvements, demonstrating that confidence-aware reranking provides more useful evidence for the generator in the full RAG pipeline. Overall, these results support the central claim of this work: generator-side confidence change is an effective posterior usefulness signal for RAG reranking, and CAR can leverage this signal in a conservative, training-free, and plug-and-play manner across diverse retrieval, reranking, and generation settings. 
+
+## 5. Conclusion 
+
+5.1. Main Findings and Contributions 
+
+To address the mismatch between document relevance and generation usefulness in RAG scenarios, we propose 
+
+CAR (Confidence-Aware Reranking), a query-guided, training-free, and plug-and-play confidence-aware reranking method. CAR treats the candidate document permutation produced by the baseline retriever or reranker as a prior   
+
+> Song et al.: Preprint submitted to Elsevier Page 18 of 22 CAR
+
+preference over document usefulness, and leverages the sampling consistency of the generator under query-only and query–document conditions to estimate confidence changes. These confidence changes provide posterior usefulness evidence from the generator’s perspective. Through the query threshold and confidence margin, CAR performs conservative correction of the baseline ranking when the generator is uncertain and the document-induced confidence change is sufficiently significant; otherwise, the original ranking structure is preserved. Experimental results validate CAR’s effectiveness and robustness. First, on four representative datasets from the BEIR benchmark, CAR consistently improves NDCG@5 performance across multiple types of baselines. Under Retriever Only, LLM-based reranker, and supervised neural reranker settings, CAR delivers consistent positive gains, with particularly significant improvements on weaker LLM-based rerankers. This demonstrates that generator confidence changes can effectively complement traditional relevance signals, helping identify documents that truly help the generator form stable answers. Second, ablation studies show that the query threshold (QT) and confidence margin (CM) are key components of CAR’s conservative reranking mechanism. QT determines whether posterior correction should be initiated based on query-level confidence, preventing unnecessary intervention on high-confidence queries and strong baseline rankings. CM introduces a tolerance interval around the query-only confidence to reduce misclassification caused by sampling fluctuations. Together, they ensure that CAR can correct ranking deficiencies in weak baselines while maintaining safety for strong baselines. Finally, extended experiments further demonstrate CAR’s cross-setting generalizability. CAR maintains consistent gains under both BM25 and Contriever retrieval paradigms and achieves consistent positive improvements across four LLM backbone models: Qwen, Llama, GLM, and InternLM. In addition, end-to-end generation experiments show that CAR’s NDCG@5 improvements effectively transfer to downstream generation quality, with a strong positive correlation between ranking improvements and generation F1 improvements. This indicates that reranking based on generator confidence not only improves retrieval metrics but also enhances the final output quality of the full RAG pipeline. 
+
+5.2. Practical Implications 
+
+CAR’s design provides strong practical deployment value. First, CAR is a post-processing module that requires no retraining of the retriever, reranker, or generator, and no access to model internals. It can therefore be directly applied on top of existing RAG systems. For already-deployed BM25 systems, dense retrievers, LLM-based rerankers, or supervised neural rerankers, CAR only needs to read the candidate document permutation they output in order to perform confidence-aware correction. Second, CAR does not depend on calibrated relevance scores from the baseline, but only requires the original relative order of candidate documents. This makes CAR adaptable to many black-box retrieval and reranking systems, especially in practical engineering scenarios where different components may come from diverse sources, score scales may be inconsistent, or only ranked lists may be available. Through stable binning reranking, CAR leverages generator-side posterior evidence while preserving the prior structure of the baseline ranking, thereby achieving strong compatibility and controllability. Furthermore, CAR’s query-guided mechanism provides a degree of cost awareness. For queries where the generator already has high confidence, CAR directly preserves the baseline ranking and avoids unnecessary document-level confidence estimation. For low-confidence queries, CAR proceeds with document-conditioned sampling and reranking. This mechanism makes CAR suitable for deployment as an on-demand RAG enhancement module. Although CAR introduces additional sampling and semantic clustering overhead, these operations naturally support batching and parallelization, making CAR feasible in generation services with concurrent inference capabilities. 
+
+5.3. Limitations and Future Work 
+
+Despite CAR’s consistent empirical gains, the method has several limitations. First, CAR requires multiple sampling rounds for the query-only input and multiple query–document inputs, and further performs bidirectional entailment-based semantic clustering, thereby incurring additional inference costs. Although sampling and entailment judgments can be parallelized, further optimization of the trade-off among token consumption, concurrent request count, and overall response time is needed for large-scale low-latency retrieval scenarios. Second, CAR currently relies on two hyperparameters, the query threshold and confidence margin, whose values are determined through validation-set search. Although experiments demonstrate that both components effectively improve method stability, fixed thresholds may not fully adapt to different datasets, query types, or generator confidence   
+
+> Song et al.: Preprint submitted to Elsevier Page 19 of 22 CAR
+
+distributions. Future work could explore adaptive threshold strategies, such as dynamically adjusting QT and CM according to query difficulty, candidate document distribution, or generator confidence calibration. Third, CAR’s confidence estimation relies on the semantic consistency of sampled answers, and the semantic clustering process depends on the generator or a discriminative model’s judgment of bidirectional entailment relationships. In scenarios involving domain-intensive knowledge, low-resource languages, or highly diverse answer formulations, entailment judgments may be prone to errors, thereby affecting the reliability of confidence estimation. Future work could introduce lighter and more stable confidence estimation approaches, such as combining token-level uncertainty, self-consistency, logit-based calibration, or specially trained semantic-equivalence discriminators, to reduce cost and improve robustness. Finally, this paper primarily validates CAR in text retrieval and text generation scenarios. As RAG systems increasingly expand to multimodal question answering, table reasoning, code retrieval, and long-document analysis, the relationship between document usefulness and generator uncertainty may become more complex. Future work could extend CAR to larger-scale and more complex retrieval settings, and further investigate the value of confidence-aware reranking in multimodal RAG, agentic retrieval, and interactive retrieval-augmented generation systems.   
+
+> Song et al.: Preprint submitted to Elsevier Page 20 of 22
+
+CAR 
+
+## References 
+
+Asai, A., Wu, Z., Wang, Y., Sil, A., & Hajishirzi, H. (2024). Self-RAG: Learning to retrieve, generate, and critique through self-reflection. In The twelfth international conference on learning representations. Retrieved from https://openreview.net/forum?id=hSyW5go0v8 
+
+Cai, Z., Cao, M., Chen, H., Chen, K., Chen, K., Chen, X., . . . Zhao, X. (2024). Internlm2 technical report. arXiv . doi: https://doi.org/10.48550/ arXiv.2403.17297 Cohan, A., Feldman, S., Beltagy, I., Downey, D., & Weld, D. (2020, July). SPECTER: Document-level representation learning using citation-informed transformers. In Proceedings of the 58th annual meeting of the association for computational linguistics (pp. 2270–2282). Online: Association for Computational Linguistics. doi: https://doi.org/10.18653/v1/2020.acl-main.207 Farquhar, S., Kossen, J., Kuhn, L., & Gal, Y. (2024). Detecting hallucinations in large language models using semantic entropy. Nature , 630 (8017), 625–630. doi: https://doi.org/10.1038/s41586-024-07421-0 Gao, Y., Xiong, Y., Gao, X., Jia, K., Pan, J., Bi, Y., . . . Wang, H. (2023). Retrieval-augmented generation for large language models: A survey. 
+
+arXiv . doi: https://doi.org/10.48550/arXiv.2312.10997 Izacard, G., Caron, M., Hosseini, L., Riedel, S., Bojanowski, P., Joulin, A., & Grave, E. (2022). Unsupervised dense information retrieval with contrastive learning. Transactions on Machine Learning Research . Retrieved from https://openreview.net/forum?id=jKN1pXi7b0 
+
+Jiang, Z., Xu, F., Gao, L., Sun, Z., Liu, Q., Dwivedi-Yu, J., . . . Neubig, G. (2023, December). Active retrieval augmented generation. In Proceedings of the 2023 conference on empirical methods in natural language processing (pp. 7969–7992). Singapore: Association for Computational Linguistics. doi: https://doi.org/10.18653/v1/2023.emnlp-main.495 Jones, K. S., Walker, S., & Robertson, S. E. (2000). A probabilistic model of information retrieval: development and comparative experiments -part 2. Information Processing & Management , 36 (6), 809–840. doi: https://doi.org/10.1016/S0306-4573(00)00016-9 Kadavath, S., Conerly, T., Askell, A., Henighan, T., Drain, D., Perez, E., . . . Kaplan, J. (2022). Language models (mostly) know what they know. 
+
+arXiv . doi: https://doi.org/10.48550/arXiv.2207.05221 Khattab, O., & Zaharia, M. (2020). Colbert: Efficient and effective passage search via contextualized late interaction over BERT. In Proceedings of the 43rd international ACM SIGIR conference on research and development in information retrieval, SIGIR 2020, virtual event, china, july 25-30, 2020 (pp. 39–48). doi: https://doi.org/10.1145/3397271.3401075 Kwiatkowski, T., Palomaki, J., Redfield, O., Collins, M., Parikh, A., Alberti, C., . . . Petrov, S. (2019). Natural questions: A benchmark for question answering research. Transactions of the Association for Computational Linguistics , 7, 452–466. doi: https://doi.org/10.1162/tacl_a_00276 Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N., . . . Kiela, D. (2020). Retrieval-augmented generation for knowledge-intensive NLP tasks. In Advances in neural information processing systems 33: Annual conference on neural information processing systems 2020, neurips 2020, december 6-12, 2020, virtual (Vol. 33, pp. 9459–9474). Retrieved from https://proceedings.neurips.cc/paper/2020/ hash/6b493230205f780e1bc26945df7481e5-Abstract.html 
+
+Meta AI. (2024). Introducing llama 3.1: Our most capable models to date. Retrieved from https://ai.meta.com/blog/meta-llama-3-1/ 
+
+Pradeep, R., Sharifymoghaddam, S., & Lin, J. (2023). Rankvicuna: Zero-shot listwise document reranking with open-source large language models. 
+
+arXiv . doi: https://doi.org/10.48550/arXiv.2309.15088 Qin, Z., Jagerman, R., Hui, K., Zhuang, H., Wu, J., Yan, L., . . . Bendersky, M. (2024). Large language models are effective text rankers with pairwise ranking prompting. In Findings of the association for computational linguistics: NAACL 2024, mexico city, mexico, june 16-21, 2024 
+
+(pp. 1504–1518). doi: https://doi.org/10.18653/v1/2024.findings-naacl.97 Reimers, N., & Gurevych, I. (2019, November). Sentence-BERT: Sentence embeddings using Siamese BERT-networks. In Proceedings of the 2019 conference on empirical methods in natural language processing and the 9th international joint conference on natural language processing (emnlp-ijcnlp) (pp. 3982–3992). Hong Kong, China: Association for Computational Linguistics. doi: https://doi.org/10.18653/v1/D19-1410 Sachan, D. S., Lewis, M., Joshi, M., Aghajanyan, A., Yih, W., Pineau, J., & Zettlemoyer, L. (2022). Improving passage retrieval with zero-shot question generation. In Proceedings of the 2022 conference on empirical methods in natural language processing, EMNLP 2022, abu dhabi, united arab emirates, december 7-11, 2022 (pp. 3781–3797). doi: https://doi.org/10.18653/v1/2022.emnlp-main.249 Song, Z., Kong, X., Bao, X., Zhou, Y., Jiao, J., Liu, S., . . . Qi, H. (2026). Llm-confidence reranker: A training-free approach for enhancing retrieval-augmented generation systems. Expert Systems with Applications , 314 , 131627. doi: https://doi.org/10.1016/j.eswa.2026.131627 Song, Z., Zhou, Y., Kong, X., Jiao, J., Bao, X., You, X., . . . Qi, H. (2026). Less is more for RAG: information gain pruning for generator-aligned reranking and evidence selection. arXiv . doi: https://arxiv.org/abs/2601.17532 Sun, W., Yan, L., Ma, X., Wang, S., Ren, P., Chen, Z., . . . Ren, Z. (2023). Is chatgpt good at search? investigating large language models as re-ranking agents. In Proceedings of the 2023 conference on empirical methods in natural language processing, EMNLP 2023, singapore, december 6-10, 2023 (pp. 14918–14937). doi: https://doi.org/10.18653/v1/2023.emnlp-main.923 Thakur, N., Reimers, N., Rücklé, A., Srivastava, A., & Gurevych, I. (2021). BEIR: A heterogeneous benchmark for zero-shot evaluation of information retrieval models. In Thirty-fifth conference on neural information processing systems datasets and benchmarks track (round 2). 
+
+Retrieved from https://openreview.net/forum?id=wCu6T5xFjeJ 
+
+Thorne, J., Vlachos, A., Christodoulopoulos, C., & Mittal, A. (2018). FEVER: a large-scale dataset for fact extraction and verification. In Proceedings of the 2018 conference of the north american chapter of the association for computational linguistics: Human language technologies, NAACL-HLT 2018, new orleans, louisiana, usa, june 1-6, 2018, volume 1 (long papers) (pp. 809–819). doi: https://doi.org/10.18653/v1/n18-1074 Voorhees, E., Alam, T., Bedrick, S., Demner-Fushman, D., Hersh, W. R., Lo, K., . . . Wang, L. L. (2021, February). Trec-covid: constructing a pandemic information retrieval test collection. SIGIR Forum , 54 (1). doi: https://doi.org/10.1145/3451964.3451965 Wang, X., Wei, J., Schuurmans, D., Le, Q. V., Chi, E. H., Narang, S., . . . Zhou, D. (2023). Self-consistency improves chain of thought reasoning in language models. In The eleventh international conference on learning representations. Retrieved from https://openreview.net/ forum?id=1PL1NIMMrw 
+
+Xiong, M., Hu, Z., Lu, X., LI, Y., Fu, J., He, J., & Hooi, B. (2024). Can LLMs express their uncertainty? an empirical evaluation of confidence elicitation in LLMs. In The twelfth international conference on learning representations. Retrieved from https://openreview.net/ forum?id=gjeQKFxFpZ 
+
+Song et al.: Preprint submitted to Elsevier Page 21 of 22 CAR 
+
+Yan, S.-Q., Gu, J.-C., Zhu, Y., & Ling, Z.-H. (2024). Corrective retrieval augmented generation. arXiv . doi: https://doi.org/10.48550/ arXiv.2401.15884 Yang, A., Yang, B., Hui, B., Zheng, B., Yu, B., Zhou, C., . . . Fan, Z. (2024). Qwen2 technical report. arXiv . doi: https://doi.org/10.48550/ arXiv.2407.10671 Yu, Y., Ping, W., Liu, Z., Wang, B., You, J., Zhang, C., . . . Catanzaro, B. (2024). Rankrag: Unifying context ranking with retrieval-augmented generation in llms. In Advances in neural information processing systems (Vol. 37, pp. 121156–121184). Curran Associates, Inc. doi: https://doi.org/10.52202/079017-3850 Zeng, A., Xu, B., Wang, B., Zhang, C., Yin, D., Rojas, D., . . . Wang, Z. (2024). Chatglm: A family of large language models from GLM-130B to GLM-4 all tools. arXiv . doi: https://doi.org/10.48550/arXiv.2406.12793 Zhuang, H., Qin, Z., Jagerman, R., Hui, K., Ma, J., Lu, J., . . . Bendersky, M. (2023). Rankt5: Fine-tuning T5 for text ranking with ranking losses. In 
+
+Proceedings of the 46th international ACM SIGIR conference on research and development in information retrieval, SIGIR 2023, taipei, taiwan, july 23-27, 2023 (pp. 2308–2313). Retrieved from https://doi.org/10.1145/3539618.3592047 doi: 10.1145/3539618.3592047 
+
+Song et al.: Preprint submitted to Elsevier Page 22 of 22
