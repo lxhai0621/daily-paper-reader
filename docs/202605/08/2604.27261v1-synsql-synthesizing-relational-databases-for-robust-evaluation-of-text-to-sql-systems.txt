@@ -1,0 +1,798 @@
+Title: SynSQL: Synthesizing Relational Databases for Robust Evaluation of Text-to-SQL Systems
+
+URL Source: https://arxiv.org/pdf/2604.27261v1
+
+Published Time: Fri, 01 May 2026 00:22:09 GMT
+
+Number of Pages: 25
+
+Markdown Content:
+Preprint. 
+
+# SynSQL: Synthesizing Relational Databases for Robust Eval-uation of Text-to-SQL Systems 
+
+Mohammadamin Habibollah, Davood Rafiei 
+
+Department of Computing Science University of Alberta 
+
+{mhabibol, drafiei }@ualberta.ca 
+
+## Abstract 
+
+Evaluating text-to-SQL systems remains largely fragile: correctness is typi-cally judged by executing predicted and gold SQL queries on a single static database, even though the same queries may behave differently under alternative database instances. This raises a broader language modeling question: Can large language models synthesize semantically meaning-ful, schema-consistent relational data directly from a natural language question? If so, such generation can serve as a controlled mechanism for stress-testing text-to-SQL systems beyond fixed benchmark databases. We introduce SynSQL, a framework that synthesizes test databases con-ditioned on question–schema alignment rather than gold SQL queries. SynSQL decomposes the task into three stages: (1) schema selection, (2) question-guided data synthesis, and (3) constraint-aware critique with iter-ative refinement, framing database construction as structured generation under semantic and relational constraints. Across ten text-to-SQL models on Spider, BIRD, and Spider 2.0, SynSQL-generated databases reveal per-formance drops of 3–14% compared to static evaluation, exposing errors masked by benchmark artifacts. We further analyze generation quality, constraint adherence, and failure modes, highlighting both the promise and limitations of LLMs in structured data synthesis. Our findings position synthetic database generation as a new lens for studying LLM reasoning, controllability, and robustness in structured environments. 
+
+## 1 Introduction 
+
+Text-to-SQL benchmarks such as Spider (Yu et al., 2018) and BIRD (Li et al., 2023b) have driven rapid progress by pairing natural language (NL) questions with gold SQL queries over curated relational databases. Evaluation is typically conducted by executing predicted and gold queries against a single fixed database instance and comparing their outputs. While effective for standardization, this setup implicitly assumes that correctness is invariant to the underlying database content. In practice, this assumption is fragile, and execution outcomes can depend heavily on the specific database instance (Mitsopoulou & Koutrika, 2025; Renggli et al., 2025). Issues such as referential integrity violations, unexpected NULL values, case mismatches between questions and database content, or noisy entries may cause incorrect queries to appear correct (false positives) or semantically valid queries to be penalized (false negatives). As a result, evaluation reflects not only language understanding and query reasoning, but also the particular “world” encoded by the benchmark database (Zhong et al., 2020). This fragility suggests a broader perspective: evaluation can be viewed as a data gener-ation problem. Instead of asking whether a predicted query matches a gold query on a single database, we should ask whether it remains correct across semantically meaningful variations of the underlying data, an important but underexplored aspect of text-to-SQL evaluation. Prior approaches to generating alternative databases are gold query-centric. Systems such as AGENDA (Deng et al., 2005), XData (Veanes et al., 2010), and TestSuit-eAccuracy (Zhong et al., 2020) construct counterexample databases by mutating gold SQL 1
+
+> arXiv:2604.27261v1 [cs.DB] 29 Apr 2026
+
+Preprint. Ratings:    
+
+> Key Integrity: ?/10
+> Complexity: ?/10
+> Variety: ?/10
+> ...
+> Feedbacks:
+> Ensure that the "lapTimes" keys are unique and consistent across "races" and "drivers" tables to maintain foreign key integrity.
+> DATA
+> ratings
+> feedback
+> REDUCED
+> SCHEMA
+> INSERT INTO "races" VALUES ("101", "2009", "Malaysian Grand Prix");
+> INSERT INTO "races" VALUES ("102", "2009", "Australian Grand Prix");
+> INSERT INTO "drivers" VALUES ("44", "Lewis", "Hamilton");
+> INSERT INTO "drivers" VALUES ("5", "Sebastian", "Vettel");
+> INSERT INTO "lapTimes" VALUES ("101", "44", "1", "90000");
+> INSERT INTO "lapTimes" VALUES ("101", "44", "1", "89500");
+> Key Values Extraction :
+> ["Lewis", "Hamilton", "2009", "Malaysian Grand Prix"]
+> Ensemble Column Selection :
+> ["drivers.driverId", "drivers.forename", "drivers.surname", ... ]
+> ["drivers.forename", "drivers.surname", "races.year", "races.name", ... ]
+> ["drivers.forename", "drivers.surname" , "lapTimes.milliseconds", ... ]
+> Column Expansion :
+> ["lapTimes.raceId", "seasons.year", "circuits.name"]
+> What is the average lap time for Lewis Hamilton
+> in the 2009 Malaysian Grand Prix?
+> Schema Selector Synthesizer
+> REDUCED SCHEMA + [FEEDBACKS] INSERT STATEMENTS
+> +
+> FEEDBACKS
+> (IF APPLICABLE)
+> Critic
+> DATABASE
+> INSERT
+> FULL SCHEMA REDUCED SCHEMA
+
+Figure 1: Overview of the SynSQL framework. The schema selector identifies relevant schema elements and reduces the schema space. The synthesizer generates test data based on the NL question and reduced schema. The critic evaluates the quality of the generated data and provides feedback for improvement. queries or by symbolically analyzing them to distinguish correct from incorrect variants. More recent SMT-based approaches (e.g., VeriEQL (He et al., 2024) and SpotIt (Klopfenstein et al., 2025)) synthesize databases that distinguish predicted queries from reference queries. While powerful, these methods rely on access to gold SQL and are limited by bounded verification and query complexity. More fundamentally, they leave open a key question: can relational test data be generated directly from natural language and schema structure? 
+
+In this work, we investigate whether large language models (LLMs) can synthesize seman-tically grounded, schema-consistent relational databases conditioned only on a natural language question and a database schema. If feasible, such question-conditioned generation serves two purposes. First, it enables robustness evaluation of text-to-SQL systems without relying on gold query annotations and their mutations. Second, it probes an emerging capability of LLMs: structured world modeling under relational constraints. Generating a database from a question requires identifying relevant schema elements, populating tables with coherent and discriminative values, enforcing integrity constraints (e.g., foreign keys and uniqueness), and encoding semantic signals that expose query errors. This reframes database synthesis as a controlled structured generation task that jointly tests semantic grounding and constraint awareness. We introduce SynSQL, a modular framework for question-conditioned synthetic database generation. SynSQL decomposes the task into three stages (Figure 1): a Schema Selector 
+
+identifies schema elements relevant to the question, reducing the combinatorial search space; a Synthesizer generates relational tuples conditioned on the question and the reduced schema; and a Critic enforces structural consistency and semantic alignment, iteratively refining the generated database. This design treats database construction as an interactive structured generation process that integrates language-based reasoning with relational constraints. We evaluate SynSQL across ten text-to-SQL systems on Spider, BIRD, and Spider 2.0. SynSQL-generated databases reveal consistent robustness gaps: model accuracies drop by 3–14% compared to evaluation on the original static databases, and in some cases lead to changes in model ranking. This indicates that fixed benchmark instances mask systematic errors. At the same time, SynSQL achieves high constraint satisfaction rates and produces realistic, minimal databases aligned with question semantics. Our analysis highlights both the strengths and limitations of LLMs in structured data synthesis, including failure modes in constraint adherence and semantic grounding under complex schemas. 
+
+Contributions. This paper makes the following contributions: (1) We introduce question-conditioned relational database synthesis from natural language and schema as a new task for 2Preprint. studying the ability of LLMs to construct semantically grounded relational worlds under structural constraints. (2) We develop S YN SQL, a modular framework that decomposes this task into schema selection, question-guided synthesis, and constraint-aware critique with iterative refinement. (3) Through extensive evaluation across multiple text-to-SQL systems, datasets, and LLM families, we show that SynSQL exposes robustness gaps and induces ranking shifts under structurally valid data variation that are not apparent under static evaluation. (4) We provide a detailed analysis of structural validity, semantic support, and failure modes, offering insight into where LLMs succeed and where they remain limited in structured world generation. 
+
+## 2 Related Work 
+
+Evaluation and query-centric database generation. Text-to-SQL systems are typically evaluated by executing predicted and gold SQL queries on a fixed database instance, as in Spider (Yu et al., 2018) and BIRD (Li et al., 2023b). While this enables standardized comparison, execution-based evaluation is sensitive to the underlying data and may over-estimate correctness due to coincidental agreement on specific instances (Mitsopoulou & Koutrika, 2025; Renggli et al., 2025; Zhong et al., 2020). To address this, prior work gener-ates alternative databases that distinguish correct from incorrect queries. Systems such as AGENDA (Deng et al., 2005), XData (Veanes et al., 2010), and TestSuiteAccuracy (Zhong et al., 2020) use query mutation or symbolic analysis, while SMT-based approaches (e.g., VeriEQL (He et al., 2024) and SpotIt (Klopfenstein et al., 2025)) synthesize counterexample databases. These methods are inherently query-centric , requiring access to gold SQL and reasoning over query structure, which limits scalability and generality. 
+
+LLMs for data and structured generation. Recent work explores LLMs for synthetic data generation, including controllable generation (Zhou et al., 2025) and unified dataset pipelines (Huang et al., 2024). In parallel, LLMs have shown strong capabilities in generating structured outputs such as code, tables, and semi-structured data (Chen et al., 2021; Austin et al., 2021; Li et al., 2023c), with applications in program synthesis (Chen et al., 2021; Austin et al., 2021), table reasoning (Yin et al., 2020; Herzig et al., 2020), and tool use (Schick et al., 2023). Recent work (e.g., StructSynth (Liu et al., 2025)) highlights the difficulty of enforcing structural dependencies in tabular generation. However, these approaches either focus on matching data distributions or generating isolated structured outputs, and do not address relational data generation grounded in natural language and constrained by schema structure. 
+
+Our approach. We frame relational database construction as a structured generation problem conditioned on natural language and schema. Unlike prior work, we synthesize schema-consistent databases directly from question-schema alignment, without relying on gold queries. This enables evaluation under controlled data variation and provides a testbed for studying how LLMs align language with relational structure under constraints. 
+
+## 3 Methodology 
+
+We formulate question-conditioned database synthesis as a structured generation problem 
+
+over relational database instances. Given a natural language question q and a database schema S, the goal is to generate a database instance D such that (i) D satisfies the structural constraints of S (e.g., primary and foreign keys), and (ii) D encodes semantic signals implied by q that enable distinguishing correct and incorrect query interpretations. We introduce SYN SQL, a modular framework that decomposes this process into three stages (Figure 1): schema selection, question-conditioned data synthesis, and constraint-aware critique, which together reduce the generation space, construct candidate data, and enforce structural and semantic validity. 3Preprint. 
+
+3.1 Schema Selection 
+
+Real-world database schemas often contain many tables and columns, while most NL questions reference only a small subset. Providing the full schema can lead to unnecessary or inconsistent data generation (e.g., foreign key violations). The goal is therefore to identify relevant schema elements while preserving sufficient context for coherent synthesis. Given S and q, we select a subset S′ ⊆ S by grounding linguistic cues in q to tables, attributes, and relationships. This reduces the combinatorial search space while retaining the structure needed for synthesis. We implement schema selection using an LLM that identifies relevant elements based on lexical overlap, semantic similarity, and relational context (§ A.10,A.11). Our approach prioritizes recall, retaining all schema elements that could plausibly support data synthesis. As outlined in Algorithm 1 (Appendix), we adopt an ensemble-expansion strategy: the LLM is queried multiple times at different temperature settings to produce diverse candidate subsets, whose union forms a high-recall core. This core is then expanded with semantically or functionally related columns to further improve coverage. 
+
+3.2 Question-Conditioned Data Synthesis 
+
+Unlike prior approaches that rely on reference SQL queries or their mutations, our syn-thesizer operates directly from q and S′, enabling broader coverage of query semantics. Given S′ and q, the synthesizer generates a database instance D by populating each table with tuples. This requires generating values that are: (i) structurally valid , respecting column types and table schemas, (ii) relationally consistent , maintaining dependencies such as foreign keys, and (iii) semantically grounded in q, including values that can expose potential errors in query interpretation. We leverage the LLM to generate table-by-table tuples conditioned on q and S′, while maintaining consistency between tables through key relationships and value-level dependencies (e.g., foreign keys, aligned attributes and correlated values across tables) (§ A.12). We apply lightweight postprocessing to enforce basic structural correctness, including drop-ping tables or columns not in the schema, enforcing arity (padding with NULL s or truncating as needed), and normalizing values based on keywords extracted from the question. This process ensures the database can be loaded and executed, but cannot resolve referential integrity violations or semantic misalignment, which require regenerating coherent tuples and are addressed in the next stage. 
+
+3.3 Constraint-Aware Critique and Refinement 
+
+Key or referential integrity violations (e.g., foreign keys pointing to missing rows) cannot be fixed by dropping columns; they require the synthesizer to produce a new, consistent set of rows. Similarly, misalignment with question hints, lack of data variety, and oversimplified patterns that inflate success rate without improving discriminative power are semantic issues that only iterative refinement can address. Inspired by self-correction for LLMs (Pan et al., 2023), we therefore introduce a Critic that evaluates each generated database and decides whether to accept it or request a new round of generation. It scores the data on a 1–10 scale across six dimensions: alignment with question hints, key and referential integrity, schema coverage, data complexity, variety in records, and overall relevance. It translates detected issues into targeted feedback for refinement. If the average score meets the quality threshold (e.g., 8.0), the data is accepted; otherwise, the feedback is incorporated into the next iteration (see Appendix A.7 for details). 
+
+Discussion: This formulation casts database construction as a structured generation prob-lem requiring LLMs to jointly reason over language, schema structure, and relational constraints. Unlike query-centric approaches that derive test data from SQL, SynSQL gen-erates relational instances directly from question–schema alignment, enabling controlled variation of underlying data and more robust evaluation of text-to-SQL systems. 4Preprint. 
+
+## 4 Experimental Evaluation 
+
+Our experimental evaluation aims to address three core questions: (i) Can LLMs generate relational databases that are executable, structurally valid, and semantically supportive? (ii) Do such databases reveal robustness failures not observable under fixed-instance evaluation? (iii) How do SynSQL’s components affect generation quality? 
+
+4.1 Experimental Setup Datasets. We evaluate SynSQL on three widely used text-to-SQL benchmarks: Spider (Yu et al., 2018), BIRD (Li et al., 2023b), and Spider 2.0 (Lei et al., 2024). Spider features simple schemas, while BIRD includes complex queries with joins and nested subqueries. Spider 2.0-SQLite contains 135 enterprise-level problems requiring handling of complex schemas and multi-step queries. This enables comprehensive assessment across varying schema complexity. 
+
+Model Configuration. We instantiate SynSQL using a mix of proprietary and open-source language models, including GPT-4.1-mini, Gemini-2.5-Flash, Gemini-3-Flash, and Qwen-3-8B. The critic performs up to three refinement iterations and terminates early if the generated database achieves a quality score of 8.0 or higher (on a 10-point scale). As a baseline, we use a vanilla synthesizer that generates data in a single pass without schema reduction or critic feedback. This baseline is equivalent to SynSQL without schema selection, data validation, or iterative refinement, operating over the full schema with the same prompting strategy. 
+
+Text-to-SQL Systems. To evaluate the effectiveness of SynSQL-generated databases in distinguishing correct and incorrect queries, we use ten competitive text-to-SQL systems to produce candidate SQL queries: OmniSQL-32B (Li et al., 2025b), RSL-SQL + GPT-4o (Cao et al., 2024), Alpha-SQL + Qwen-32B (Li et al., 2025a), CSC-SQL + Qwen-32B (Sheng & Xu, 2025), Gemini-SQL (Multitask SFT + Gemini-2.5-Pro) (Pourreza & Kubik, 2025), 
+
+DIN-SQL (Pourreza & Rafiei, 2023), DAIL-SQL (Gao et al., 2023), Graphix-3B+PICARD (Li et al., 2023a), C3 + ChatGPT (Dong et al., 2023), and GPT 5.4 .
+
+Evaluation Metrics. We employ three complementary metrics to assess both the quality of the generated databases and their utility for evaluating text-to-SQL systems: 
+
+Success Rate (SR). SR measures the fraction of questions for which the gold SQL query pro-duces a non-empty result on the generated database. This indicates whether the synthesized data captures the semantic intent of the natural language question, as expressed by the gold query. Random or poorly aligned data often yields empty results, making SR a necessary but weak proxy for semantic grounding. 
+
+Execution Accuracy (EX). EX is the standard metric used in Spider and BIRD. It measures the fraction of questions for which the model-generated SQL query produces the same result as the gold SQL query when executed on a single database instance. EX characterizes model behavior under a fixed database, rather than serving as the primary comparison metric. 
+
+Compound Execution Accuracy ( EX c). EX c extends EX by requiring correctness across both the original benchmark database and the SynSQL-generated database. A prediction is counted as correct only if it produces the same result as the gold SQL query on both instances; otherwise, it is considered incorrect. Thus EX c measures robustness under data variation and is upper-bounded by EX on either database alone. 
+
+4.2 Robustness Under Data Variation 
+
+Tables 1, 2, and 3 show that requiring correctness across both the original and SynSQL-generated database instances leads to consistent and substantial performance drops across all models and datasets. On BIRD, compound execution accuracy ( EX c) decreases by 6-9% relative to the official execution accuracy, revealing errors that are not exposed under standard single-instance evaluation. Similar trends are observed on Spider and Spider 2.0, 5Preprint. confirming that this phenomenon is dataset-independent. This gap highlights a fundamental limitation of the commonly-used execution accuracy (EX): it evaluates correctness on a single data instance and can overestimate performance due to coincidental agreement. In contrast, EX c requires correctness across multiple semantically valid database instantiations, providing a stricter and more reliable measure of semantic correctness. Table 1: Drop in execution accuracy ( ∆EXc) relative to BIRD (Original). Rankings are shown per row (lower drop is better).                                    
+
+> Method OmniSQL RSL-SQL Alpha-SQL CSC-SQL Gemini-SQL BIRD (Original) 66.75 (5) 67.47 (4) 69.23 (3) 71.06 (2) 72.10 (1) Vanilla GPT-4.1-Mini -3.52 (5) -3.39 (4) -3.65 (3) -3.92 (2) -2.61 (1) Vanilla Gemini-2.5-Flash -3.13 (5) -2.93 (4) -3.06 (3) -3.52 (2) -2.28 (1) SynSQL (Qwen-3-8B) -7.56 (5) -6.39 (4) -7.63 (3) -6.70 (2) -5.48 (1) SynSQL (Gemini-2.5-Flash) -6.97 (5) -6.42 (4) -6.78 (3) -7.70 (2) -5.67 (1) SynSQL (GPT-4.1-Mini) -8.21 (5) -7.43 (4) -8.80 (3) -9.07 (2) -6.34 (1)
+
+Table 2: Drop in execution accuracy ( ∆EXc) relative to Spider (Original). Rankings are shown per row.                             
+
+> Method Graphix C3 DIN-SQL DAIL-SQL Spider (Original) 77.51 (4) 77.76 (3) 80.46 (2) 80.66 (1) Vanilla GPT-4.1-Mini -2.36 (3) -3.58 (4) -2.48 (2) -2.03 (1) Vanilla Gemini-2.5-Flash -2.46 (3) -2.52 (4) -2.80 (2) -1.94 (1) SynSQL (Qwen-3-8B) -3.14 (3) -6.10 (4) -3.44 (2) -3.00 (1) SynSQL (Gemini-2.5-Flash) -2.95 (3) -5.13 (4) -3.19 (2) -2.42 (1) SynSQL (GPT-4.1-Mini) -3.14 (3) -5.71 (4) -4.15 (2) -3.10 (1)
+
+Table 3: Drop in execution accuracy ( ∆EXc) relative to Spider 2.0-SQLite (Original).             
+
+> Method OmniSQL GPT 5.4 Spider 2.0 (Original) 12.59 (2) 40.00 (1) Vanilla GPT-4.1-Mini -1.48 (2) -8.15 (1) Vanilla Gemini-3-Flash -3.7 (2) -12.59 (1) SynSQL (GPT-4.1-Mini) -2.97 (2) -10.37 (1) SynSQL (Gemini-3-Flash) -5.18 (2) -14.07 (1)
+
+Performance Gap and Model ranking. 
+
+Model rankings remain largely stable on BIRD and Spider 2.0, although we observe significant changes in performance gaps be-tween models. However, on Spider even the ranking among models changes. This suggests that performance and ranking sta-bility is subject to change, with data varia-tion having a greater impact when compet-ing models exhibit similar performance on a single database instance. In such cases, evaluating across multiple database instances reveals finer-grained differences that are otherwise hidden. Under SynSQL, Graphix is ranked above C3 on Spider, reversing their order under the official evaluation and exposing errors masked by single-instance testing. 
+
+4.3 Quality of Synthesized Databases 
+
+SynSQL can also serve as a standalone data synthesizer when human-curated databases are not available. We therefore evaluate the quality of SynSQL-generated data by comparing it against both human-curated databases and vanilla LLM-based baselines. 
+
+Success Rate. As shown in Table 5 (Appendix), SynSQL achieves success rates of 82.07% on BIRD, 93.04% on Spider, and 80.0% on Spider 2.0, consistently outperforming vanilla baselines across all datasets and LLM families. Notably, on Spider, SynSQL even surpasses the original human-authored database (92.55%) when paired with Gemini-2.5-Flash and GPT-4.1-Mini. This improvement can be attributed to inconsistencies in the benchmark data, such as missing values and formatting artifacts (e.g., trailing spaces), which can lead 6Preprint. to unintended empty results during execution. By synthesizing clean and semantically aligned data, SynSQL mitigates these issues and better reflects the intent of the underlying queries. Illustrative examples of such inconsistencies are provided in Figures 18 and 19 in the Appendix. 
+
+Execution Accuracy. We further evaluate execution accuracy (EX) on each method’s gener-ated database (Table 5 in the Appendix). SynSQL yields EX values that are close to those on the original human-curated databases across BIRD, Spider, and Spider 2.0, while remaining consistently lower than vanilla baselines. Here, lower EX indicates a more discriminative evaluation setting. We observe higher EX for vanilla baselines, particularly on BIRD and Spi-der, indicating that their generated data fails to effectively discriminate between correct and incorrect queries. In contrast, SynSQL maintains high SR while producing more demanding databases, resulting in lower but more informative EX. Importantly, these differences are not due to invalid data: SynSQL-generated databases remain executable, structurally valid, and semantically supportive. Overall, this demonstrates that SynSQL enables more faithful and rigorous execution-based evaluation. 
+
+Structural Validity. Figure 4 (Appendix) presents the percentage of generated databases that adhere to schema constraints, including primary and foreign key integrity and table structure, are executable and have valid data. SynSQL achieves near-perfect validity (99% across all datasets), improving over vanilla LLM baselines by 30–33% on BIRD, 9–20% on Spider, and 18–25% on Spider 2.0. The gains are most pronounced on schema-complex datasets such as BIRD and Spider 2.0, highlighting the difficulty of maintaining inter-table dependencies without explicit schema-aware guidance. These results demonstrate that, with schema reduction and iterative refinement, LLMs can reliably generate data that respects both structural constraints and inter-table dependencies. Combined with strong SR and EX performance, this confirms that SynSQL produces databases that are not only semantically meaningful but also structurally sound. 
+
+4.4 Failure Analysis 
+
+Despite strong overall performance, a systematic analysis reveals recurring failure modes that expose fundamental limitations of LLM-based structured data generation. To understand where synthesis fails to capture the structural or semantic cues of the NL question, we analyzed success rate failures on a random sample of 500 BIRD questions. Of these, 84 cases yield empty results when executing the gold query on the SynSQL-generated database. Figure 2(a) summarizes the breakdown of these failures and highlights two primary sources of error. 
+
+Adherence to Schema Constraints. In these cases, the schema selection omits one or more tables or columns required by the gold query, preventing the synthesized database from supporting the intent of the question. For example, if the gold query references a player 
+
+table but the schema selector fails to include it in the reduced schema, the generated database will lack the necessary structure to yield a non-empty result. These failures highlight the difficulty of high-recall schema selection under complex schemas with many tables and columns. 
+
+Semantic Failures. Here the generated data is structurally valid and executable, but the instantiated values do not align with the expectations of the gold query. Common issues are case mismatches (e.g., owner vs. OWNER ), differences in value granularity (e.g., Prague 1 vs. Prague ), and inconsistencies with benchmark-specific conventions. Among the 44 semantic failures, 27 are attributable to SynSQL generation, while the remaining 17 stem from ambiguous or inconsistent question–query pairs in the BIRD dev set. These cases illustrate the difficulty of grounding generated values to a single “correct” interpretation when the question or gold query is underspecified. Overall, these failure modes reveal two key challenges in question-conditioned database synthesis: (i) achieving high-recall schema selection without access to gold queries, and (ii) 7Preprint. Schema  
+
+> Omission
+> 47.6%
+> (40)
+> Intent
+> Ambiguity
+> 20.2%
+> (17)
+> Intent
+> Misalignment
+> 32.1%
+> (27)
+> 012345678910
+> Hint Alignment
+> Key Integrity
+> Schema Coverage
+> Complexity
+> Variety
+> Relevance
+> +0.65
+> +0.72
+> +0.83
+> +0.70
+> +0.91
+> Spider
+> 012345678910
+> Hint Alignment
+> Key Integrity
+> Schema Coverage
+> Complexity
+> Variety
+> Relevance
+> +1.20
+> +0.61
+> +0.87
+> +0.99
+> +0.94
+> +1.24
+> BIRD
+> (a) (b)
+> Initial
+> After Critic
+
+Figure 2: (a) Breakdown of failure cases (84 failures out of 500 BIRD dev questions). Schema selector failures: omitted tables/columns. Semantic failures: alignment mismatches and NL ambiguity. (b) 
+
+Impact of the critic component on each of the five data quality criteria in SynSQL, using Gemini-2.5-Flash on Spider and BIRD dev sets. Spider results exclude Hint Alignment as evidence/hint entries are not present in Spider. 
+
+ensuring consistent semantic grounding of values (e.g., case, format, granularity) under database-specific conventions. While LLMs can generate plausible relational data, precise semantic control and constraint adherence under complex schemas remain challenging. Improving controllability and constraint-aware generation is an important direction for future work. For detailed examples and further discussion, see Appendix A.5. 
+
+4.5 Ablation Studies 
+
+We conduct ablation studies to quantify the contribution of key components in SynSQL and to better understand the trade-offs underlying its design.    
+
+> GPT-4.1-Mini
+> GPT-4.1-Mini (w/o Critic)
+> Gemini-2.5-Flash
+> Gemini-2.5-Flash (w/o Critic)
+> Qwen-3-8B
+> Qwen-3-8B (w/o Critic)
+> 65
+> 70
+> 75
+> 80
+> 85 82.07 82 80.57
+> 78.03
+> 73.6
+> 67.86
+> Success Rate (%)
+
+Figure 3: Impact of the critic component on success rate (%) of SynSQL with three different LLMs on the BIRD dev set. 
+
+Effect of the critic. As illustrated in Figure 3, the critic component has a consistent and often substantial impact on success rate across LLMs on the BIRD dev set. Incorporating the critic improves performance for all mod-els, with the largest gain observed for Qwen-3-8B (from 67.86% to 73.60%). The improvement is more modest for GPT-4.1-Mini, which already performs strongly, but the critic still contributes to more stable and reliable outcomes. These results highlight the critic’s role in refining synthetic data through it-erative feedback. By enforcing align-ment with question intent, schema con-straints, and data diversity, the critic guides the synthesizer toward more ac-curate and executable outputs. This effect is particularly pronounced for smaller or less capable models, which benefit more from corrective feedback. To further analyze this effect, Figure 2(b) breaks down the critic’s contributions across its evaluation criteria, including hint alignment, key integrity, schema coverage, data complex-ity, data variety, and relevance. Improvements are observed across all dimensions on both Spider and BIRD, indicating that the critic enhances both semantic coherence and diversity 8Preprint. of the generated databases. Additional results on compound execution accuracy ( EX c) and qualitative examples of critic feedback are provided in Appendix A.7. 
+
+Effect of Schema Selection. Table 4 shows the effect of schema selection on performance. The SynSQL method with ensemble-expansion outperforms all ablated versions, confirming that both phases contribute meaningfully to success rate, especially on BIRD, where complex schemas increase the difficulty of accurate column selection. Using the oracle schema yields highest success rate, indicating further improvements in schema selection could enhance performance. We also observe that the average column count selected by the schema selector is significantly lower than the full schema, demonstrating SynSQL’s ability to generate compact databases while maintaining high success rates. However, aggressive reduction risks omitting columns required by gold queries, causing otherwise correct queries to fail. This highlights the inherent tension between minimizing schema complexity and preserving query executability. Despite this limitation, SynSQL’s ensemble-expansion strategy achieves a balance that maintains high success rates while generating significantly more compact databases than the full schema. As illustrated in Appendix Figures 16 and 17, these compact synthetic databases are easier to inspect and validate, facilitating future directions such as human-in-the-loop evaluation and generating expected outputs via table reasoning. Table 4: Ablation study on schema selection in SynSQL. We report success rate (SR) and average column count (CC) selected by the schema selector on the BIRD and Spider dev sets. All variants use GPT-4.1-Mini as both the base model and the critic. SynSQL w Oracle Schema assumes perfect schema recall and serves as an upper bound on performance under ideal schema selection.                          
+
+> BIRD Spider Method SR (%) CC SR (%) CC SynSQL w Oracle Schema 91.46 4.71 94.58 2.85 SynSQL 82.07 8.37 93.04 6.71 SynSQL w/o Expansion 79.53 5.42 92.75 3.92 SynSQL w/o Ensemble-Expansion 77.38 4.99 91.88 3.56 SynSQL w/o Schema Selection (Full-Schema) 71.25 75.56 92.94 24.55
+
+## 5 Conclusion 
+
+We introduced S YN SQL, a framework for synthesizing relational databases from natural lan-guage questions and schema, and showed that database generation provides a powerful lens for evaluating text-to-SQL systems. Our results demonstrate that standard single-instance evaluation substantially overestimates performance: when evaluated across structurally valid database variations, all models exhibit consistent drops and, in some cases, changes in ranking. Beyond evaluation, our findings highlight both the capabilities and limita-tions of LLMs in structured generation. While LLMs can produce executable, structurally valid, and semantically aligned relational data, failures in schema adherence and semantic grounding reveal challenges in controllability, particularly under complex schemas and ambiguous query intent. This positions relational data synthesis as a useful testbed for studying structured reasoning in LLMs. Overall, question-conditioned database synthesis offers a new framework for studying evaluation, controllability, and robustness in large language models. Our work suggests several directions for future research. First, synthesis without gold queries enables test-time evaluation : in real-world settings without annotations, model-generated queries can be validated against synthesized databases to ensure semantic sup-port. Developing stronger evaluation criteria, e.g., consistency across diverse synthesized databases or adversarial data generation, is an important next step. Second, improving con-trollability remains a key challenge, as does extending synthesis to more complex settings such as multi-database scenarios and interactive workflows. 9Preprint. 
+
+## References 
+
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, et al. Program synthesis with large language models. arXiv preprint arXiv:2108.07732 , 2021. Zhenbiao Cao, Yuanlei Zheng, Zhihao Fan, Xiaojin Zhang, Wei Chen, and Xiang Bai. Rsl-sql: Robust schema linking in text-to-sql generation. arXiv preprint arXiv:2411.00073 , 2024. Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde De Oliveira Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg Brockman, et al. Evalu-ating large language models trained on code. arXiv preprint arXiv:2107.03374 , 2021. Yuetang Deng, Phyllis Frankl, and David Chays. Testing database transactions with agenda. In Proceedings of the 27th international conference on Software engineering , pp. 78–87, 2005. Xuemei Dong, Chao Zhang, Yuhang Ge, Yuren Mao, Yunjun Gao, Jinshu Lin, Dongfang Lou, et al. C3: Zero-shot text-to-sql with chatgpt. arXiv preprint arXiv:2307.07306 , 2023. Dawei Gao, Haibin Wang, Yaliang Li, Xiuyu Sun, Yichen Qian, Bolin Ding, and Jingren Zhou. Text-to-sql empowered by large language models: A benchmark evaluation. arXiv preprint arXiv:2308.15363 , 2023. Yang He, Pinhan Zhao, Xinyu Wang, and Yuepeng Wang. Verieql: Bounded equivalence verification for complex sql queries with integrity constraints. Proceedings of the ACM on Programming Languages , 8(OOPSLA1):1071–1099, 2024. Jonathan Herzig, Pawel Krzysztof Nowak, Thomas M ¨uller, Francesco Piccinno, and Julian Eisenschlos. Tapas: Weakly supervised table parsing via pre-training. In Proceedings of the 58th annual meeting of the association for computational linguistics , pp. 4320–4333, 2020. Yue Huang, Siyuan Wu, Chujie Gao, Dongping Chen, Qihui Zhang, Yao Wan, Tianyi Zhou, Jianfeng Gao, Chaowei Xiao, Lichao Sun, et al. Datagen: Unified synthetic dataset generation via large language models. arXiv preprint arXiv:2406.18966 , 2024. Rocky Klopfenstein, Yang He, Andrew Tremante, Yuepeng Wang, Nina Narodytska, and Haoze Wu. Spotit: Evaluating text-to-sql evaluation with formal verification. arXiv preprint arXiv:2510.26840 , 2025. Fangyu Lei, Jixuan Chen, Yuxiao Ye, Ruisheng Cao, Dongchan Shin, Hongjin Su, Zhaoqing Suo, Hongcheng Gao, Wenjing Hu, Pengcheng Yin, et al. Spider 2.0: Evaluating language models on real-world enterprise text-to-sql workflows. arXiv preprint arXiv:2411.07763 ,2024. Boyan Li, Jiayi Zhang, Ju Fan, Yanwei Xu, Chong Chen, Nan Tang, and Yuyu Luo. Alpha-sql: Zero-shot text-to-sql using monte carlo tree search. arXiv preprint arXiv:2502.17248 , 2025a. Haoyang Li, Shang Wu, Xiaokang Zhang, Xinmei Huang, Jing Zhang, Fuxin Jiang, Shuai Wang, Tieying Zhang, Jianjun Chen, Rui Shi, et al. Omnisql: Synthesizing high-quality text-to-sql data at scale. arXiv preprint arXiv:2503.02240 , 2025b. Jinyang Li, Binyuan Hui, Reynold Cheng, Bowen Qin, Chenhao Ma, Nan Huo, Fei Huang, Wenyu Du, Luo Si, and Yongbin Li. Graphix-t5: Mixing pre-trained transformers with graph-aware layers for text-to-sql parsing. In Proceedings of the AAAI conference on artificial intelligence , volume 37, pp. 13076–13084, 2023a. Jinyang Li, Binyuan Hui, Ge Qu, Jiaxi Yang, Binhua Li, Bowen Li, Bailin Wang, Bowen Qin, Ruiying Geng, Nan Huo, et al. Can llm already serve as a database interface? a big bench for large-scale database grounded text-to-sqls. Advances in Neural Information Processing Systems , 36:42330–42357, 2023b. Yuanzhi Li, S ´ebastien Bubeck, Ronen Eldan, Allie Del Giorno, Suriya Gunasekar, and Yin Tat Lee. Textbooks are all you need ii: phi-1.5 technical report. arXiv preprint arXiv:2309.05463 ,2023c. 10 Preprint. Siyi Liu, Yujia Zheng, and Yongqi Zhang. Structsynth: Leveraging llms for structure-aware tabular data synthesis in low-data regimes. arXiv preprint arXiv:2508.02601 , 2025. Anna Mitsopoulou and Georgia Koutrika. Analysis of text-to-sql benchmarks: limitations, challenges and opportunities. In Proceedings 28th International Conference on Extending Database Technology, EDBT 2025 , pp. 199–212. OpenProceedings. org, 2025. Liangming Pan, Michael Saxon, Wenda Xu, Deepak Nathani, Xinyi Wang, and William Yang Wang. Automatically correcting large language models: Surveying the landscape of diverse self-correction strategies. arXiv preprint arXiv:2308.03188 , 2023. Mohammadreza Pourreza and Tom Kubik. How to get gemini to deeply understand your database. https://cloud.google.com/blog/products/databases/ how-to-get-gemini-to-deeply-understand-your-database , Nov. 14 2025. Accessed: 2025-11-27. Mohammadreza Pourreza and Davood Rafiei. Din-sql: Decomposed in-context learning of text-to-sql with self-correction. Advances in Neural Information Processing Systems , 36: 36339–36348, 2023. Cedric Renggli, Ihab F Ilyas, and Theodoros Rekatsinas. Fundamental challenges in evalu-ating text2sql solutions and detecting their limitations. arXiv preprint arXiv:2501.18197 ,2025. Timo Schick, Jane Dwivedi-Yu, Roberto Dess `ı, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. Toolformer: Language models can teach themselves to use tools. Advances in neural information processing systems , 36: 68539–68551, 2023. Lei Sheng and Shuai-Shuai Xu. Csc-sql: Corrective self-consistency in text-to-sql via rein-forcement learning. arXiv preprint arXiv:2505.13271 , 2025. Margus Veanes, Nikolai Tillmann, and Jonathan De Halleux. Qex: Symbolic sql query explorer. In International Conference on Logic for Programming Artificial Intelligence and Reasoning , pp. 425–446. Springer, 2010. Pengcheng Yin, Graham Neubig, Wen-tau Yih, and Sebastian Riedel. Tabert: Pretraining for joint understanding of textual and tabular data. In Proceedings of the 58th annual meeting of the association for computational linguistics , pp. 8413–8426, 2020. Tao Yu, Rui Zhang, Kai Yang, Michihiro Yasunaga, Dongxu Wang, Zifan Li, James Ma, Irene Li, Qingning Yao, Shanelle Roman, et al. Spider: A large-scale human-labeled dataset for complex and cross-domain semantic parsing and text-to-sql task. arXiv preprint arXiv:1809.08887 , 2018. Ruiqi Zhong, Tao Yu, and Dan Klein. Semantic evaluation for text-to-sql with distilled test suites. In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP) , pp. 396–411, 2020. Ying Zhou, Xinyao Wang, Yulei Niu, Yaojie Shen, Lexin Tang, Fan Chen, Ben He, Le Sun, and Longyin Wen. Difflm: Controllable synthetic data generation via diffusion language models. In Findings of the Association for Computational Linguistics: ACL 2025 , pp. 20638– 20658, 2025. 11 Preprint. 
+
+## A Appendix 
+
+A.1 Schema Selection Algorithm Algorithm 1 Schema Selector for SynSQL 
+
+Require: Natural language question Q, full schema S, auxiliary knowledge K, model π 
+
+> 1:
+
+Ensure: Reduced schema Sreduced relevant to Q 
+
+> 2:
+
+Initialize Score ← ∅ 
+
+> 3:
+
+for temperature t in {0, 0.3, 0.7 } do  
+
+> 4:
+
+Query π with (Q, S, K) at temperature t to extract core elements  
+
+> 5:
+
+Score ← Score ∪ elements returned by π 
+
+> 6:
+
+end for  
+
+> 7:
+
+Query π for semantically related columns to Score  
+
+> 8:
+
+Saux ← related columns returned by π 
+
+> 9:
+
+Sreduced ← Score ∪ Saux  
+
+> 10:
+
+return Sreduced 
+
+A.2 Execution Accuracy (EX) Details 
+
+The main results table (Tables 1, 2, and 3) report compound execution accuracy ( EX c) on BIRD, Spider, and Spider 2.0. Here we provide the full normal execution accuracy (EX) breakdown for all three. 12 Preprint. Table 5: Execution accuracy (EX) on BIRD (a), Spider (b), and Spider 2.0-SQLite (c). SR: success rate (%); EX: execution accuracy measured on each method’s database. 
+
+(a) BIRD dev set. Method SR OmniSQL RSL-SQL Alpha-SQL CSC-SQL Gemini-SQL 
+
+EX EX EX EX EX BIRD (Original) 99.87 66.75 67.47 69.23 71.06 72.10 Vanilla GPT-4.1-Mini 69.43 80.51 81.68 82.00 82.20 84.68 Vanilla Gemini-2.5-Flash 67.14 79.53 80.31 78.42 80.64 82.86 SynSQL (Qwen-3-8B) 73.60 68.84 70.01 68.45 71.19 74.64 SynSQL (Gemini-2.5-Flash) 80.57 68.32 69.03 66.69 70.08 73.21 SynSQL (GPT-4.1-Mini) 82.07 65.71 67.54 67.20 68.12 73.14 
+
+(b) Spider dev set. Method SR Graphix C3 DIN-SQL DAIL-SQL 
+
+EX EX EX EX Spider (Original) 92.55 77.51 77.76 80.46 80.66 Vanilla GPT-4.1-Mini 91.88 79.88 79.78 82.85 83.07 Vanilla Gemini-2.5-Flash 82.59 81.14 82.79 83.08 84.24 SynSQL (Qwen-3-8B) 77.18 80.95 79.50 81.72 84.24 SynSQL (Gemini-2.5-Flash) 92.84 78.33 77.47 81.33 81.72 SynSQL (GPT-4.1-Mini) 93.04 77.95 76.02 79.79 81.24 
+
+(c) Spider 2.0-SQLite. Method SR OmniSQL GPT 5 
+
+EX EX Spider 2.0 (Original) 92.55 12.59 40.00 Vanilla GPT-4.1-Mini 63.70 31.85 53.33 Vanilla Gemini-3-Flash 75.56 25.19 50.37 SynSQL (GPT-4.1-Mini) 68.89 22.22 48.89 SynSQL (Gemini-3-Flash) 80.00 17.78 45.93 
+
+13 Preprint. 
+
+A.3 Relational Validity and Data Completeness Gemini 
+
+> 2.5-Flash
+> Qwen
+> 3-8B
+> GPT-4.1
+> mini
+
+70 
+
+75 
+
+80 
+
+85 
+
+90 
+
+95 
+
+100 
+
+> Relational Validity (%)
+
+BIRD 
+
+> Gemini
+> 2.5-Flash
+> Qwen
+> 3-8B
+> GPT-4.1
+> mini
+
+Spider 
+
+> GPT-4.1
+> mini
+> Gemini
+> 3-Flash
+
+Spider 2.0  
+
+> Vanilla SynSQL
+
+Figure 4: Relational validity and data completeness of SynSQL and Vanilla-generated databases. 
+
+A.4 Success Rates and Compound Execution Accuracy by Schema Complexity 
+
+We define schema complexity levels based on the number of columns involved in the gold SQL query. Specifically, we count the total number of columns across all tables referenced in each gold query; higher column counts generally correlate with more complex joins, filters, and reasoning steps. Based on the distribution of complexity levels in the BIRD dataset, we define three buckets: Low Complexity: Questions with a total column count of 1-15. 
+
+Medium Complexity: Questions with a total column count of 16-60. High Complexity: 
+
+Questions with a total column count of 61 or more. Low Medium High    
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Success Rate (%)
+> 87.16
+> 64.75
+> 36.15
+> 88.34
+> 78.46 76.99
+> GPT-4.1-mini Vanilla
+> SynSQL(GPT-4.1-mini)
+> Low Medium High
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Compound Execution Accuracy (%)
+> 69.59
+> 60.49
+> 54.93
+> 66.55
+> 57.47
+> 50.23
+> GPT-4.1-mini Vanilla
+> SynSQL(GPT-4.1-mini)
+
+Figure 5: Success rate and compound execution accuracy of SynSQL vs. GPT-4.1-Mini on BIRD dev set, broken down by schema complexity (Low: 1-15 columns, Medium: 16-60 columns, High: 61+ columns). 14 Preprint. As shown in Figure 5, SynSQL consistently outperforms vanilla GPT-4.1-mini. The perfor-mance gap in success rate widens as schema complexity increases, and SynSQL’s execution accuracy remains consistently lower than that of vanilla GPT-4.1-mini. 
+
+A.5 Additional Error Analysis and Examples (Success Rate) 
+
+This section provides detailed examples and extended discussion of the success-rate failure modes summarized in Section 4.4 (Figure 2). Of the 84 failed questions, 40 were due to schema selector failures. In these cases, schema reduction led to the omission of one or more tables or columns used in the gold query. This does not necessarily mean the generated data is meaningless; rather, the human annotator who wrote the gold query may have targeted different schema elements than the LLM. For example, in question 387 from the card games 
+
+database (Figure 6): Question : What are the cards for set OGW? State the colour for these cards.              
+
+> Evidence :set OGW refers to setCode = 'OGW'
+> Gold Query :SELECT id, colors FROM cards WHERE id IN (SELECT id FROM
+> set_translations WHERE setCode = 'OGW')
+
+Figure 6: An example of schema selection failure. The synthetic data omits the setCode column from 
+
+> set translations , leading to a failed query.
+
+SynSQL has generated data for the setCode column in cards , but omitted the setCode 
+
+column from set translations during schema selection. The gold query joins both tables on setCode , leading to failure. However, the synthetic data still contains valid setCode 
+
+values, just not in the joined table. This highlights the challenge of schema selection in open-ended text-to-SQL tasks, where multiple valid interpretations exist. The remaining 44 failures were due to misinterpretation of question intent. For example, in question 156 from the financial database (Figure 7): Question : Who is the owner of the account with the largest loan amount?                      
+
+> Evidence : N/A
+> Gold Query :SELECT T1.client_id FROM disp AS T1 INNER JOIN account AS T3 ON
+> T1.account_id = T3.account_id INNER JOIN loan AS T2 ON T3.account_id = T2.account_id
+> WHERE T1.type = 'OWNER' ORDER BY T2.amount DESC LIMIT 1
+
+Figure 7: Example of misinterpretation: the synthetic data contains values such as owner (lowercase) in the type column, while the gold query expects OWNER (uppercase). This case sensitivity mismatch leads to a failed query. 
+
+Here, the synthetic database reflects the casing found in the question or evidence, but the gold query expects a different case. Such mismatches between generated data and gold query expectations, especially regarding case sensitivity or value formatting, can result in lower success rates. Another example is question 90 from the financial database (Figure 8): 15 Preprint. Question : How many accounts who have region in Prague are eligible for loans?                    
+
+> Evidence :A3 contains the data of region
+> Gold Query :SELECT COUNT (T1.account_id) FROM account AS T1 INNER JOIN loan AS
+> T2 ON T1.account_id = T2.account_id INNER JOIN district AS T3 ON T1.district_id = T3.district_id WHERE T3.A3 = 'Prague'
+
+Figure 8: An example of misinterpretation due to synthetic data not matching gold query conditions. The synthetic data contains values that do not satisfy the gold query’s WHERE clause, leading to failure. 
+
+The gold query expects district.A3 = ’Prague’ , but the synthetic data contains values such as Prague 1 , Prague 2 , and Prague 3 . Here, the LLM generated region names with appended numbers, resulting in a mismatch with the gold query’s expected value. Some misinterpretations are due to misalignment between the question and the gold query in the BIRD dev set, rather than errors by SynSQL. For example, in question 803 from the 
+
+Superhero database (Figure 9): Question : What is the power ID of cryokinesis?        
+
+> Evidence :power ID refers to superpower.id; cryokinesis refers to power_name = 'cryokinesis'
+> Gold Query :SELECT id FROM superpower WHERE power_name = 'Cryokinesis'
+
+Figure 9: An example of misinterpretation due to inconsistencies between question/evidence and gold query in the BIRD dev set. The synthetic data aligns with the question, but not the gold query, leading to failure. 
+
+In this case, the question and evidence refer to cryokinesis (lowercase), while the gold query expects ’Cryokinesis’ (capitalized). The synthetic database contains power name = ’cryokinesis’ , resulting in a mismatch with the gold query and subsequently lower success rate. Similarly, in question 758, the question and evidence specify race = ’human’ , but the gold query expects race = ’Human’ . In question 415, the question and evidence use Status = ’legal’ , while the gold query expects Status = ’Legal’ . The synthetic data generated by SynSQL reflects the casing found in the question, leading to mismatches with the gold query. In summary, among the 44 misinterpretation cases, 17 stem from insufficient or ambiguous information in the BIRD dev set, while 27 are attributable to SynSQL’s generation errors. The following BIRD dev set questions could not be correctly handled by SynSQL due to a lack of necessary information in the dataset for generating appropriate synthetic data. Such cases are likely to be challenging for any text-to-SQL system: 22, 73, 180, 309, 415, 758, 769, 803, 815, 818, 871, 1194, 1336, 1472, 1491, 1499, and 1528. 
+
+A.6 Limitations 
+
+SynSQL demonstrates strong performance in generating synthetic databases for text-to-SQL evaluation, but it has limitations. The schema selection process may omit relevant tables or columns, leading to gold queries returning empty results. This remains an active area of research in text-to-SQL evaluation. The challenge is amplified in our data synthesis setting, where the absence of actual database contents and value-based retrieval mechanisms makes high-recall schema selection inherently difficult. However, several practical extensions 16 Preprint. could improve robustness while maintaining the minimalist design principle. First, imple-menting multi-hop schema traversal guided by LLMs could recover essential join paths and connector tables in complex schemas, adding minimal columns while significantly boosting recall. Second, employing ensemble methods across multiple LLMs could reduce interpretation variance and yield more stable column predictions. These approaches offer promising directions for addressing the remaining failure cases while preserving SynSQL’s core advantages. Additionally, SynSQL relies on the assumptions made by the large language models used. If the LLMs misinterpret the question intent or generate inconsistent data, this can lead to lower success rates. Incorporating additional constraints or validation steps during data generation could help mitigate this. 
+
+A.7 Analysis on Effect of Critic Component 
+
+The main body (Section 4.4, Figure 2(b)) describes the critic’s impact across the six data quality criteria. This section provides additional analysis and examples: compound exe-cution accuracy ablations, the critic’s role in avoiding oversimplified data patterns, and representative critic feedback. As shown in Figure 3, the critic component consistently improves SynSQL’s success rate across different LLMs on the BIRD dev set. The spider charts in Figure 2(a) (main body) illustrate the same breakdown by criteria. 
+
+Critic’s Role in Avoiding Oversimplified Data Patterns One potential limitation of LLM-based synthesis is the tendency to generate overly simplistic or repetitive data patterns, which could artificially inflate success rates without providing meaningful evaluation coverage. The critic component addresses this by explicitly evaluating data complexity and variety as core quality dimensions. This improvement is reflected in the lowering of compound execution accuracy ( EX c), which quantifies how well the synthetic database can distinguish between correct and incorrect SQL queries. As shown in Figure 10, the critic’s presence leads to lower EX c across all three LLMs, indicating that the synthetic data is more effective at differentiating between valid and invalid queries. This indicates that the critic component enhances not just semantic alignment with question intent, but also the fundamental ability to differentiate between correct and incorrect SQL queries, the core objective of robust evaluation databases.   
+
+> GPT-4.1-Mini
+> GPT-4.1-Mini (w/o Critic)
+> Gemini-2.5-Flash
+> Gemini-2.5-Flash (w/o Critic)
+> Qwen-3-8B
+> Qwen-3-8B (w/o Critic)
+> 40
+> 50
+> 60
+> 70
+> 58.54
+> 60.1 59.78 60.63
+> 59.19
+> 61.66
+> Compound EX (EX c)
+
+Figure 10: Impact of the critic component on compound execution accuracy ( EX c) of SynSQL for OmniSQL with three different LLMs on the BIRD dev set. Showing that the critic improves the database’s ability to distinguish between correct and incorrect SQL queries. 17 Preprint. 
+
+Feedbacks Through detailed analysis of critic feedback across our experimental runs, we observed consistent patterns in how the critic identifies and addresses data quality issues. The critic provides targeted feedback such as: figure 11 shows an example where the critic highlights deficiencies in data complexity and variety, prompting the synthesizer to regenerate synthetic data that better aligns with the question intent and enhances evaluation robustness. Question : In the race a driver set the lap record for the Austrian Grand Prix Circuit, how long 
+
+did he spent at the pit stop at that same race? 
+
+Evidence : lap record means the fastest time recorded which refers to time, how long spent at 
+
+pitstop refers to duration 
+
+Feedback :
+
+Add explicit marking or clearer linkage of the lap record in lapTimes, possibly by including 
+
+multiple laps per driver and highlighting the fastest lap. Introduce edge cases such as multiple pit 
+
+stops per driver and multiple drivers with close lap times to increase complexity. Increase variety by 
+
+adding more races, circuits, and drivers to better simulate real-world data. 
+
+Figure 11: Example of critic feedback highlighting deficiencies in data complexity and variety, prompting regeneration of synthetic data to better align with question intent and evaluation robust-ness. 
+
+The critic also frequently identifies key integrity violations, such as non-unique primary keys or referential integrity breaches. Figure 12 illustrates an example where the critic detects foreign key violations, leading to regeneration that enforces these constraints and ensures schema integrity. Question : What is the total amount of Community College District closure in 1989 in the city 
+
+of San Francisco? 
+
+Evidence : N/A 
+
+Feedback :
+
+Ensure all CDSCode values in "schools" exist in "frpm" and "satscores" to maintain foreign key 
+
+integrity. 
+
+Increase complexity by including more diverse DOCType values and closure scenarios. 
+
+Add more variety in StatusType or closure reasons to enrich the dataset. 
+
+Figure 12: Example of critic feedback highlighting issues in foreign key integrity, leading to regenera-tion that enforces schema integrity. 
+
+More examples of critic feedback are shown in Figures 13 and 14, demonstrating the critic’s consistent role in identifying and rectifying data quality problems. 18 Preprint. Question : How many patients with a normal level of complement 3 have a P pattern observed  
+
+> in the sheet of ANA examination?
+> Evidence :normal level of complement 3 refers to C3 > 35; have a P pattern observed in the
+> sheet of ANA examination refers to ANA Pattern = 'P'; Should compute the number of distinct
+> ones
+> Feedback :
+> Adjust the 'C3' values in the 'Laboratory' table to better reflect the "normal level of complement 3
+> refers to C3 > 35" hint. Ensure a good mix of values both above and below 35, with a clear
+> distinction for "normal" cases. For example, include more values significantly above 35 for
+> "normal" cases, and values significantly below 35 for "abnormal" cases.
+
+Figure 13: An example of critic feedback Question : Which country is the oldest driver from?  
+
+> Evidence :date of birth refers to drivers.dob; The larger the birthday value, the younger the
+> person is, and vice versa
+> Feedback :
+> Increase the variety and range of birth dates to better highlight the oldest driver and include edge
+> cases such as multiple drivers born on the same day or very close dates. Add explicit foreign key
+> relationships or at least ensure driverId is consistently referenced across tables to improve schema
+> integrity. Expand the drivers table with more entries and nationalities to increase variety and
+> complexity. Although lapTimes and results are less relevant, adding meaningful data or
+> relationships could improve overall schema coverage and complexity.
+
+Figure 14: An example of critic feedback 
+
+This systematic feedback mechanism ensures that subsequent iterations produce more robust test databases that can effectively distinguish between semantically correct and incorrect SQL queries. Overall, the critic’s feedback focuses on: (1) key integrity and schema coverage to ensure structural validity, (2) presence of edge cases and boundary values, (3) diversity in categorical attributes, (4) realistic distributions that reflect real-world data patterns while aligning with question intent, and (5) inclusion of potential query failure scenarios. This multi-dimensional assessment prevents the framework from converging on overly simplistic data that might mask SQL generation errors, ensuring that high success rates reflect genuine semantic alignment and increases the robustness of evaluation, rather than artificially accommodating weak queries. 
+
+A.8 Realism and Minimalism of Synthetic Databases 
+
+SynSQL-generated databases are not only realistic but also minimal and lightweight. This property is particularly valuable in scenarios where gold queries are unavailable, not only during synthesis but also for evaluation. For example, in production or cold-start settings, it is crucial to inspect and validate the generated database, either through human-in-the-loop processes or by generating expected outputs via table reasoning. The compactness of SynSQL databases facilitates such inspection and validation, making them practical for robust evaluation even when large-scale or gold-standard annotations are not accessible. 19 Preprint. We saw in Table 4 that in SynSQL we have an average of 8.37 columns for BIRD and 6.71 columns for Spider to answer a query, significantly fewer than the full schemas of 75.56 and 24.55 columns respectively. We see an example of this in question 1000 from the formula 1 
+
+database (see Figure 15), SynSQL generates a minimal database with only 2 tables and 9 columns, compared to the original database’s 13 tables and 94 columns. The synthetic database sufficiently covers the question and relevant edge cases while being just 20KB in size, whereas the original is 21,836KB, making SynSQL’s output much easier to inspect and validate. In contrast, synthetic databases generated by prior work such as TestSuiteAccuracy (TSA) often contain random values from fuzzing and are typically as large as the original databases. As illustrated in Figures 16 and 17, which show the entirety of data generated for this question by SynSQL, the synthetic data includes realistic values that closely match the question intent. Question : Which racetrack hosted the most recent race? Indicate the full location 
+
+Evidence : full location refers to location+country; most recent race = MAX(date) 
+
+Gold Query : SELECT  T1.location  FROM  circuits  AS  T1  INNER JOIN  races  AS  T2  ON 
+
+T1.circuitId = T2.circuitId  ORDER BY  T2.date  DESC LIMIT 1 
+
+Figure 15: An example from the formula 1 database (question 1000). 
+
+Moreover, SynSQL ensures that values within each row are meaningfully related and contextually accurate. For example, if a row in the races table has the year set to 2024 , all corresponding data in that row (such as race name or date) is consistent with that year. Similarly, in the circuits table, if the location is Monza , the country is set to Italy , reflecting the real-world fact that there is a Formula 1 Grand Prix held in Monza, Italy. This level of realism and consistency, both within rows and across related tables, is achieved by leveraging LLMs to generate data that maintains semantic coherence and factual alignment. raceID  year  circuitID  name  date                                                             
+
+> 101 2022 1British Grand Prix 2022-07-03
+> 102 2022 2Monaco Grand Prix 2022-05-29
+> 103 2022 3Japanese Grand Prix 2022-10-09
+> 104 2022 4United States Grand Prix 2022-10-23
+> 105 2022 5Italian Grand Prix 2022-09-11
+> 106 2023 1British Grand Prix 2023-07-09
+> 107 2023 2Monaco Grand Prix 2023-05-28
+> 108 2023 3Japanese Grand Prix 2023-10-08
+> 109 2023 4United States Grand Prix 2023-10-22
+> 110 2023 5Italian Grand Prix 2023-09-10
+> 111 2024 1British Grand Prix 2024-07-07
+> 112 2024 2Monaco Grand Prix 2024-05-26
+> 113 2024 3Japanese Grand Prix 2024-10-13
+> 114 2024 4United States Grand Prix 2024-10-27
+> 115 2024 5Italian Grand Prix 2024-09-08
+
+Figure 16: Generated synthetic table races for question 1000 from the formula 1 database. The synthetic data contains realistic values that align with the question intent. 
+
+20 Preprint. circuitID  name  location  country                
+
+> 1Silverstone Circuit Silverstone United Kingdom
+> 2Circuit de Monaco Monte Carlo Monaco
+> 3Suzuka Circuit Suzuka Japan
+> 4Circuit of the Americas Austin USA
+> 5Autodromo Nazionale Monza Monza Italy
+
+Figure 17: Generated synthetic table circuits for question 1000 from the formula 1 database. The synthetic data contains realistic values that align with the question intent. 
+
+A.9 Inconsistency Examples from Spider Dev Set 
+
+There are questions in the spider dev set that the gold query does not align with the content of original test databases. Below are some examples of such inconsistencies, which lead to the observed low success rates for the original Spider databases. SynSQL generates synthetic data that aligns with the question intent and recovers such inconsistencies. For example, in (Figure 18) the questions asks for the location and name for all stadiums with a capacity between 5000 and 10000. However, there are no such stadiums in the original database, leading to the gold query returning empty results. SynSQL generates synthetic data that includes stadiums within this capacity range. Another example is shown in (Figure 19), where the question asks for the city and country of the Alton airport. However, the original database flight 2 has the airport name listed as Alton , with a trailing space, leading to a mismatch with the gold query. SynSQL generates synthetic data that correctly matches the airport name as specified in the question. Question : Show location and name for all stadiums with a capacity between 5000 and 10000 
+
+Evidence : N/A 
+
+Gold Query : SELECT  LOCATION ,  name  FROM  stadium  WHERE  capacity  BETWEEN  5000 
+
+AND  10000 
+
+Figure 18: An example of inconsistencies between gold query and database contents in the Spider dev set. SynSQL aligns with the question, leading to recovery of such inconsistencies. Question : Which city and country is the Alton airport at? 
+
+Evidence : N/A 
+
+Gold Query : SELECT  City, Country  FROM  AIRPORTS  WHERE  AirportName  = "Alton" 
+
+Figure 19: An example of inconsistencies between gold query and database contents in the Spider dev set. SynSQL aligns with the question, leading to recovery of such inconsistencies. 
+
+21 Preprint. 
+
+A.10 Column Selection Prompt You are an expert data analyst. Your task is to carefully review the database schema, understand the question, and use the hint to determine which columns from which tables must be populated with synthetic data to fully support answering the question. 
+
+This task is for synthetic data generation, NOT for Text2SQL. In this context, RECALL IS MORE IMPORTANT THAN PRECISION. It is better to include more columns than to miss important ones. 
+
+Database Schema: 
+
+{DATABASE_SCHEMA} 
+
+This schema defines the database structure, including tables, columns, primary keys, foreign keys, and relevant relationships or constraints. 
+
+You can also rely on the following descriptions for the columns to better understand the nature of data that would be generated for them. 
+
+Column Descriptions: 
+
+{COLUMNS_DESCRIPTIONS} 
+
+Question: 
+
+{QUESTION} 
+
+Hint: 
+
+{HINT} 
+
+The hint is intended to guide your attention to the specific elements of the database schema that are essential for addressing the question accurately 
+
+Task: 
+
+Based on the database schema, question, and hint provided, your task is to determine the columns from tables that need to be populated with data to support the question. 
+
+You should also provide the foreign keys that are needed to potentially join the tables, in the context of the question. 
+
+For each of the selected columns, explain why exactly it is necessary to generate data for, in order to cover the question. Your explanation should be logical and concise, demonstrating a clear understanding of the database schema, the question, and the hint. 
+
+Please respond with a JSON object structured as follows: 
+
+```json 
+
+{{ 
+
+"chain_of_thought_reasoning": "Your reasoning for selecting the columns, be concise and clear.", 
+
+"table_name1": ["column1", "column2", ...], 
+
+"table_name2": ["column1", "column2", ...], 
+
+... 
+
+"foreign_keys": ["table_name1.column1 = table_name2.column2, ...] 
+
+}} 
+
+``` 
+
+Make sure your response includes the table names as keys, each associated with alist of column names that are necessary for generating synthetic data that would be enough to support the question. 
+
+For foreign keys, make sure you include foreign keys within tables that are needed to cover the possibility of join, IN CONTEXT OF THE QUESTION AND THE HINT. 
+
+For each aspect of the question, provide a clear and concise explanation of your reasoning behind selecting the columns. Only output a json as your response. 
+
+Figure 20: The prompt template used for column selection in the schema selector component of SynSQL. 
+
+22 Preprint. 
+
+A.11 Column Expansion Prompt You are an expert data analyst.  Your task is to analyze the provided database schema and a list of already selected columns, and identify the most semantically similar columns to the selected ones. 
+
+Database Schema: 
+
+{DATABASE_SCHEMA} 
+
+This schema defines the database structure, including tables, columns, primary keys, foreign keys, and relevant relationships or constraints. 
+
+You can also rely on the following descriptions for the columns to better understand the nature of the data that would be generated for them. 
+
+Column Descriptions: 
+
+{COLUMNS_DESCRIPTIONS} 
+
+Already Selected Columns: 
+
+{SELECTED_COLUMNS} 
+
+Task: 
+
+Based on the database schema, column descriptions, and the already selected columns, your task is to identify, AT MOST 3 of the most semantically similar columns, that are: 
+
+1. Semantically similar to the selected columns but in a different table (e.g. if Country.id is selected, then Match.country_id would be a similar column) 
+
+OR 
+
+2. Likely to contain data that would complement the selected columns 
+
+Please respond with a JSON object structured as follows: 
+
+```json 
+
+{{ 
+
+"chain_of_thought_reasoning": "Your reasoning for selecting additional columns, be concise and clear.", 
+
+"table_name1": ["additional_column1", "additional_column2"], 
+
+"table_name2": ["additional_column1"], 
+
+}} 
+
+``` 
+
+Make sure your response includes ONLY NEW columns that weren't in the original selection. Do not repeat columns that were already selected. 
+
+Your response should only include 3 columns in total (for all tables), NO MORE. So pick the most important ones. 
+
+For each additional column, briefly explain why you think it's similar or related to the already selected columns. 
+
+Only output a json as your response. 
+
+Figure 21: The prompt template used for column expansion in the schema selector component of SynSQL. 
+
+23 Preprint. 
+
+A.12 Data Synthesizer Prompt You are an expert data generator for SQL databases. Your task is to create realistic and challenging test data that will properly test a system's ability to answer complex questions. 
+
+For the given question, use the schema and hint to generate SQLite test data for the database. The schema identifies the specific tables and columns that are relevant to the question, and the hint provides guidance on how to structure the data to make the question answerable. 
+
+Use the following instructions for generating the test data: 
+
+1- Pay attention to the primary key and foreign key constraints to ensure data integrity. 
+
+2- Make sure the data includes edge cases and is challenging to answer the question. 
+
+3- Include a variety of data that covers different scenarios related to the question. 
+
+4- Generate enough data to make the question answerable but also challenging. 
+
+5- The data should be realistic and diverse. 
+
+6- Your response should follow the EXACT format of the example, where every line starts with INSERT. DO NOT group the insert statements and DO NOT put values on a different line than the INSERT statement. 
+
+7- IMPORTANT: For each INSERT statement, ensure the number of values EXACTLY matches the number of columns in the table. Count the columns carefully in the CREATE TABLE statement and provide exactly that many values in each INSERT statement. 
+
+{FEEDBACK_INSTRUCTION} 
+
+{ONE_EXAMPLE} 
+
+Schema of the database with question and hint: 
+
+Database: {DB_NAME} 
+
+Schema: {DATABASE_SCHEMA} 
+
+Question: {QUESTION} 
+
+Hint: {HINT} 
+
+Figure 22: The prompt template used for data synthesis component of SynSQL. 
+
+24 Preprint. 
+
+A.13 Data Critic Prompt You are a data critic agent designed to evaluate synthetic data for answering natural language questions. Your task is to analyze the generated data and determine if it is correct, sufficient, complex, and diverse enough to answer the question. 
+
+You should evaluate the data based on the following criteria: 
+
+1. Hint Alignment: Does the data follow the intent and details of the question hint? 
+
+2. Key Integrity: Does the data respect uniqueness and foreign key relationships in the schema? 
+
+3. Schema Coverage: Does the data include the relevant columns and relationships from the schema? 
+
+4. Complexity: Does the data include sufficient complexity and edge cases? 
+
+5. Variety: Is there enough variety in the data? 
+
+6. Relevance: Is the data directly related to answering the question? 
+
+{ONE_EXAMPLE} 
+
+Question: {QUESTION} 
+
+Database Schema:  {DATABASE_SCHEMA} 
+
+Hint: {HINT} 
+
+Generated Data:  {GENERATED_DATA} 
+
+Provide a detailed evaluation of the data based on the criteria of Hint Alignment, Key Integrity, Schema Coverage, Complexity, Variety, and Relevance. 
+
+For each criterion, provide a score from 1-10 and specific feedback on what aspects need improvement. 
+
+If there are issues such as incorrect data, violations of key integrity (e.g., non-unique or missing foreign keys), or other schema-related errors, provide clear and actionable feedback to help address and resolve these problems. 
+
+When providing feedback, consider that having more data is usually more beneficial, provided it does not distract from or obscure the key information required to answer the question. Try not to recommend reducing the data. 
+
+Finally, determine if the data meets the minimum quality criteria to answer the question effectively. 
+
+Figure 23: The prompt template used for data critic component of SynSQL. 
+
+25
