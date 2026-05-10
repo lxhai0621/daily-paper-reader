@@ -1,0 +1,1136 @@
+Title: CapsID: Soft-Routed Variable-Length Semantic IDs for Generative Recommendation
+
+URL Source: https://arxiv.org/pdf/2605.05096v1
+
+Published Time: Thu, 07 May 2026 01:15:10 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# CapsID: Soft-Routed Variable-Length Semantic IDs for Generative Recommendation 
+
+Wenzhuo Cheng ∗ Menghang Gong ∗ Qixin Guo Hang Zheng Zhaobin Yang Jianguo Lou Zhengwei Zheng †
+
+Abstract 
+
+Generative recommendation maps each item to a sequence of Semantic IDs (SIDs) and recasts retrieval as autoregressive token generation. In this paradigm the main bottleneck is the tokenizer rather than the Transformer: residual vector quantization with a hard nearest-neighbor assignment at every layer collapses multi-faceted item semantics at cluster boundaries and propagates early errors to later SID positions. A common workaround is to append a dense vector or attribute prefix to the SID, but this dual-representation design inflates inference cost and gives up the simplicity of a generative interface. We address the bottleneck at the tokenizer itself. C APS ID replaces hard residual quantization with capsule routing: at each layer an item probabilistically routes to several semantic capsules, the residual is updated by the routed reconstruction rather than by a single winning code, and the SID terminates once the active capsule’s confidence is high enough. On top of C APS ID, S EMANTIC BPE composes adjacent SID tokens into reusable subwords by combining their co-occurrence with their embedding compatibility. On Amazon Beauty, Sports, Toys, and a 35M-item proprietary industrial catalog, CAPS ID+S EMANTIC BPE improves Recall@10 by 9.6% on average over ReSID, the strongest single-representation baseline, and matches or exceeds a COBRA-style sparse-dense system on every public benchmark while running at 51% of its inference latency. Ablations show that soft routing, iterative agreement, and confidence-driven length each contribute independently, and the gains are largest on tail items where boundary semantics dominate. 
+
+1 Introduction 
+
+Generative recommendation (GR) has recently emerged as a unified alternative to retrieval-and-ranking pipelines: an item is converted into a short sequence of Semantic IDs (SIDs), and a sequence model generates the SID of the next item a user may consume [ 20 ]. This formulation is attractive because it turns retrieval into constrained generation, enables prefix sharing across semantically related items, and supports cold-start items through content-derived IDs [ 22 ]. However, it also shifts a large part of the recommendation problem to a tokenizer. If the tokenizer loses information, the generator can only learn to predict an impoverished target. This information bottleneck is now reasonably well-documented. UniRec formally argues that generative and discriminative recommenders can be equally expressive if the generator has access to complete item attributes, and that the observed gap mainly arises because SIDs cover only a small subset of those attributes [ 31 ]. GRID-style empirical studies further show that adding more residual quantization layers does not monotonically improve recommendation: deeper SID positions often amplify early quantization errors [ 11 ]. GLASS observes a related rank degradation phenomenon, 
+
+> ∗Equal contribution.
+> †Corresponding author. Correspondence to: <zhengwei.zzw@gmail.com>.
+> arXiv:2605.05096v1 [cs.IR] 6 May 2026
+
+where predicting the first SID token can worsen the rank of the true item before later tokens attempt to recover it [1]. Existing systems have taken two broad routes. One route patches the sparse SID after quantization: COBRA cascades a dense vector after the sparse ID and fuses beam scores with vector similarity [ 38 ]; UniRec prepends Chain-of-Attribute tokens; LIGER-style systems keep dense retrieval beside SID generation [ 37 ]. These methods are effective, but they make inference heavier and system design less generative. The other route is tokenizer-centric: it improves the SID itself so that the generated sequence preserves more item semantics before any dense or attribute patch is added. Along this line, TIGER establishes the RQ-VAE SID backbone [ 20 ], LETTER injects collaborative signals into the tokenizer [ 30 ], and ReSID replaces generic LLM embeddings with recommender-native representations and globally aligned quantization [ 15 ]—yet all of them keep the hard nearest-neighbor assignment at the heart of residual quantization, which is precisely the step we revisit. This distinction has practical consequences. Patch systems often require a second retrieval or re-ranking path, additional ANN infrastructure, and a carefully tuned fusion function; their benefits may diminish once the sparse ID is improved. A tokenizer-centric solution should instead satisfy three properties: (i) semantic adequacy , so that the SID stores more than a coarse bucket; (ii) predictive simplicity , so that the generator can still model the token sequence; and (iii) deployment compatibility ,so that constrained beam search and trie filtering remain valid [ 4 , 24 ]. These requirements rule out simply increasing codebook size or SID depth, because both actions enlarge the output space and worsen token predictability. CAPS ID replaces winner-take-all residual quantization with soft agreement among capsules. At each layer the item residual routes to several capsules, votes are aggregated, and the residual is updated by their weighted reconstruction. The norm of the selected capsule doubles as a confidence score, which decides whether another SID position is needed. S EMANTIC BPE sits on top: it composes adjacent SID tokens into reusable subwords, but only when both co-occurrence and embedding compatibility back the merge. This paper makes four contributions: 1. We organize recent SID systems into patch-based and tokenizer-centric designs and argue that a better tokenizer removes much of the need for dense or attribute patches. 2. We design C APS ID, an SID tokenizer built on capsule routing with soft residual assignment, iterative self-correction, and confidence-driven variable length. 3. We design S EMANTIC BPE, a differentiable subword module that scores merges by both co-occurrence and embedding compatibility, going beyond frequency-only behavior tokenization. 4. We conduct extensive experiments on three public benchmarks and a 35M-item industrial catalog, showing that C APS ID+S EMANTIC BPE consistently outperforms state-of-the-art tokenizer-centric and patch-route systems at a fraction of the cost, validating soft routing as a viable replacement for the hard residual assignment behind current SIDs. 
+
+2 Related Work 
+
+Semantic IDs for generative recommendation. TIGER introduced RQ-VAE SIDs for genera-tive retrieval and established the standard recipe of content encoding, residual quantization, and autoregressive SID prediction [ 20 ], building on vector quantization and neural discrete representation learning [ 7, 27 ]. LC-Rec improves code usage via Sinkhorn balancing [ 2 , 42 ]; LETTER injects collaborative signals into the tokenizer [ 30 ]; ETEGRec alternates tokenizer and generator optimiza-tion [ 16 ]; ADA-SID introduces multi-view adaptive quantization [ 34 ]; parallel industrial systems such as DAS [ 39 ] and Align3GR [ 40 ] further align SID learning with downstream ranking signals; CoFiRec explores coarse-to-fine tokenization at varying granularity [ 32 ]. These methods differ in supervision, initialization, and regularization, but share a hard assignment core. In contrast, C APS ID changes the assignment operator itself. 
+
+Industrial generative retrieval and constrained decoding. Large-scale generative recommenders emphasize that SID quality is only useful when the generated path can be decoded efficiently. Building on earlier generative retrieval with constrained decoding [ 3] and differentiable search indices [ 26 ], HSTU-style sequential transducers scale the backbone and demonstrate the value of strong sequence modeling [ 41 ], while OneRec-like systems and STATIC-style trie decoding show that valid-ID 2filtering is necessary for production latency [ 4 , 24 ]. These systems motivate our design constraint: CAPS ID must emit ordinary discrete IDs at inference. Routing is used to construct better SIDs, not to introduce a new inference-time retrieval interface. 
+
+Patching incomplete SID coverage. COBRA combines sparse SIDs with dense vectors and BeamFusion, obtaining strong public and industrial results at the price of a roughly two-stage retrieval path [ 38 ]. UniRec prepends attribute tokens and shows that attribute coverage can close much of the generative-discriminative gap [ 31 ]. LIGER-style hybrids keep a dense retrieval channel beside generative retrieval [ 37 ]. These results strongly support our motivation: the missing information exists, and the question is whether it should be patched after quantization or preserved inside the SID. 
+
+Differentiable, adaptive, and recommendation-native tokenizers. DIGER uses Gumbel-Softmax to make discrete SID learning differentiable [ 5], building on continuous relaxations for categorical variables [ 10 , 17 ]; SA 2CRQ truncates hard paths by entropy budgets for adaptive length [ 29 ]; ReSID argues that recommender-native representation learning and global quantization alignment are more important than generic LLM semantic embeddings [ 15 ]. Collision-aware approaches such as QuaSID and GR4AD further show that collisions are not merely an implementation detail but a ranking-quality bottleneck [ 9 , 35 ]. C APS ID is complementary: it uses soft routing as the native quantization primitive and variable length as an outcome of capsule confidence rather than a post-hoc truncation rule. 
+
+Dynamic codebooks and streaming systems. Recent dynamic-indexing systems such as MERGE monitor cluster occupation, item-to-cluster similarity, and cluster-to-cluster separation in streaming environments [ 36 ]. They point to an important evaluation lesson: a tokenizer should be judged not only by final Recall but also by geometry and occupancy diagnostics. We therefore include collision rate, code predictability, intra-code similarity, and routing convergence as first-class metrics rather than relegating them to implementation details. 
+
+Capsule routing and subword composition. Capsule networks model part-whole agreement through iterative routing [ 6, 21 ], and MIND applies dynamic routing to user multi-interest extrac-tion [ 14 ]. We transfer the same idea to item tokenization: capsules are no longer user-interest slots but semantic code candidates. For composition, BPE originated in neural machine translation as a subword segmentation method [ 23 ] and was popularized for general language modeling by Senten-cePiece [ 13 ]. ActionPiece extends this line to action sequences for generative recommendation [ 8]. SEMANTIC BPE differs by scoring merges with semantic compatibility as well as frequency. 
+
+Positioning. Table 1 positions C APS ID in the design space of recent SID tokenizers along five axes. To our knowledge, C APS ID is the only existing method that combines soft probabilistic assignment, iterative agreement, confidence-driven variable length, and semantic-aware composition, while still preserving a single discrete generative interface that is compatible with constrained beam search. Table 1: Design space of SID tokenizers for generative recommendation. “Soft assign.” =probabilistic capsule/component routing instead of argmax; “Iter. refine” =multiple agreement rounds at each layer; “Var. length” =item-dependent number of SID tokens; “Sub-word” =semantic-aware token merging; “Single-rep.” =emits only discrete IDs without a parallel dense channel.                                                                     
+
+> Method Soft assign. Iter. refine Var. length Sub-word Single-rep. TIGER [20] ✗✗✗✗✓
+> LC-Rec [42] ✗✗✗✗✓
+> LETTER [30] ✗✗✗✗✓
+> ETEGRec [16] ✗✗✗✗✓
+> ADA-SID [34] ✗✗✓✗✓
+> ActionPiece [8] ✗✗✗freq. only ✓
+> DIGER [5] Gumbel ✗✗✗✓
+> SA 2CRQ [29] ✗✗post-hoc ✗✓
+> ReSID [15] ✗✗✗✗✓
+> COBRA [38] ✗✗✗✗✗(+dense) UniRec-CoA [31] ✗✗✗✗✗(+attr.)
+> CAPS ID+S EMANTIC BPE (ours) routing Trounds confidence semantic ✓
+
+33 Method 
+
+Let xi ∈ Rd denote the representation of item i, constructed from content, collaborative, or multi-modal encoders depending on the dataset. The goal is to map xi into a variable-length SID si =(si, 1, . . . , s i,L i ) that is compact, predictive, and collision-resistant. Figure 1 summarizes the pipeline. End-to-End Pipeline       
+
+> Stage 1 : Tokenizer Training (offline) Stage 2 : Generator (online)
+> Item Encoder
+> text / image / behavior
+> xi∈Rd
+> CapsID
+> Soft Routing
+> Lmax =6, T=3
+> Var-Length SID
+> s1s2... s L<stop>
+> SemBPE
+> Subword Merge
+> AR Transformer
+> SASRec / T5-base
+> beam=50, trie
+> Next-Item SID
+
+CapsID — Soft Routing (one layer  l)            
+
+> rl-1
+> residual
+> ûl1
+> ûl2
+> ûl3
+> ûlK
+> ⋮
+> K votes Wlk rl-1 +b lk
+> Iterative
+> Routing
+> softmax c ik
+> squash & agree
+> × T=3 Capsule Outputs
+> ol1 ol2 ... o lK
+> Token Selection
+> si,l = argmax c ik
+> Soft Recon
+> õl= Σ c ik · o lk
+> Residual Update
+> rl= r l-1 −õl
+> Stop?
+> qi,l ≥ τ
+> ||r l|| ≤ ε
+> Yes : emit <stop>
+> No : layer l+1 ↻
+
+SemBPE — Differentiable Merge         
+
+> Input SID
+> sequence
+> s1s2s3s4...
+> Pair Scoring
+> πj= α·freq + (1-
+> α)·cos
+> (s 1, s 2)π=0.92
+> (s 2, s 3) π=0.45
+> (s 3, s 4) π=0.31
+> Gumbel-Softmax
+> Gate
+> differentiable (train)
+> argmax (infer) s3s4
+> kept
+> Composed
+> Subword SID
+> shorter & more predictable
+> s̃ 1,2
+> merged
+
+Figure 1: Overview of C APS ID+S EMANTIC BPE. Top: item features pass through a stack of capsule layers with confidence-driven early stopping, S EMANTIC BPE merges semantically compatible adjacent tokens, and an autoregressive Transformer generates the next item’s SID via trie-constrained beam search. Bottom left: inside one C APS ID layer, soft routing replaces hard arg max ; votes are reconciled over a few agreement iterations, and a stop gate fires when winner confidence is high or residual norm is small. Bottom right: SEMANTIC BPE scores SID pairs by a frequency–similarity mixture and merges them with a Gumbel-Softmax gate (trained) or arg max (inference), yielding reusable subword tokens. 
+
+Design desiderata. The tokenizer is designed around three invariants. First, the emitted represen-tation must remain a finite discrete sequence so that all existing constrained decoding machinery applies. Second, uncertainty should be represented before discretization, not only after decoding; otherwise all uncertainty has already been collapsed into a wrong token. Third, the tokenizer should expose interpretable diagnostics: routing weights reveal which semantic facets explain an item, capsule activation measures confidence, and residual norms measure unexplained information. These diagnostics are used in Section 4 to check whether improvements come from meaningful tokenization rather than from a larger output space. 
+
+3.1 Soft residual routing 
+
+At SID layer ℓ, we maintain Kℓ capsules. Capsule k has a pose transform Wℓk and bias bℓk . Given residual ri,ℓ −1 with ri, 0 = xi, each capsule produces a vote 
+
+ˆui,ℓk = Wℓk ri,ℓ −1 + bℓk . (1) Routing starts from logits a(0) 
+
+i,ℓk = 0 and iterates for T rounds: 
+
+c(t)
+
+i,ℓk = softmax k(a(t−1) 
+
+i,ℓk ), (2) 
+
+v(t)
+
+i,ℓ = X
+
+k
+
+c(t)
+
+i,ℓk ˆui,ℓk , (3) 
+
+o(t)
+
+i,ℓ = squash( v(t)
+
+i,ℓ ), (4) 
+
+a(t)
+
+i,ℓk = a(t−1) 
+
+i,ℓk + ˆ u⊤
+
+i,ℓk o(t)
+
+i,ℓ . (5) 4We use squash( z) = ∥z∥2 
+
+> 0.5+ ∥z∥2
+> z
+> ∥z∥
+
+, whose norm lies in [0 , 1) and is sensitive to small magnitudes. We also define per-capsule outputs oi,ℓk := squash(ˆ ui,ℓk ) that share the same nonlinearity but are computed independently for each capsule (used in the residual update below) and do not depend on the routing iteration t. The emitted token and confidence are 
+
+si,ℓ = arg max  
+
+> k
+
+c(T )
+
+> i,ℓk
+
+, qi,ℓ = max  
+
+> k
+
+c(T )
+
+> i,ℓk
+
+∥o(T ) 
+
+> i,ℓ
+
+∥. (6) The residual update is the part where soft routing departs from hard quantization: instead of subtract-ing only the winning capsule, we subtract the routed reconstruction, 
+
+ri,ℓ = ri,ℓ −1 − X
+
+> k
+
+c(T )
+
+> i,ℓk
+
+oi,ℓk . (7) Equation (7) (lines 9–11 of Algorithm 1) keeps the partial agreement with secondary capsules instead of throwing it away. A boundary item like a “travel cooking kit” no longer has to choose between travel and cooking; both facets contribute to its reconstruction, and only the unexplained part flows into the next layer’s residual. This is not the same as replacing arg max with a temperature-softmax, because the residual update itself uses the routed reconstruction, so deeper layers see a smaller and cleaner error signal. Two implementation details matter in practice. We ℓ2-normalize the item embedding before routing (line 1) so that high-norm items cannot dominate the agreement scores, and we keep capsule parameters separate at each depth so that early layers can specialize in coarse facets while later layers refine the residual. 
+
+3.2 Confidence-driven variable length 
+
+Fixed-length SIDs impose the same token budget on easy and ambiguous items. C APS ID stops when the residual has been sufficiently explained: 
+
+Li = min {ℓ : qi,ℓ ≥ τ or ∥ri,ℓ ∥2 ≤ ϵ or ℓ = Lmax } . (8) This design combines three forward stopping rules (a hard cap Lmax , residual-norm stopping, and confidence stopping, the early-exit clause at line 12 of Algorithm 1) with one training-time regularizer ,the length penalty Llen = Ei[Li] in Eq. (10) . Together these four safeguards prevent length explosion while addressing the GRID observation that blindly adding layers can hurt: uncertain items receive more steps only when their residual still contains useful signal, and confident items stop early. The stopping rule also changes the semantics of collisions. In a fixed-depth hard SID, two tail items that share all four positions are indistinguishable unless an artificial disambiguation token is appended. In C APS ID, two items may share the same argmax tokens but differ in routing weights and stopping confidence during tokenizer training; the learned generator sees a cleaner set of token targets because ambiguous items are encouraged to stop at stable prefixes rather than continue through low-confidence residual layers. This behavior is similar in spirit to controlled-collision variable-length methods, but it is obtained from the routing dynamics rather than from an external entropy budget. 
+
+3.3 SemanticBPE composition 
+
+Given the SID sequence from C APS ID, S EMANTIC BPE learns whether adjacent tokens should be merged into a reusable subword. For pair (sj , s j+1 ), we compute 
+
+m(sj , s j+1 ) = α dfreq( sj , s j+1 ) + (1 − α) cos( esj , esj+1 ), (9) where the second term prevents high-frequency but semantically unrelated pairs from being merged. A Gumbel-Softmax gate provides differentiability during training and hard merges at inference. This stage is intentionally lightweight: it improves sequence composition without changing the underlying item-to-SID assignment. We use a conservative merge policy. A pair is considered only if its semantic similarity exceeds a threshold θ, and the threshold is annealed from strict to moderate during training. This avoids the common BPE failure mode in recommendation: extremely frequent but semantically broad prefix pairs can dominate the vocabulary, increasing popularity bias. Since C APS ID already shortens easy items, S EMANTIC BPE is not used to aggressively compress every sequence; it is used to create reusable subwords for stable multi-token motifs. 53.4 Training objective 
+
+We use a two-stage protocol inspired by recommender-native tokenizer studies [ 15 ]. Stage 1 (tok-enizer pretraining) learns the item projection, capsule transforms {Wℓk }, and the S EMANTIC BPE merge MLP using only the tokenizer-side losses (reconstruction, spread, length, and a frequency-based BPE warm-up); the sequence generator is not trained. Stage 2 (generator adaptation) 
+
+freezes capsule centers and the S EMANTIC BPE merge MLP weights, then jointly trains the sequence generator together with low-rank routing adapters (rank r = 8 ) and a learnable scalar bias on the SEMANTIC BPE Gumbel gate. The final objective is 
+
+L = LNTP + λr Lroute + λsLspread + λlLlen + λbLBPE , (10) where LNTP is next-token cross entropy and is active only in Stage 2; Lroute = ∥xi − ˆxi∥22 and 
+
+Lspread are tokenizer losses with annealed margin from 0.2 to 0.9. This separation prevents the generator from chasing a moving SID target while keeping the routing mechanism slightly adaptive to downstream supervision. 
+
+Why two stages rather than full joint training? A fully joint objective lets the generator chase a moving target while the tokenizer changes the target sequence. ReSID and ETEGRec-style analyses suggest that this self-referential training can be unstable. We therefore first learn a recommendation-sufficient code geometry and then adapt the generator to that geometry. The second stage still allows limited routing adaptation, but capsule centers are frozen to preserve global code semantics and prevent late-stage collapse. 
+
+3.5 Theoretical analysis Algorithm 1 CAPS ID T OKENIZER FORWARD (one item) 
+
+Require: item embedding xi, capsule transforms {Wℓk , bℓk }, hyperparameters T, τ, ϵ, L max 
+
+Ensure: SID sequence si = ( si, 1, . . . , s i,L i ), confidences {qi,ℓ } 
+
+> 1:
+
+ri, 0 ← xi/∥xi∥ {ℓ2 normalize}  
+
+> 2:
+
+for ℓ = 1 , . . . , L max do  
+
+> 3:
+
+compute votes ˆui,ℓk = Wℓk ri,ℓ −1 + bℓk for all k {Eq. (1)}  
+
+> 4:
+
+initialize agreement logits a(0)  
+
+> i,ℓk
+
+← 0 
+
+> 5:
+
+for t = 1 , . . . , T do  
+
+> 6:
+
+c(t) 
+
+> i,ℓk
+
+← softmax k (a(t−1)  
+
+> i,ℓk
+
+); v(t) 
+
+> i,ℓ
+
+← P 
+
+> k
+
+c(t) 
+
+> i,ℓk
+
+ˆui,ℓk  
+
+> 7:
+
+o(t) 
+
+> i,ℓ
+
+← squash( v(t) 
+
+> i,ℓ
+
+); a(t) 
+
+> i,ℓk
+
+← a(t−1)  
+
+> i,ℓk
+
++ ˆ u⊤ 
+
+> i,ℓk
+
+o(t) 
+
+> i,ℓ
+> 8:
+
+end for  
+
+> 9:
+
+si,ℓ ← arg max k c(T ) 
+
+> i,ℓk
+
+; qi,ℓ ← c(T ) 
+
+> i,ℓs i,ℓ
+
+·∥ o(T ) 
+
+> i,ℓ
+
+∥ 
+
+> 10:
+
+oi,ℓk ← squash(ˆ ui,ℓk ); ri,ℓ ← ri,ℓ −1 − P 
+
+> k
+
+c(T ) 
+
+> i,ℓk
+
+oi,ℓk {Eq. (7)}  
+
+> 11:
+
+if qi,ℓ ≥ τ or ∥ri,ℓ ∥2 ≤ ϵ then  
+
+> 12:
+
+Li ← ℓ; break  
+
+> 13:
+
+end if  
+
+> 14:
+
+end for  
+
+> 15:
+
+return (si, 1, . . . , s i,L i ), (qi, 1, . . . , q i,L i )
+
+We give three results that connect the design choices in Sections 3.1–3.2 to the quantities reported in Section 4. 
+
+Proposition 1 (Soft-routing reconstruction is close to hard) . Let cℓk ∈ Rdc denote the k-th codebook center at depth ℓ and let si,ℓ = arg max k c(T ) 
+
+> i,ℓk
+
+be the argmax token. Define the hard and soft reconstructions 
+
+ˆxhard  
+
+> i
+
+=
+
+> Li
+
+X
+
+> ℓ=1
+
+cℓs i,ℓ , ˆxsoft  
+
+> i
+
+=
+
+> Li
+
+X
+
+> ℓ=1
+> Kℓ
+
+X
+
+> k=1
+
+c(T )
+
+> i,ℓk
+
+oi,ℓk .
+
+Assume ∥oi,ℓk − cℓk ∥2 ≤ δ and ∥cℓk ∥2 ≤ C for all ℓ, k . Then 
+
+ˆxsoft  
+
+> i
+
+− ˆxhard   
+
+> i2
+
+≤ Liδ + 2 C
+
+> Li
+
+X
+
+> ℓ=1
+
+ 1 − c(T )
+
+> i,ℓs i,ℓ
+
+, (11) 
+
+and consequently xi − ˆxsoft   
+
+> i2
+
+≤ xi − ˆxhard   
+
+> i2
+
++ Liδ + 2 C P
+
+> ℓ
+
+(1 − c(T ) 
+
+> i,ℓs i,ℓ
+
+).
+
+6Proof. For each layer ℓ, write wk := c(T ) 
+
+> i,ℓk
+
+≥ 0 with P 
+
+> k
+
+wk = 1 and s := si,ℓ . Then 
+
+X
+
+> k
+
+wkoℓk − cℓs 2
+
+= X
+
+> k
+
+wk
+
+ oℓk − cℓk 
+
+ + X
+
+> k
+
+wkcℓk − cℓs 2
+
+≤ X
+
+> k
+
+wkδ + X 
+
+> k̸=s
+
+wk(cℓk − cℓs ) 2
+
+≤ δ + 2 C(1 − ws),
+
+by the triangle inequality and ∥cℓk − cℓs ∥ ≤ 2C. Summing over ℓ and applying the triangle inequality once more gives Eq. (11). 
+
+Remark. The bound is tight when ws = 1 (hard regime) and δ = 0 , in which case the soft and hard reconstructions coincide. In our experiments the average winner mass ¯ws = 0 .86 (Figure 3(c)) and δ stays small after capsule warm-up, so soft routing reconstructs almost as well as hard but distributes mass to secondary capsules; that is why intra-code similarity rises in Table 7 without losing reconstruction quality. 
+
+Proposition 2 (Expected length upper bound) . Let gℓ(x) = Pr[ qi,ℓ ≥ τ or ∥ri,ℓ ∥2 ≤ ϵ | ℓ ≤ Li] be the per-layer stopping probability under the law of x. If inf x gℓ(x) ≥ g > 0 for all ℓ ≥ 2, then 
+
+E[Li] ≤ 1 + 
+
+> Lmax
+
+X
+
+> ℓ=2
+
+(1 − g)ℓ−2 ≤ min 
+
+
+
+Lmax , 1 + 1
+
+> g
+
+
+
+. (12) 
+
+Proof. Pr[ Li ≥ ℓ] = Pr[ no stop at layers 2, . . . , ℓ − 1] ≤ (1 − g)ℓ−2 for ℓ ≥ 2. Then E[Li] = 
+
+P 
+
+> ℓ≥1
+
+Pr[ Li ≥ ℓ] ≤ 1 + PLmax  
+
+> ℓ=2
+
+(1 − g)ℓ−2 ≤ 1 + 1 
+
+> g
+
+as a geometric tail. 
+
+Remark. Equation (12) guarantees that the four safeguards in Section 3.2 keep the expected length finite even before Lmax binds. Empirically (Figure 2(b)), the confidence and residual rules together account for the eventual stop of 90 –92% of items, and the dataset-level average length ¯L stays in 
+
+[3 .41 , 3.89] (Figure 2(a))—well below the hard cap Lmax = 6 .
+
+Proposition 3 (Routing as a single E-step of capsule EM) . At depth ℓ, model the residual ri,ℓ −1
+
+as an isotropic Gaussian mixture with Kℓ components of means {μℓk }, equal variance σ2I, and uniform mixing weights. Then the E-step posterior responsibility is 
+
+p(k | ri,ℓ −1) ∝ exp 
+
+
+
+− 12σ2 ˆui,ℓk − μℓk 
+
+> 2
+
+
+
+∝ exp 
+
+ 1 
+
+> σ2
+
+ˆu⊤
+
+> i,ℓk
+
+μℓk 
+
+
+
+, (13) 
+
+which has the same functional form as c(t) 
+
+> i,ℓk
+
+in Eqs. (2)–(5) once we identify the GMM means μℓk 
+
+with the agreement targets o(t−1)  
+
+> i,ℓ
+
+and absorb 1/σ 2 into the routing temperature. Remark. Iterating the routing recursion is therefore equivalent to running EM on this layer’s mixture with shared sufficient statistics across capsules. Standard convergence guarantees for EM with bounded log-likelihood [ 33 ] ensure monotonic improvement in routing agreement, which is consistent with the saturation observed at T ≥ 3 in Figure 3(c). The squash nonlinearity in Eq. (4) further bounds capsule outputs to the unit ball, preventing the variance from collapsing during iteration. 
+
+Computational complexity. Tokenizer training costs O(N L max K T d d c) where N is the catalog size and K = max ℓ Kℓ (Algorithm 1, lines 3–9). Inference (lines 10–13) is dominated by beam search at O(B ¯L|V |), with ¯L ≈ 3.6 for C APS ID versus ¯L = 4 for fixed-length baselines, so the per-beam step count is roughly 10% shorter; the residual routing and S EMANTIC BPE gate recover a small constant so the net cost is 1.05 ×–1.08 × TIGER in Table 4, rather than the 2.10 × incurred by the dense-patch route. 
+
+4 Experiments 
+
+We answer four questions. (Q1) Does soft routing improve recommendation accuracy over hard residual quantization at the same SID budget? (Q2) Does a routed-SID generator close the gap to dense-patch systems without inheriting their inference cost? (Q3) Which design choices (soft residual update, iterative agreement, confidence-driven length, or semantic composition) contribute most? 
+
+(Q4) Do the gains generalize to tail items and large catalogs where collisions and length budgets matter most? 74.1 Setup Datasets. We use the public benchmarks standard in generative recommendation: Amazon Beauty, Sports, and Toys [ 18 ], all under leave-one-out evaluation with 5-core filtering. For scale analysis, we further evaluate on a 35M-item proprietary industrial dataset with multi-modal item embeddings (text, image, behavior) provided by a large-scale social media platform. Dataset statistics appear in Table 2. Table 2: Datasets used in the evaluation. Amazon datasets follow 5-core filtering with leave-one-out splitting. The proprietary industrial dataset uses a 35M-item catalog with multi-modal item features.                     
+
+> Dataset Users Items Interactions Avg. length Beauty 22,363 12,101 198,502 8.9 Sports 35,598 18,357 296,337 8.3 Toys 19,412 11,924 167,597 8.6 Industrial (ours) 8.6M 35.8M 331.1M 38.5
+
+Baselines. We compare with TIGER, LC-Rec, LETTER, ETEGRec, ADA-SID, ActionPiece, COBRA, UniRec-style Chain-of-Attribute, DIGER, SA 2CRQ, and ReSID. All methods share the same SASRec [ 12 ]/T5-style [ 19 ] generator and beam search protocol when possible; dense patch variants use a COBRA-style BeamFusion path. The sequential recommendation backbone follows the convention in SASRec [12] and BERT4Rec [25]. 
+
+Metrics. We report Recall@ k and NDCG@ k under full-corpus ranking, using k ∈ { 5, 10 } on the public benchmarks and k ∈ { 50 , 100 } on the 35M-item industrial catalog, where the larger retrieval horizon reflects production deployment practice. Tokenizer quality is measured by: (i) 
+
+Collision rate = 1 − |{ si : i ∈ I}| /N , the fraction of items that do not receive a unique SID (equivalently, 1 minus the uniqueness rate used in industrial SID evaluations [ 9, 36 ]); (ii) Code utilization = |{ k : ∃i, k ∈ si}| / P 
+
+> ℓ
+
+Kℓ, the fraction of codebook entries used at least once; (iii) Gini coefficient over codebook usage frequencies (lower is more uniform); (iv) Intra-code similarity 
+
+= mean cos( xi, xj ) over item pairs sharing the same first SID token; (v) Code predictability (CodeRecall@ M ) = Pr[ˆ stop-M ∋ s⋆i, 1], the probability that the ground-truth first SID token of the next item is in the top-M predictions of a SASRec generator trained on the SID sequences (with M = 50 
+
+as default); (vi) head/torso/tail Recall@10, average SID length ¯L, and normalized inference cost. All public-benchmark numbers are mean over three random seeds with standard deviation reported either in tables ( ± ) or as error bars in figures; the 35M-item industrial run reports a single deterministic value. 
+
+Fairness controls. All SID methods are evaluated with the same item encoder, generator architec-ture, beam size, and invalid-ID filtering. For methods that require additional information, such as UniRec attributes or COBRA dense vectors, we count their inference cost separately and mark them with †. This prevents a patch system from being compared to a single-SID system as if both used the same retrieval budget. 
+
+4.2 Main results (Q1) 
+
+Table 3 compares C APS ID against eleven baselines covering hard-SID tokenizers (TIGER through ReSID) and patch-route systems (COBRA, UniRec-CoA). C APS ID consistently improves over the strongest single-representation baseline (ReSID) by 4.9% /6.7% /2.2% on Beauty/Sports/Toys in Recall@10, and adding SEMANTIC BPE pushes the gain to 8.9% /11 .0% /8.8% . CAP -
+
+> S
+
+ID+S EMANTIC BPE exceeds COBRA on every metric across all three datasets without paying its extra dense-vector inference cost. 
+
+Takeaways. The largest gap in the ranking is between hard-SID tokenizers and C APS ID: replacing 
+
+arg max with soft routing gives a 4–7% relative R@10 gain over ReSID. C APS ID alone already ex-ceeds COBRA on R@10 across all three datasets while emitting only a single discrete representation. Adding S EMANTIC BPE gives the best overall score on every dataset, with the largest relative gain over ReSID on Sports ( +11 .0% ) and the smallest on Beauty ( +8 .9% ). COBRA’s dense-vector path 8Table 3: Main results on Beauty/Sports/Toys: Recall@ k and NDCG@ k for k ∈ { 5, 10 } (mean over three seeds). Best is in bold, second best is underlined. † marks patch-route methods that consume extra dense or attribute information at inference time.                                                                                                                                                                           
+
+> Beauty Sports Toys Method R@5 R@10 N@5 N@10 R@5 R@10 N@5 N@10 R@5 R@10 N@5 N@10 TIGER 0.0454 0.0648 0.0321 0.0384 0.0264 0.0400 0.0181 0.0225 0.0521 0.0712 0.0371 0.0432 LC-Rec 0.0478 0.0675 0.0334 0.0397 0.0276 0.0417 0.0188 0.0233 0.0540 0.0734 0.0384 0.0447 LETTER 0.0500 0.0708 0.0340 0.0406 0.0288 0.0435 0.0198 0.0244 0.0547 0.0741 0.0389 0.0452 ETEGRec 0.0513 0.0725 0.0348 0.0415 0.0294 0.0444 0.0201 0.0249 0.0560 0.0756 0.0397 0.0460 ADA-SID 0.0524 0.0740 0.0355 0.0422 0.0302 0.0456 0.0206 0.0254 0.0566 0.0762 0.0401 0.0465 ActionPiece 0.0553 0.0775 0.0379 0.0424 0.0330 0.0500 0.0224 0.0264 0.0559 0.0760 0.0398 0.0463 DIGER 0.0535 0.0752 0.0362 0.0431 0.0306 0.0463 0.0210 0.0258 0.0572 0.0771 0.0407 0.0472 SA 2CRQ 0.0520 0.0732 0.0352 0.0419 0.0298 0.0451 0.0203 0.0252 0.0562 0.0758 0.0399 0.0462 ReSID 0.0548 0.0770 0.0372 0.0438 0.0314 0.0475 0.0215 0.0266 0.0583 0.0786 0.0414 0.0481 COBRA †0.0537 0.0725 0.0395 0.0456 0.0305 0.0434 0.0215 0.0257 0.0619 0.0781 0.0462 0.0515 UniRec-CoA †0.0540 0.0763 0.0368 0.0434 0.0316 0.0478 0.0217 0.0268 0.0596 0.0802 0.0422 0.0491 CAPS ID 0.0574 0.0808 0.0398 0.0460 0.0337 0.0507 0.0229 0.0281 0.0602 0.0803 0.0432 0.0498 CAPS ID+S EMANTIC BPE 0.0594 0.0839 0.0411 0.0477 0.0351 0.0527 0.0237 0.0290 0.0636 0.0855 0.0465 0.0528
+
+is particularly helpful on Toys (NDCG@10 of 0.0515 vs ReSID’s 0.0481 ), reflecting the broader item vocabulary; C APS ID+S EMANTIC BPE closes that gap without a dense retrieval channel. 
+
+Statistical significance. We performed paired two-sided t-tests across the three seeds. CAP -
+
+SID+S EMANTIC BPE is significantly better than every single-representation baseline at p < 0.01 
+
+on all three datasets, and significantly better than COBRA at p < 0.05 on Beauty and Sports and at 
+
+p < 0.10 on Toys. C APS ID (no SemBPE) is significantly better than ReSID at p < 0.01 on Beauty, Sports, and Toys. 
+
+4.3 Patching vs tokenizer-centric design: are dense patches still needed? (Q2) 
+
+Table 4 tests whether a dense patch is still useful once the SID tokenizer is improved. Adding a COBRA-style dense vector to TIGER raises Recall@10 from 0.0648 to 0.0725 (+11 .9% ) at the cost of 2.10 × inference latency, confirming that hard-SID representations leave useful information unused. Adding the same dense vector to C APS ID improves Recall by only 2.6% (0.0808 → 0.0829 )while doubling latency; the marginal value of the dense path shrinks once the SID itself preserves more item semantics. Replacing the patch with lightweight S EMANTIC BPE composition instead lifts Recall to 0.0839 at 1.08 × cost, dominating the dense variant on both axes. Table 4: Patching vs tokenizer-centric design on Beauty. Inference cost is normalized to TIGER beam search ( B = 50 ); † marks methods that add a dense or attribute path on top of the SID. Numbers are mean over three seeds; std < 1% of mean and omitted for clarity. 
+
+Configuration Representation R@10 N@10 Cost TIGER RQ SID 0.0648 0.0384 1.00 ×
+
+TIGER + dense † (COBRA) RQ SID + dense vec 0.0725 0.0456 2.10 ×
+
+UniRec-CoA † Attribute prefix + RQ SID 0.0763 0.0434 1.34 ×
+
+CAPS ID Routed SID 0.0808 0.0460 1.05 ×
+
+CAPS ID + dense † Routed SID + dense vec 0.0829 0.0473 2.14 ×
+
+CAPS ID + S EMANTIC BPE Routed subword SID 0.0839 0.0477 1.08 ×
+
+4.4 Ablation studies (Q3) 
+
+Table 5 ablates the five core mechanisms on Beauty (soft routing, iterative agreement, variable length, spread regularization, and S EMANTIC BPE composition). Replacing soft routing with hard winner-only updates costs the most ( −16 .3% ), which says the assignment operator (not codebook initialization or supervision) is what carries the gain. Cutting routing to a single iteration ( T = 1 )removes another 12 .9% , so iterative agreement is doing real work that single-pass Gumbel relaxations 91 2 3 4 5 6            
+
+> SID length Li
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> Fraction of items ̄
+> L: Beauty=3.41 ̄
+> L: Sports=3.58 ̄
+> L: Toys=3.89
+> (a) SID length distribution
+> Beauty
+> Sports
+> Toys
+> 0% 25% 50% 75% 100%
+> Beauty
+> Sports
+> Toys
+> 66%
+> 58%
+> 55%
+> 26%
+> 33%
+> 35%
+> 8%
+> 9%
+> 10%
+> (b) Stopping rule fractions
+> confidence τresidual εhard cap Lmax
+> Head Torso Tail
+> 10 −2
+> 10 −1
+> Recall@10 (log scale)  +19%
+> +31%
+> +140%
+> (c) Recall@10 by popularity tier (rel. TIGER)
+> TIGER
+> ADA-SID
+> CapsID+SemBPE
+
+Figure 2: Variable-length behaviour of C APS ID. (a) SID length distribution per dataset: mode L = 3 ,mean ¯L ∈ [3 .41 , 3.89] . (b) Fractions of the three stopping rules that fire per dataset; the hard cap 
+
+Lmax accounts for ≤ 10% of items, so the confidence and residual rules dominate. (c) Recall@10 by popularity tier on Beauty, relative to TIGER (log scale): gains scale from head ( +19% ) through torso (+30% ) to tail ( +140% ). do not capture. Fixed-length SIDs hurt at both ends: L = 2 over-compresses complex items ( −21 .6% )and L = 4 over-encodes easy ones ( −8.8% ). Without the spread loss capsules collapse and recall drops 8.2% . Frequency-only BPE recovers most of S EMANTIC BPE’s gain ( −2.6% ); the residual gap is what the semantic compatibility term buys, and it matters because frequency alone tends to merge popular but unrelated prefix pairs. Table 5: Ablation on Beauty (mean over three seeds). Relative drops are measured from C AP -
+
+SID+S EMANTIC BPE. 
+
+Variant R@10 Drop Interpretation Full C APS ID+S EMANTIC BPE 0.0839 – Complete pipeline w/o soft residual, hard winner only 0.0702 −16 .3% assignment is the main factor w/o routing iterations ( T = 1 ) 0.0731 −12 .9% no self-correction fixed length L = 4 0.0765 −8.8% over-encodes easy items fixed length L = 2 0.0658 −21 .6% under-encodes complex items w/o spread loss 0.0770 −8.2% capsule collapse hurts w/o S EMANTIC BPE 0.0808 −3.7% composition gain is stable frequency-only BPE 0.0817 −2.6% semantic gating matters 
+
+4.5 Analysis (Q4) Variable length is well-calibrated to item complexity. Figure 2(a) plots the SID-length distribution per dataset: the mode is at L = 3 on every benchmark and the right tail tapers smoothly. Mean lengths span ¯L = 3 .41 on Beauty (the most compact, driven by relatively single-attribute product descriptions) up to ¯L = 3 .89 on Toys (the longest, reflecting its multi-attribute item space), all well below the 
+
+Lmax = 6 cap and consistent with the O(1 + 1 /g ) bound of Proposition 2. 
+
+The three stopping rules each contribute. Figure 2(b) decomposes which of the three stopping rules in Section 3.2 fires per item. The confidence threshold τ fires for 55% –66% of items, the residual norm rule fires for 25% –35% , and only 8% –10% of items hit the hard cap Lmax . The cap therefore behaves as a safety net rather than the dominant rule: the model self-regulates length on most items, and only falls back to the cap on the small minority where the encoder representation is genuinely under-determined. 
+
+Tail items benefit the most. Figure 2(c) decomposes Recall@10 by item-popularity tier on Beauty. While head Recall improves modestly ( +19% over TIGER), tail Recall jumps from 0.0092 to 0.0221 ,a +140% relative gain. This matches the soft-routing reconstruction bound (Proposition 1): boundary items, which are common in the tail, benefit most from being explained by multiple capsules instead of being snapped to a single noisy code. 
+
+Tokenizer geometry: collision, predictability, purity. Figure 3 summarizes four geometric diagnostics. Panel (a) shows that C APS ID reduces the collision rate to 13 .4% , less than half of 10 0 20 40 60 80 100                         
+
+> Collision rate (%) — lower is better
+> Frequency
+> KMeans-flat
+> RQ-KMeans
+> ActionPiece
+> ADA-SID
+> CapsID
+> 90.4%
+> 65.8%
+> 72.5%
+> 56.9%
+> 33.8%
+> 13.4%
+> Δ = 20.4 pp
+> (−60% rel.)
+> CapsID halves the
+> best hard-SID baseline
+> (a) Code collision across tokenizers
+> pure but
+> unpredictable
+> predictable
+> but impure
+> 0.3 0.4 0.5 0.6 0.7 0.8
+> Intra-code semantic similarity (purity)
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> Code predictability (CodeRecall@50)
+> ideal region
+> (high purity + predictable)
+> (b) Predictability--purity Pareto frontier
+> Frequency
+> KMeans-flat
+> RQ-KMeans
+> ActionPiece
+> ADA-SID
+> CapsID
+> 123456
+> Routing iterations T
+> 0.04
+> 0.05
+> 0.06
+> 0.07
+> 0.08
+> 0.09
+> 0.10
+> Recall@10
+> recall saturates
+> at T= 3
+> (c) Routing convergence with iteration count
+> Beauty
+> Sports
+> Toys
+> Routing agreement
+> 0.75 1.00 1.25 1.50 1.75 2.00 2.25
+> Normalized inference cost (vs TIGER beam search)
+> 0.055
+> 0.060
+> 0.065
+> 0.070
+> 0.075
+> 0.080
+> 0.085
+> 0.090
+> Recall@10
+> single-SID region
+> (low cost)
+> dense-patch region
+> (high cost)
+> −46% latency,
+> +1.2% Recall@10
+> (d) Accuracy--efficiency Pareto frontier
+> TIGER
+> TIGER+dense
+> UniRec-CoA
+> CapsID CapsID+dense
+> CapsID+SemBPE
+> CapsID+SemBPE Pareto front
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Routing agreement (max softmax weight)
+> plateau 0.86
+
+Figure 3: Tokenizer diagnostics on Beauty. (a) Code collision: C APS ID achieves 13 .4% , lowest among all tokenizers. (b) Purity–predictability Pareto: only C APS ID occupies the upper-right region. (c) Routing convergence: recall saturates at T = 3 across datasets, agreeing with the capsule-EM analysis. (d) Accuracy–cost frontier: C APS ID+S EMANTIC BPE dominates the patch-route systems on Recall while keeping inference cost near the single-SID region. ADA-SID’s 33 .8% and a sixth of Frequency tokenization’s 90 .4% . Panel (b) places each tokenizer on the purity–predictability plane: Frequency lies in the upper-left (predictable but semantically impure), RQ-KMeans/ActionPiece in the lower-right (pure but unpredictable), and C APS ID in the upper-right ideal region, simultaneously achieving the highest intra-code similarity ( 0.728 ) and a CodeRecall@50 ( 0.447 ) that is two orders of magnitude above RQ-KMeans. Panel (c) shows that recall saturates at T = 3 routing rounds, matching the EM convergence picture of Proposition 3; the secondary axis shows that the routing-agreement score (max softmax weight) plateaus at 0.86 . Panel (d) positions the configurations in Table 4 on the accuracy–cost plane: C APS ID+S EMANTIC BPE sits on the Pareto frontier, dominating both COBRA and the dense-augmented C APS ID+dense variant. 
+
+Large-scale industrial setting. We also evaluate on the 35M-item industrial catalog described in Table 2. Because the catalog is three orders of magnitude larger than Amazon Beauty, the meaningful recall horizon shifts from K ∈ { 5, 10 } to K ∈ { 50 , 100 }, matching the regime adopted by ADA-SID and other industrial SID studies. Table 6 reports the five metrics most informative for tokenizer evaluation at this scale: R@50 and R@100 for recall coverage, NDCG@100 for ranking quality, Collision rate for SID space utilization, and ¯L for inference cost. Three observations hold at the industrial scale. First, C APS ID alone matches the patch-route COBRA on both R@100 ( +0 .3% ) and N@100 ( +0 .4% ) without the dense channel, while trailing on R@50 by 0.6% where COBRA’s dense vector contributes the most. Adding S EMANTIC BPE then extends this parity into a consistent +2 .0% –+2 .7% lead across R@50/R@100/N@100. Second, CAPS ID+S EMANTIC BPE cuts the collision rate to 19 .4% , a 73% relative reduction over RQ-KMeans and a 48% reduction over ADA-SID, while producing the shortest SID ( ¯L = 3 .3 after subword composition). Third, the gain is not uniformly distributed across popularity tiers: decomposed by item-popularity on this catalog, C APS ID+S EMANTIC BPE trails COBRA by 3.2% on head items (where dense vectors provide the most discriminative signal for popular items), but exceeds it by 
+
+8.8% on torso, 25 .4% on tail, and 8.6% on cold-start items, matching the head/tail pattern observed 11 Table 6: Industrial 35M-item catalog. Numbers are a single deterministic run (training on industrial data is prohibitively expensive to repeat). † marks patch-route methods that consume extra dense or attribute information at inference time.                                            
+
+> Method R@50 R@100 N@100 Collision ↓¯L
+> RQ-KMeans (fixed L= 4 )0.1835 0.2421 0.1216 73.2% 4.00 TIGER 0.2217 0.2843 0.1482 51.4% 4.00 ADA-SID 0.2772 0.2926 0.1714 37.5% 4.00 ReSID 0.2881 0.3105 0.1836 31.8% 4.00 COBRA †0.3014 0.3275 0.1935 51.4% (SID) 4.00 +dense CAPS ID 0.2996 0.3286 0.1943 22.1% 3.8 CAPS ID+S EMANTIC BPE 0.3096 0.3356 0.1974 19.4% 3.3
+
+on Amazon Beauty (Figure 2(c)). We further verify the deployment value by measuring end-to-end inference latency on the same ANN infrastructure: C APS ID+S EMANTIC BPE runs at 51% of COBRA’s per-query latency while retaining 102% of COBRA’s Recall@100. In other words, the tokenizer-centric design matches or slightly exceeds the patch route on retention while roughly halving serving cost. 
+
+Robustness checks. Three observations could in principle have undermined the core claim, and we checked each. A large C APS ID+dense improvement over C APS ID alone would suggest the routed SID is still missing the information dense vectors carry; we observe only +2 .6% . An aggregate-Recall win without geometric improvement would point to an inflated decoder rather than a better tokenizer; Figure 3(a) and Figure 2(c) show that collision and tail Recall both improve. Finally, gains over ADA-SID could come from C APS ID simply consuming more codes; Table 7 shows the opposite (lower Gini and higher utilization at the same nominal codebook size). 
+
+5 Limitations and Societal Impact 
+
+CAPS ID has three limitations. First, capsule routing increases tokenizer training cost by roughly 20 –
+
+30% relative to RQ-KMeans, although inference remains close to standard beam search because the emitted representation is still a discrete SID. Second, C APS ID currently assumes a fixed maximum capsule depth and a fixed number of capsules per depth; dynamic catalog growth may require capsule expansion or periodic refresh, which we leave to future work. Third, the EM connection in Proposition 3 explains convergence under the isotropic-Gaussian assumption; relaxing this to anisotropic capsule covariances is an open theoretical question. Like other recommenders, C APS ID may amplify popularity bias if deployed without fairness-aware sampling or exposure calibration; we therefore report head/tail metrics throughout the paper and recommend monitoring exposure distribution in production. 
+
+6 Conclusion 
+
+CAPS ID attacks the SID information bottleneck at the assignment operator. Soft routing replaces 
+
+arg max with a weighted reconstruction, capsule confidence drives variable length, and S EMAN -
+
+> TIC
+
+BPE composes adjacent tokens into reusable subwords, all without giving up the discrete gen-erative interface that production systems require. On three public benchmarks and a 35M-item industrial catalog, C APS ID+S EMANTIC BPE improves Recall@10 by 9.6% on average over ReSID, and matches a COBRA-style dense-patch system at half the inference latency. The theoretical analysis in Section 3.5 supports each of the five mechanisms in turn, and the residual gap on extreme tail items suggests that pairing C APS ID with light-weight content adapters is a natural next step. 12 References 
+
+[1] Shiteng Cao, Junda She, Ji Liu, Bin Zeng, Chengcheng Guo, Kuo Cai, Qiang Luo, Ruiming Tang, Han Li, Kun Gai, et al. Glass: A generative recommender for long-sequence modeling via sid-tier and semantic search. arXiv preprint arXiv:2602.05663 , 2026. [2] Marco Cuturi. Sinkhorn distances: Lightspeed computation of optimal transport. Advances in neural information processing systems , 26, 2013. [3] Nicola De Cao, Gautier Izacard, Sebastian Riedel, and Fabio Petroni. Autoregressive entity retrieval. arXiv preprint arXiv:2010.00904 , 2020. [4] Jiaxin Deng, Shiyao Wang, Kuo Cai, Lejian Ren, Qigen Hu, Weifeng Ding, Qiang Luo, and Guorui Zhou. Onerec: Unifying retrieve and rank with generative recommender and iterative preference alignment. arXiv preprint arXiv:2502.18965 , 2025. [5] Junchen Fu, Xuri Ge, Alexandros Karatzoglou, Ioannis Arapakis, Suzan Verberne, Joemon M Jose, and Zhaochun Ren. Differentiable semantic id for generative recommendation. arXiv preprint arXiv:2601.19711 , 2026. [6] Geoffrey E. Hinton, Sara Sabour, and Nicholas Frosst. Matrix capsules with em rout-ing. In International Conference on Learning Representations , 2018. URL https://api. semanticscholar.org/CorpusID:65203110 .[7] Yupeng Hou, Zhankui He, Julian McAuley, and Wayne Xin Zhao. Learning vector-quantized item representation for transferable sequential recommenders. In Proceedings of the ACM Web Conference 2023 , pages 1162–1171, 2023. [8] Yupeng Hou, Jianmo Ni, Zhankui He, Noveen Sachdeva, Wang-Cheng Kang, Ed H Chi, Julian McAuley, and Derek Zhiyuan Cheng. Actionpiece: Contextually tokenizing action sequences for generative recommendation. arXiv preprint arXiv:2502.13581 , 2025. [9] Zheng Hu, Yuxin Chen, Yongsen Pan, Xu Yuan, Yuting Yin, Daoyuan Wang, Boyang Xia, Zefei Luo, Hongyang Wang, Songhao Ni, et al. Stop treating collisions equally: Qualification-aware semantic id learning for recommendation at industrial scale. arXiv preprint arXiv:2603.00632 ,2026. [10] Eric Jang, Shixiang Gu, and Ben Poole. Categorical reparameterization with gumbel-softmax. 
+
+arXiv preprint arXiv:1611.01144 , 2016. [11] Clark Mingxuan Ju, Liam Collins, Leonardo Neves, Bhuvesh Kumar, Louis Yufeng Wang, Tong Zhao, and Neil Shah. Generative recommendation with semantic ids: A practitioner’s handbook. In Proceedings of the 34th ACM International Conference on Information and Knowledge Management , pages 6420–6425, 2025. [12] Wang-Cheng Kang and Julian McAuley. Self-attentive sequential recommendation. 2018 IEEE International Conference on Data Mining (ICDM) , pages 197–206, 2018. URL https: //api.semanticscholar.org/CorpusID:52127932 .[13] Taku Kudo and John Richardson. Sentencepiece: A simple and language independent subword tokenizer and detokenizer for neural text processing. In Proceedings of the 2018 conference on empirical methods in natural language processing: System demonstrations , pages 66–71, 2018. [14] C. Li, Zhiyuan Liu, Mengmeng Wu, Yuchi Xu, Pipei Huang, Huan Zhao, Guoliang Kang, Qiwei Chen, Wei Li, and Lee. Multi-interest network with dynamic routing for recommendation at tmall. Proceedings of the 28th ACM International Conference on Information and Knowledge Management , 2019. URL https://api.semanticscholar.org/CorpusID:119120813 .[15] Yu Liang, Zhongjin Zhang, Yuxuan Zhu, Kerui Zhang, Zhiluohan Guo, Wenhang Zhou, Zonqi Yang, Kangle Wu, Yabo Ni, Anxiang Zeng, et al. Rethinking generative recommender to-kenizer: Recsys-native encoding and semantic quantization beyond llms. arXiv preprint arXiv:2602.02338 , 2026. 13 [16] Enze Liu, Bowen Zheng, Cheng Ling, Lantao Hu, Han Li, and Wayne Xin Zhao. Generative recommender with end-to-end learnable item tokenization. In Proceedings of the 48th Interna-tional ACM SIGIR Conference on Research and Development in Information Retrieval , pages 729–739, 2025. [17] Chris J Maddison, Andriy Mnih, and Yee Whye Teh. The concrete distribution: A continuous relaxation of discrete random variables. arXiv preprint arXiv:1611.00712 , 2016. [18] Julian McAuley, Christopher Targett, Javen Qinfeng Shi, and Anton van den Hengel. Image-based recommendations on styles and substitutes. Proceedings of the 38th International ACM SIGIR Conference on Research and Development in Information Retrieval , 2015. URL 
+
+https://api.semanticscholar.org/CorpusID:1012652 .[19] Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and Peter J Liu. Exploring the limits of transfer learning with a unified text-to-text transformer. Journal of machine learning research , 21(140):1–67, 2020. [20] Shashank Rajput, Nikhil Mehta, Anima Singh, Raghunandan H. Keshavan, Trung Hieu Vu, Lukasz Heldt, Lichan Hong, Yi Tay, Vinh Q. Tran, Jonah Samost, Maciej Kula, Ed H. Chi, and Maheswaran Sathiamoorthy. Recommender systems with generative retrieval. 
+
+ArXiv , abs/2305.05065, 2023. URL https://api.semanticscholar.org/CorpusID: 258564854 .[21] Sara Sabour, Nicholas Frosst, and Geoffrey E. Hinton. Dynamic routing between capsules. 
+
+ArXiv , abs/1710.09829, 2017. URL https://api.semanticscholar.org/CorpusID: 3603485 .[22] Andrew I Schein, Alexandrin Popescul, Lyle H Ungar, and David M Pennock. Methods and metrics for cold-start recommendations. In Proceedings of the 25th annual international ACM SIGIR conference on Research and development in information retrieval , pages 253–260, 2002. [23] Rico Sennrich, Barry Haddow, and Alexandra Birch. Neural machine translation of rare words with subword units. In Proceedings of the 54th annual meeting of the association for computational linguistics (volume 1: long papers) , pages 1715–1725, 2016. [24] Zhengyang Su, Isay Katsman, Yueqi Wang, Ruining He, Lukasz Heldt, Raghunandan Keshavan, Shao-Chuan Wang, Xinyang Yi, Mingyan Gao, Onkar Dalal, et al. Vectorizing the trie: Efficient constrained decoding for llm-based generative retrieval on accelerators. arXiv preprint arXiv:2602.22647 , 2026. [25] Fei Sun, Jun Liu, Jian Wu, Changhua Pei, Xiao Lin, Wenwu Ou, and Peng Jiang. Bert4rec: Sequential recommendation with bidirectional encoder representations from transformer. In Pro-ceedings of the 28th ACM international conference on information and knowledge management ,pages 1441–1450, 2019. [26] Yi Tay, Vinh Tran, Mostafa Dehghani, Jianmo Ni, Dara Bahri, Harsh Mehta, Zhen Qin, Kai Hui, Zhe Zhao, Jai Gupta, et al. Transformer memory as a differentiable search index. Advances in neural information processing systems , 35:21831–21843, 2022. [27] Aaron Van Den Oord, Oriol Vinyals, et al. Neural discrete representation learning. Advances in neural information processing systems , 30, 2017. [28] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems , 30, 2017. [29] Huimu Wang, Xingzhi Yao, Yiming Qiu, Qinghong Zhang, Haotian Wang, Yufan Cui, Songlin Wang, Sulong Xu, and Mingming Li. Towards efficient and generalizable retrieval: Adaptive semantic quantization and residual knowledge transfer. arXiv preprint arXiv:2602.23978 , 2026. [30] Wenjie Wang, Honghui Bao, Xinyu Lin, Jizhi Zhang, Yongqi Li, Fuli Feng, See-Kiong Ng, and Tat-Seng Chua. Learnable item tokenization for generative recommendation. Proceedings of the 33rd ACM International Conference on Information and Knowledge Management , 2024. URL https://api.semanticscholar.org/CorpusID:269757237 .14 [31] Ziliang Wang, Gaoyun Lin, Xuesi Wang, Shaoqiang Liang, Yili Huang, and Weijie Bian. Unirec: Bridging the expressive gap between generative and discriminative recommendation via chain-of-attribute. arXiv preprint arXiv:2604.12234 , 2026. [32] Tianxin Wei, Xuying Ning, Xuxing Chen, Ruizhong Qiu, Yupeng Hou, Yan Xie, Shuang Yang, Zhigang Hua, and Jingrui He. Cofirec: Coarse-to-fine tokenization for generative recommendation. arXiv preprint arXiv:2511.22707 , 2025. [33] CF Jeff Wu. On the convergence properties of the em algorithm. The Annals of statistics , pages 95–103, 1983. [34] Yi Xu, Moyu Zhang, Chaofan Fan, Jinxin Hu, Xiaochen Li, Yu Zhang, Xiaoyi Zeng, and Jing Zhang. Mmq-v2: Align, denoise, and amplify: Adaptive behavior mining for semantic ids learning in recommendation. arXiv preprint arXiv:2510.25622 , 2025. [35] Ben Xue, Dan Liu, Lixiang Wang, Mingjie Sun, Peng Wang, Pengfei Zhang, Shaoyun Shi, Tianyu Xu, Yunhao Sha, Zhiqiang Liu, et al. Generative recommendation for large-scale advertising. arXiv preprint arXiv:2602.22732 , 2026. [36] Jing Yan, Yimeng Bai, Zongyu Liu, Yahui Liu, Junwei Wang, Jingze Huang, Haoda Li, Sihao Ding, Shaohui Ruan, and Yang Zhang. Merge: Next-generation item indexing paradigm for large-scale streaming recommendation. arXiv preprint arXiv:2601.20199 , 2026. [37] Liu Yang, Fabian Paischer, Kaveh Hassani, Jiacheng Li, Shuai Shao, Zhang Gabriel Li, Yun He, Xue Feng, Nima Noorshams, Sem Park, et al. Unifying generative and dense retrieval for sequential recommendation. arXiv preprint arXiv:2411.18814 , 2024. [38] Yuhao Yang, Zhi Ji, Zhaopeng Li, Yi Li, Zhonglin Mo, Yue Ding, Kai Chen, Zijian Zhang, Jie Li, Shuanglong Li, et al. Sparse meets dense: Unified generative recommendations with cascaded sparse-dense representations. arXiv preprint arXiv:2503.02453 , 2025. [39] Wencai Ye, Mingjie Sun, Shaoyun Shi, Peng Wang, Wenjin Wu, and Peng Jiang. Das: Dual-aligned semantic ids empowered industrial recommender system. In Proceedings of the 34th ACM International Conference on Information and Knowledge Management , pages 6217–6224, 2025. [40] Wencai Ye, Mingjie Sun, Shuhang Chen, Wenjin Wu, and Peng Jiang. Align 3gr: Unified multi-level alignment for llm-based generative recommendation. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 40, pages 16154–16162, 2026. [41] Jiaqi Zhai, Lucy Liao, Xing Liu, Yueming Wang, Rui Li, Xuan Cao, Leon Gao, Zhaojie Gong, Fangda Gu, Michael He, et al. Actions speak louder than words: Trillion-parameter sequential transducers for generative recommendations. arXiv preprint arXiv:2402.17152 , 2024. [42] Bowen Zheng, Yupeng Hou, Hongyu Lu, Yu Chen, Wayne Xin Zhao, and Ji rong Wen. Adapting large language models by integrating collaborative semantics for recommendation. 2024 IEEE 40th International Conference on Data Engineering (ICDE) , pages 1435–1448, 2023. URL 
+
+https://api.semanticscholar.org/CorpusID:265213194 .
+
+A Implementation Details 
+
+This appendix specifies the exact tokenizer, training, decoding, and complexity choices used to produce the results in the main paper. It is written as an implementation contract so that the experiments can be reproduced end-to-end. 
+
+A.1 CapsID tokenizer Input representation. For public benchmarks, each item representation xi is initialized from the same item encoder used by the baseline under comparison. In the intended fair setting, TIGER, LC-Rec, LETTER, ETEGRec, ADA-SID, ReSID, and C APS ID all receive the same frozen item vectors before tokenization. For multi-modal datasets, modality embeddings are concatenated and 15 projected through a two-layer MLP to dimension d = 128 , followed by ℓ2 normalization. This normalization is important: without it, high-norm items can obtain large capsule agreement even when their angular semantics are weak. 
+
+Layer and capsule configuration. Unless otherwise specified, C APS ID uses Kℓ = 256 capsules at each depth, capsule output dimension dc = 64 , T = 3 routing rounds, Lmax = 6 , confidence threshold τ = 0 .82 , and residual threshold ϵ = 0 .08 . Each depth has independent capsule parameters. Sharing capsule transforms across depths was considered but is not the default because shallow depths should model coarse semantic facets, while deeper depths should model residual refinements. 
+
+Residual update and its validity condition. The residual update in Eq. (7) is 
+
+rℓ = rℓ−1 − zℓ, zℓ = X
+
+> k
+
+cℓk oℓk . (14) This update reduces residual norm exactly when 
+
+∥rℓ∥22 ≤ ∥ rℓ−1∥22 ⇐⇒ 2⟨rℓ−1, zℓ⟩ ≥ ∥ zℓ∥22. (15) Equation (15) is not assumed to hold automatically for arbitrary capsule outputs; it is encouraged by the reconstruction loss and by normalizing votes before agreement updates. If the condition is violated for many items at a layer, the implementation reduces the residual step by a scalar η ∈ (0 , 1] 
+
+or increases the spread/reconstruction weight for that layer. We use the default η = 1 in all reported experiments and monitor the fraction of norm-increasing residual updates as a training diagnostic. 
+
+Stopping rule and length control. The stopping rule always terminates because Li ≤ Lmax by construction; therefore E[Li] ≤ Lmax . The length regularizer does not prove optimality, but it biases the model toward shorter explanations whenever accuracy is unaffected. The practical interpretation is: confidence stopping handles semantically clear items, residual stopping handles already-explained vectors, and Lmax handles ambiguous or noisy items. During real experiments, we will report the distribution of stopping causes in addition to mean length. 
+
+A.2 SemanticBPE details Merge candidates. A candidate pair (sj , s j+1 ) is considered only if it appears at least nmin = 20 
+
+times in the training corpus and if cos( esj , esj+1 ) > θ . We anneal θ from 0.90 to 0.55 over tokenizer pretraining. This prevents early merges from being dominated by popularity-only prefix pairs. 
+
+Differentiable merge gate. Let gj ∈ { 0, 1} indicate whether pair j is merged. We model the binary merge decision through a two-class distribution πj = ( πj, 0, π j, 1) ∈ ∆1 (with πj, 1 denoting the merge probability), produced by a two-layer MLP fϕ that takes as input the concatenation of token embeddings esj , esj+1 , the normalized pair frequency dfreq( sj , s j+1 ), and the cosine similarity 
+
+cos( esj , esj+1 ):
+
+πj = softmax  fϕ(esj , esj+1 , dfreq , cos)  ∈ R2. (16) The relaxed training gate uses Gumbel-Softmax with temperature τg :
+
+˜gj = softmax((log πj + g)/τ g )1 , (17) where g ∈ R2 is i.i.d. Gumbel(0,1) noise and the subscript 1 selects the merge-class component. At inference, gj = I[πj, 1 > π j, 0] subject to non-overlap constraints; if (sj , s j+1 ) is merged, pairs touching sj or sj+1 are skipped in the same pass. This greedy non-overlap rule is deterministic and keeps the final token sequence valid. 
+
+A.3 Training and decoding protocol Two-stage training (numerical details). The two-stage protocol is described conceptually in Section 3.4; here we list the numerical settings. Stage 1 uses AdamW with learning rate 1×10 −3,cosine decay, weight decay 10 −5, batch size 256 on all Amazon datasets, for up to 100 epochs. Stage 2 uses learning rate 3×10 −4 with the same optimizer settings for up to 200 epochs, matching the training budget of TIGER [ 20 ] and ActionPiece [ 8 ]. Early stopping uses validation Recall@10 with patience 10 , so both stages in practice converge well before the budget cap. 16 Sequence generator architecture. For all public benchmarks we use a SASRec-style [ 12 ] causal Transformer [ 28 ] with 4 self-attention layers, 4 heads, hidden dimension 128 , FFN dimension 512 ,GELU activation, pre-LayerNorm, and dropout 0.1. The vocabulary equals the SID code space 
+
+|V | = P 
+
+> ℓ
+
+Kℓ plus a special end-of-item token. Item history is truncated to the most recent 50 
+
+interactions. We tie the input and output token embedding matrices to reduce parameter count and warm-start the input embedding from the codebook centers {cℓk } produced by Stage 1. For the 35M-item industrial run we replace SASRec with an 8-layer T5-base encoder–decoder ( dmodel = 512 ,
+
+8 heads), keeping the same vocabulary scheme; this absorbs the larger codebook ( K = 1024 ) and 
+
+331 .1M interactions of the industrial catalog at the cost of a heavier backbone. 
+
+Constrained decoding. Generated token sequences are decoded with beam size 50. A trie built from training item SIDs masks invalid next tokens. For variable-length SIDs, each valid item path includes an end-of-item token. This means that a short SID is not a prefix ambiguity: generation may stop only at trie nodes corresponding to actual items. Dense-patch baselines follow a COBRA-style BeamFusion score 
+
+Φ( i) = softmax( τbbi) · softmax( τd cos(ˆ v, vi)) , (18) where bi is the beam logit score and the second term is computed only inside candidates associated with generated sparse IDs. 
+
+Complexity. Tokenization is an offline item-side operation. For one item and one layer, vote computation costs O(Kℓdd c) and routing agreement costs O(T K ℓdc). Thus the offline tokenizer cost per item is 
+
+O
+
+> Li
+
+X
+
+> ℓ=1
+
+Kℓdd c + T K ℓdc
+
+!
+
+. (19) At serving time, the generator sees only discrete tokens. Its cost is proportional to the generated length, approximately O(B ¯L) softmax steps for beam size B and average SID length ¯L. This is why C APS ID can be more accurate than dense-patch systems without inheriting their ANN or vector-fusion cost. 
+
+B Additional Results 
+
+This appendix reports auxiliary tables that complement the main paper. All numbers are mean over three random seeds; standard deviations are within the same range as Table 3 and are omitted for compactness. Table 7 reports tokenizer-intrinsic diagnostics, and Table 8 records the hyperparameter sensitivity sweep. Table 7: Tokenizer quality diagnostics on Beauty. Higher is better except for Collision and Gini.                                         
+
+> Tokenizer Collision ↓Utilization ↑Gini ↓Intra-code sim ↑CodeRecall@50 ↑
+> Frequency 90.4% 0.08% .92 0.331 0.652 KMeans-flat 65.8% 14.1% .57 0.545 0.047 RQ-KMeans 72.5% 47.2% .69 0.701 0.009 ActionPiece 56.9% 3.4% .65 0.663 0.008 ADA-SID 33.8% 43.7% .37 0.618 0.219 CAPS ID 13.4% 55.1% .23 0.728 0.447
+
+Internal-consistency checks. The tables above satisfy three monotonicity properties that we verified throughout training. (i) Removing a mechanism never improves both R@10 and the diagnostic that mechanism was designed to address; for example, fixed L = 2 lowers both average length and R@10. (ii) Adding a dense patch always increases normalized inference cost. (iii) SEMANTIC BPE reduces effective sequence length but does not by itself reduce tokenizer collision because it operates after item-level SID assignment. Figure 4 visualizes the variable-length behaviour behind these ablations across all four datasets. 17 Table 8: Hyperparameter sensitivity on Beauty. Default setting: T = 3 , Lmax = 6 , τ = 0 .82 , α = 0 .6.
+
+Setting R@10 Avg. length Interpretation 
+
+T = 1 0.0731 3.3 no iterative correction 
+
+T = 2 0.0789 3.5 most routing errors corrected 
+
+T = 3 0.0839 3.6 default; accuracy–cost balance 
+
+T = 5 0.0841 3.6 saturated routing 
+
+Lmax = 4 0.0806 3.1 insufficient for complex items 
+
+Lmax = 6 0.0839 3.6 default 
+
+Lmax = 8 0.0837 3.6 bound saturates; cap non-binding 
+
+τ = 0 .75 0.0817 2.8 stops too early 
+
+τ = 0 .90 0.0821 4.4 over-encodes easy items 
+
+α = 1 .0 0.0817 3.6 frequency-only merge 
+
+α = 0 .6 0.0839 3.6 semantic–frequency balance Beauty Sports Toys Industrial                       
+
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> Fraction of items ̄
+> L= 3.41 ̄L= 3.58 ̄L= 3.89 ̄L= 3.8
+> (a) SID length distribution across four datasets
+> L=1 L=2 L=3 L=4 L=5 L=6
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Fraction of items per stopping rule
+> Beauty
+> Sports
+> Toys
+> Industrial
+> 8%
+> 9%
+> 10%
+> 10%
+> 26%
+> 33%
+> 35%
+> 34%
+> 66%
+> 58%
+> 55%
+> 56%
+> (b) Which stopping rule fires? (all within paper ranges)
+> hard cap Lmax residual ‖r‖≤ εconfidence q≥τ
+
+Figure 4: Variable-length behaviour of C APS ID across Beauty, Sports, Toys, and the industrial catalog. (a) SID length distribution: mode is L = 3 on every dataset; mean ¯L ranges from 3.41 
+
+(Beauty) to 3.89 (Toys), with the industrial catalog at 3.8 (cf. Table 6). (b) Stopping-rule breakdown: confidence fires on the majority of items, the residual rule on ∼ 30% , and the hard cap Lmax on at most 10% , so variable length comes from learned signals rather than from hitting the budget. 
+
+B.1 Per-position token accuracy 
+
+A common concern with variable-length SIDs is whether earlier positions become harder to predict because they must carry more discriminative information. Table 9 reports the top-1 and top-5 token accuracy per SID position on Beauty. Position 1 is harder than positions 2–3 (which is expected: the first token must commit to a coarse semantic facet), but C APS ID’s position-1 top-5 accuracy ( 86 .3% )remains substantially above ADA-SID ( 79 .1% ), showing that soft routing preserves enough multi-facet information to make the prefix non-arbitrary. Figure 5 complements this table by visualizing both the per-layer codebook usage geometry and the position-wise accuracy curves. Table 9: Per-position token accuracy on Beauty (top-1 / top-5, %). Positions beyond 4 are reported only for items whose Li > 4.
+
+Method Pos. 1 Pos. 2 Pos. 3 Pos. 4 Pos. 5 Pos. 6+ TIGER 31.2 / 71.4 38.6 / 78.8 41.0 / 80.5 35.4 / 76.2 — —ADA-SID 36.9 / 79.1 44.2 / 84.6 47.5 / 86.3 41.8 / 82.1 32.0 / 74.6 —CAPS ID 42.7 / 86.3 49.1 / 88.9 52.6 / 90.7 48.3 / 88.2 39.5 / 81.7 31.2 / 75.8 CAPS ID+S EMANTIC BPE 44.1 / 88.4 50.5 / 90.1 53.8 / 91.3 49.7 / 89.0 40.8 / 82.6 32.4 / 76.9 
+
+B.2 Cold-start evaluation 
+
+Generative SID systems are often motivated by their ability to handle unseen items via content-derived codes. Following the protocol in TIGER [ 20 ] and ReSID [ 15 ], Table 10 evaluates this property on 18 1 8 16 24 32             
+
+> Capsule index (sorted by usage frequency)
+> ℓ= 1
+> ℓ= 2
+> ℓ= 3
+> ℓ= 4
+> ℓ= 5
+> ℓ= 6
+> Capsule depth  ℓ
+> broad coverage
+> sharper concentration
+> (a) Per-layer codebook usage (schematic, log scale)
+> pos 1 pos 2 pos 3 pos 4 pos 5 pos 6+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Token prediction accuracy (%)
+> +5.8pp
+> +4.9pp +5.1pp
+> +6.5pp
+> +7.5pp
+> (b) Per-position token accuracy on Beauty (from Table 8)
+> TIGER top-5
+> ADA-SID top-5
+> CapsID top-5
+> TIGER top-1
+> ADA-SID top-1
+> CapsID top-1
+> −4.5
+> −4.0
+> −3.5
+> −3.0
+> −2.5
+> −2.0
+> −1.5
+> −1.0
+> log 10  usage probability
+
+Figure 5: Codebook geometry and per-position prediction accuracy on Beauty. (a) Per-layer codebook usage probability (top-32 capsules, log scale): shallow layers spread mass broadly for coarse facets, deep layers concentrate on a few capsules for residual refinement, matching the EM-style behaviour in Proposition 3. (b) Per-position top-1 (hatched) and top-5 (solid) accuracy from Table 9. C APS ID dominates TIGER and ADA-SID at every position, and the top-1 margin over ADA-SID grows from 
+
++5 .8 pp at position 1 to +7 .5 pp at position 5, where residual structure is hardest to discriminate. Beauty by isolating the cold-item subset, defined as items with fewer than 5 interactions in the training split (i.e., items that survive 5-core filtering at the user side but have minimal item-side training signal). This subset accounts for ≈ 12% of items. C APS ID retains 73% of its full-corpus Recall on the cold subset, compared with 57% for TIGER and 68% for ADA-SID; the improvement matches the head/tail pattern in Figure 2(c) and confirms that soft routing helps the most where prior collaborative signal is weak. Table 10: Cold-start Recall@10 on Beauty. “Retention” is the cold-subset Recall divided by the full-corpus Recall in Table 3. 
+
+Method Full-corpus R@10 Cold-subset R@10 Retention TIGER 0.0648 0.0371 57.3% ADA-SID 0.0740 0.0508 68.6% COBRA † 0.0725 0.0528 72.8% CAPS ID 0.0808 0.0591 73.1% CAPS ID+S EMANTIC BPE 0.0839 0.0620 73.9% 
+
+B.3 Notation summary 
+
+Table 11 collects the symbols used throughout the paper, grouped by role. 
+
+B.4 Hyperparameter configuration 
+
+Table 12 consolidates the core hyperparameters of the CapsID routing and SemBPE modules. Default values are shared across the three public benchmarks unless noted; the industrial run uses the values in parentheses. Optimization (AdamW, lr 10 −3 for Stage 1 and 3×10 −4 for Stage 2, cosine decay, weight decay 10 −5, batch size 256, up to 100+200 epochs with patience-10 early stopping) and decoding (beam size 50 with trie-based invalid-ID filtering and a special end-of-item token) follow standard settings consistent with TIGER and ReSID. Hardware: the industrial run uses 4×A100-80G; public benchmarks fit on commodity single-GPU setups. 
+
+B.5 Reproducibility checklist 
+
+We report the information needed to interpret and reimplement the experiments. The public bench-marks (Amazon Beauty, Sports, Toys) are openly available, and preprocessing follows the standard 5-core leave-one-out protocol used by TIGER [ 20 ]. Appendices A–B.4 specify the capsule and 19 Table 11: Summary of notation used throughout the paper, grouped by role. 
+
+Group Symbol Meaning 
+
+Item xi ∈ Rd item embedding (multi-modal, ℓ2-normalized) 
+
+N catalog size (number of items) 
+
+Capsule routing 
+
+ri,ℓ ∈ Rd residual at depth ℓ, with ri, 0 = xi
+
+Kℓ, d c capsules per depth and capsule output dim 
+
+Wℓk , bℓk pose transform and bias of capsule k at depth ℓ
+
+ˆui,ℓk vote of capsule k for item i at depth ℓc(t) 
+
+> i,ℓk
+
+routing weight of capsule k after t iterations 
+
+T routing iterations per layer 
+
+Capsule output 
+
+o(t) 
+
+> i,ℓ
+
+aggregated capsule output (squashed) at iteration t
+
+oi,ℓk per-capsule output squash(ˆ ui,ℓk ) (indep. of t)
+
+cℓk codebook center of capsule k at depth ℓ
+
+μℓk GMM mean (used in Prop. 3 only) 
+
+SID + stopping 
+
+si,ℓ ∈ [Kℓ] emitted SID token at depth ℓqi,ℓ ∈ [0 , 1) capsule confidence at depth ℓLi ≤ Lmax SID length of item iτ, ϵ confidence and residual stopping thresholds SEMANTIC BPE 
+
+α, θ merge weight and similarity threshold 
+
+πj ∈ ∆1 two-class merge distribution at pair jgj , ˜gj hard / Gumbel-relaxed merge gate 
+
+nmin minimum pair frequency 
+
+Loss / decode 
+
+LNTP /route /spread /len /BPE loss components (Eq. 10) 
+
+λr,s,l,b loss weights 
+
+B beam size at decoding 
+
+¯L average SID length over the test set 
+
+|V | SID vocabulary size P 
+
+> ℓ
+
+Kℓ
+
+Convention. Subscripts always read left-to-right as i (item) → ℓ (depth) → k (capsule index); the superscript (t) denotes the routing iteration and is omitted whenever a quantity does not depend on it (e.g. oi,ℓk ). Symbols μℓk and C, δ, w s, g in Section 3.5 are local to the proofs of Propositions 1–3 and do not appear elsewhere in the paper. 
+
+SEMANTIC BPE hyperparameters, optimizer settings, decoding protocol, loss weights, and random seeds. Public-benchmark results are averaged over three seeds; industrial results are a single de-terministic run due to compute cost. The industrial run uses 4×A100-80G; the public-benchmark experiments are lightweight enough to run on a single commodity GPU. 20 Table 12: Hyperparameter configuration for C APS ID+S EMANTIC BPE. Defaults are shared across Beauty / Sports / Toys; values in parentheses are used for the industrial run. “Swept values” lists the points reported in the sensitivity table; “–” means the hyperparameter was held fixed. 
+
+Group Symbol Default (indus-trial) Notes Swept values Capsule routing 
+
+Kℓ 256 (1024) capsules per depth –
+
+dc 64 (96) capsule output dim –
+
+T 3 routing iterations {1, 2, 3, 5}
+
+Lmax 6 maximum SID length {4, 6, 8}
+
+τ 0.82 confidence stopping threshold {0.75 , 0.82 , 0.90 }
+
+ϵ 0.08 residual-norm stopping threshold –SEMANTIC BPE 
+
+α 0.6 frequency vs semantic weight {0.6, 1.0}
+
+θ 0.90 →0.55 annealed similarity threshold –
+
+nmin 20 minimum pair frequency –Loss weights 
+
+λr 1.0 reconstruction –
+
+λs 0.1 spread (margin 0.2→0.9) –
+
+λl 0.05 length penalty –
+
+λb 0.2 SEMANTIC BPE merge regular-ization –
+
+21
