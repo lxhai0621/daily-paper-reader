@@ -1,0 +1,1323 @@
+Title: Efficient Data Selection for Multimodal Models via Incremental Optimization Utility
+
+URL Source: https://arxiv.org/pdf/2605.07488v1
+
+Published Time: Mon, 11 May 2026 00:57:36 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# Efficient Data Selection for Multimodal Models via Incremental Optimization Utility 
+
+## Jinhao Jing 
+
+kawakamitomie56@gmail.com 
+
+## Qiannian Zhao ∗
+
+zqn200285@gmail.com 
+
+## Chao Huang 
+
+huangchao200107@gmail.com 
+
+## Zhan Su †
+
+zhan.su@umontreal.ca 
+
+Abstract 
+
+The scaling of Large Multimodal Models (LMMs) is constrained by the quality-quantity trade-off inherent in synthetic data. Previous approaches, such as LLM-as-a-Judge , have proven their effective-ness in addressing this but suffer from prohibitive computational costs and lack of interpretability. To bridge this gap, we propose 
+
+One-Step-Train (OST) , a framework that reformulates data selec-tion as an incremental optimization utility ranking problem. Instead of relying on semantic heuristics, OST estimates the marginal utility of each sample via a simulated single-step update on a lightweight proxy. Experiments on the Qwen series across multimodal math-ematical reasoning benchmarks demonstrate that OST achieves Pareto-optimal efficiency. By selecting the top-50% subset, OST reduces training costs by 43% (and total time consumption by 17% )while surpassing the strong LLM-as-a-Judge baseline by 1.8 points. Furthermore, under a fixed compute budget, our method using only the top-20% subset achieves a 5.6 point gain over LLM-as-a-Judge , improves upon heuristic scoring baselines like DEITA , and outperforms the Full-SFT baseline by 8.8 points. Notably, while Full-SFT suffers from performance degradation due to noise, our optimization-grounded approach effectively identifies toxic sam-ples, successfully reversing the negative transfer frequently ob-served in complex reasoning tasks. 
+
+CCS Concepts 
+
+• Computing methodologies → Artificial intelligence ; Super-vised learning ; Ranking ; Natural language processing. 
+
+Keywords 
+
+Large Multimodal Models, Multimodal Learning, Data-efficient Training, Data Selection, Data Influence, Data-Centric AI 
+
+1 Introduction 
+
+Scaling laws for large multimodal models (LMMs) show that per-formance on complex tasks improves steadily as more data is used, as long as the basic quality of the data is maintained [ 5 , 16 ]. This finding has created a strong and growing demand for large-scale training data. However, the collection of high-quality human anno-tations has not kept pace with the rapid growth of model parameters [ 35 , 37 ]. As a result, synthetic data has become essential for filling this gap. Synthetic data now serves as a cornerstone across diverse applications, from domain-specific reasoning (e.g., mathematics, 
+
+> ∗Contributing equally with the first author.
+> †Corresponding author.
+
+coding) to chain-of-thought (CoT) augmentation [ 25 , 33 , 49 ], of-fering unparalleled advantages in scalability and cost-efficiency [6]. However, many samples in synthetic datasets are low quality or contain hallucinations, especially when ground truth (GT) is missing or cannot be verified [ 4 , 34 ]. To balance data quality and quantity, the LLM-as-a-Judge framework has become a common industry approach. It uses strong models as pseudo-oracles to filter generated data [ 12 , 47 ]. However, this approach has clear limits. It requires high computational cost due to multi-turn generation, offers little interpretability in its decisions, and risks preference leakage, where the judge model amplifies the biases of the generator [19, 20]. Recent work on data efficiency challenges the idea that more data is always better . It shows that a small amount of high-quality data can match or even outperform training on full datasets. For example, LIMA [ 48 ] shows that model alignment depends more on data quality than on data size. This insight brings renewed attention to data selection, a classic machine learning problem that aims to find a small but highly useful subset of data [ 14 ]. However, many traditional selection methods do not scale well to modern LLMs or fail to capture the complexity of reasoning tasks. To bridge the gap between expensive semantic verification and scalable selection, we propose One-Step-Train (OST) . This frame-work reformulates selection as an incremental training utility rank-ing problem, estimating the marginal value of each sample via a simulated single-step update on a lightweight proxy. By grounding data quality in the actual optimization signal, OST effectively by-passes the prohibitive costs of retraining-based influence functions while maintaining high alignment with target model performance. Our main contributions are summarized as follows: 
+
+• We establish OST, an efficient data selection framework that significantly reduces total computational overhead (mea-sured in GPU hours) by 17%—including selection costs— while achieving a 43% reduction specifically in the training phase. Simultaneously, it improves model capability, im-proving upon heuristic scoring baselines like DEITA [ 22 ]and surpassing LLM-as-a-Judge baseline by 1.8 points. 
+
+• We find that the correlation between proxy model conver-gence and selection quality is non-monotonic. Our analy-sis shows that using a checkpoint with only 5% warm-up achieves the best trade-off between adapting to the target domain and resisting synthetic noise. In contrast, fully con-verged proxy models tend to overfit spurious patterns and hallucinations in synthetic data. 
+
+> arXiv:2605.07488v1 [cs.AI] 8 May 2026
+
+Jinhao Jing, Qiannian Zhao ∗, Chao Huang, and Zhan Su †Phase 1 ：Proxy Scoring Engine Phase 2 ：Ranking & Selection Phase 3 ：Target Training    
+
+> Synthetic Pool ( 𝐀 𝐀𵀀𝐀 )
+> Image (hard to
+> verify quality)
+> Text (hard to
+> verify answer)
+> Validation Set ( 𝐀 𝐀𵀀𝐀 )
+> Individual
+> Sample 𝐀 𝐀
+> 𝐀 𝐀
+> Proxy Model
+> 𝐀 𝐀𴐀𝐀𴰀𵀀
+> (Small Scale)
+> Compute Gradient
+> One-Step Update
+> Validation Loss Change
+> Utility
+> Score
+> Updated Model
+> 𝐀 ’i
+> Utility Scores
+> Image & Text
+> (CoT Content)
+> Cutoff (e.g., Top-20%)
+> Ranking
+> Selected
+> High-Utility
+> SubSet
+> (𝐀 𝐀𵀀𝐀 )
+> Image with Wrong Info
+> Text without Right Answer
+> Target Model
+> 𝐀 𝐀𵐀𴐀𰠀𵀀𝐀
+> (Large Scale)
+> Fine-Tuning
+> (SFT)
+> Improved Performance
+> on Target Benchmarks
+> Task-specific Mofel
+> Discard
+
+Figure 1: Overview of the One-Step-Train (OST) Pipeline. The process reformulates selection into three efficient phases: (1) Proxy Scoring: A lightweight proxy model estimates the marginal utility ( Δ𝑖 ) of each sample by measuring validation loss reduction after a simulated single gradient update. (2) Ranking & Selection: Samples are ordered by their update utility, filtering a high-value top-𝑝 % subset. (3) Target Training: The large target model is fine-tuned exclusively on this subset, effectively reversing negative transfer. 
+
+• Validated on the Qwen3-VL series, OST effectively identi-fies and purges toxic samples that degrade reasoning logic. We demonstrate a substantial Less is More phenomenon where a high-utility Top-20% subset notably outperforms the uncurated Full-SFT baseline by 8.8 points, effectively reversing the negative transfer [ 38 ] observed in complex benchmarks. 
+
+2 Related Work 
+
+We situate our work within two primary research streams: synthetic data evaluation via LLM-as-a-Judge, and efficient data selection grounded in data influence. 
+
+Synthetic Data Generation and Verification. Synthetic data has emerged as a cornerstone for instruction tuning and reasoning alignment, with recent works demonstrating its efficacy in domain-specific augmentation [ 25 , 33 , 49 ]. However, to mitigate inherent hallucinations [ 34 ] and prevent model collapse [ 4, 32 ], rigorous quality control is essential. The dominant verification paradigm, 
+
+LLM-as-a-Judge , employs strong models as pseudo-oracles to filter generated samples [ 12 , 47 ]. While effective, this generative ap-proach is constrained by prohibitive inference costs and the risk of preference leakage [ 19 , 20 ], motivating the shift towards more efficient, optimization-grounded selection metrics. 
+
+Data Selection and Influence Functions. Data selection aims to identify a training subset (coreset) that approximates or exceeds the performance of the full dataset [ 26 ]. This is often formalized through Influence Functions (IF), which quantify the counterfactual impact of a training point on test loss [ 17 ]. Recent studies affirm that high-quality subsets can drive strong performance in instruction tuning, challenging the necessity of massive datasets [7, 8, 48]. Current selection paradigms can be categorized by computa-tional overhead [ 45 ]: 1) Heuristic & Embedding Methods: Low-cost approaches rely on surface features like perplexity (PPL), re-sponse length, or embedding diversity [ 22 , 40 , 46 ]. While efficient, these metrics are often loosely correlated with downstream reason-ing capability. 2) Loss-Driven Proxies: Methods like Montessori-Instruct [ 21 ] and S2L [ 44 ] utilize small-model loss trajectories to es-timate data utility. Similarly, PreSelect trains lightweight classifiers to predict loss consistency across models [ 31 ]. 3) Gradient-Based Methods: These offer the highest theoretical fidelity by directly linking data to optimization signals. Notable examples include LESS [41 ], which projects gradients into a low-rank space for selection, and recent extensions to multimodal settings [23]. 
+
+3 Theoretical Foundations 
+
+We formulate synthetic data filtering as a ranking problem, as-signing a scalar utility to each sample 𝑧 𝑖 to maximize validation performance. Theoretically, Leave-One-Out (LOO) retraining serves as the ground-truth oracle for measuring exact counterfactual data influence, as it directly quantifies the change in validation loss if a specific sample is removed from the training set. However, cal-culating exact LOO is computationally prohibitive, requiring 𝑁 
+
+complete retrainings for a dataset of size 𝑁 . Influence Functions (IF) provide an approximation but suffer from Hessian instability in deep non-convex models [ 3 ]. To address these limitations, we intro-duce One-Step-Train (OST) , an incremental proxy that estimates utility by calculating a single step update from a fixed checkpoint 
+
+𝜽 . As shown in Appendix A, this formulation bypasses explicit cur-vature computation, reducing to a scalable gradient inner-product ranking. Efficient Data Selection for Multimodal Models via Incremental Optimization Utility 
+
+3.1 LOO Data Influence 
+
+The LOO influence measures the counterfactual validation loss change if a sample 𝑧 𝑖 is removed from the training set D [ 9 , 11 ]. Since calculating exact LOO requires |D| retrainings, Influence Functions (IF) approximate this via a second-order Taylor expansion [17]: 
+
+𝐼 IF (𝑧 𝑖 ) = −∇ 𝐿 V ( ˆ𝜽 )⊤H−1ˆ𝜽 ∇ℓ (𝑧 𝑖 ; ˆ𝜽 ), (1) where 𝐼 IF (𝑧 𝑖 ) represents the estimated influence score of sample 𝑧 𝑖 .In this formulation, ∇𝐿 V ( ˆ𝜽 ) denotes the gradient of the loss on the validation anchor set, representing the direction of optimal model improvement; ∇ℓ (𝑧 𝑖 ; ˆ𝜽 ) is the training gradient for sample 𝑧 𝑖 , which signifies the specific update direction that the sample provides; and 
+
+H−1ˆ𝜽 is the inverse Hessian matrix, which adjusts the alignment by accounting for the local curvature of the loss landscape. While IF correlates strongly with LOO in convex settings (Figure 2(a)), the inverse Hessian is prohibitively expensive and numerically unstable for large-scale LLMs, necessitating a Hessian-free approach. 
+
+3.2 Incremental Data Influence 
+
+While LOO is fundamentally retrospective —measuring how the model degrades if existing data is removed—the training of modern LMMs is inherently staged and incremental . Following pre-training, models undergo Supervised Fine-Tuning (SFT) to adapt to specific domains or instruction formats [ 13 , 28 , 39 ]. This paradigm shift necessitates a prospective view of data influence: rather than assess-ing the cost of removal, we focus on the marginal utility of a sample in advancing the model from its current state toward the target distribution . Specifically, we ask: To what extent does a single optimization step on this sample align the model’s trajectory with our validation objective? One-Step-Train Utility. Starting from a fixed checkpoint 𝜽 , we quantify the marginal utility of taking a single optimization step on a specific sample 𝑧 𝑖 . Let 𝒈 V (𝜽 ) ≜ ∇𝐿 V (𝜽 ) denote the gradient on the validation set, and 𝒈 𝑖 (𝜽 ) ≜ ∇ℓ (𝑧 𝑖 ; 𝜽 ) represent the gradient for sample 𝑧 𝑖 . We simulate a one-step parameter update 𝜽 + 
+
+> 𝑖
+
+= 𝜽 −
+
+𝜂 𝒈 𝑖 (𝜽 ). The resulting One-Step-Train (OST) utility , denoted as 
+
+Δ𝑖 (𝜽 ), is formally defined as the reduction in validation loss: 
+
+Δ𝑖 (𝜽 ) ≜ 𝐿 V (𝜽 ) − 𝐿 V (𝜽 + 
+
+> 𝑖
+
+), (2) where the symbol ≜ signifies a formal definition. In this formulation, 
+
+V refers to the validation anchor set , a representative subset strictly aligned with the target task distribution to provide the optimization direction. A positive utility score ( Δ𝑖 > 0) implies that sample 𝑧 𝑖 provides a gradient direction beneficial for the target task, directly contributing to model improvement on the anchor set. Conversely, samples with negative utility ( Δ𝑖 < 0) are identified as toxic samples that cause negative transfer and must be purged to maintain reasoning logic. 
+
+Ranking Consistency (Hessian-Free). Although Eq. 2 is intuitive, it requires expensive forward passes on V for each candidate. How-ever, assuming the validation loss is 𝛽 -smooth, we can apply a first-order Taylor expansion where the remainder is strictly bounded by  
+
+> 𝛽𝜂 2
+> 2
+
+∥𝒈 𝑖 (𝜽 )∥ 2. Consequently, the utility is dominated by the linear alignment term: 
+
+Δ𝑖 (𝜽 ) ≈ 𝜂 · 𝒈 V (𝜽 )⊤𝒈 𝑖 (𝜽 ). (3) This leads to our core ranking theorem: 
+
+Theorem 3.1 (Ranking Consistency). Let 𝑠 𝑖 (𝜽 ) = 𝒈 V (𝜽 )⊤𝒈 𝑖 (𝜽 )
+
+be the gradient inner-product score. If the step size 𝜂 is sufficiently small to satisfy 𝜂 ≤ 2𝛾 /𝛽 (∥ 𝒈 𝑖 ∥2 + ∥ 𝒈 𝑗 ∥2) for a given score margin 𝛾 ,the utility ranking perfectly preserves the gradient alignment order: 
+
+Δ𝑖 (𝜽 ) > Δ𝑗 (𝜽 ) ⇐⇒ 𝑠 𝑖 (𝜽 ) > 𝑠 𝑗 (𝜽 ). (4) We empirically validate this alignment in Figure 2(b)–(c), where OST rankings exhibit significant overlap with the computationally expensive IF rankings, confirming that we can select high-utility data simply by computing dot products, effectively bypassing the Hessian inverse (More details are shown in Appendix A). 
+
+3.3 Theoretical Stability and Transferability 
+
+We briefly address the validity of these instantaneous scores over practical training windows and across model sizes. 
+
+Stability over Training. Since Δ𝑖 is local, does the ranking hold as parameters evolve? Assuming Lipschitz continuous gradients (𝐿 V , 𝐿 𝑖 ) and a bounded parameter drift ∥𝜽 𝑡 −𝜽 0 ∥ ≤ 𝑅 typical in fine-tuning, the ranking remains mathematically stable (More details are shown in Appendix A.3). 
+
+Theorem 3.2 (Ranking Stability). If the initial score margin 
+
+𝑀 0 = 𝑠 𝑖, 0 −𝑠 𝑗, 0 dominates the drift bound (i.e., 𝑀 0 > 2[𝐿 V (𝐵 𝑖 + 𝐵 𝑗 ) + (𝐿 𝑖 + 𝐿 𝑗 )𝐵 V ]𝑅 ), the utility ordering at initialization ( 𝑡 = 0) is strictly preserved at step 𝑡 :
+
+𝑠 𝑖, 0 > 𝑠 𝑗, 0 =⇒ 𝑠 𝑖,𝑡 > 𝑠 𝑗,𝑡 . (5) 
+
+Cross-Model Alignment. To ensure scalability, we estimate util-ity using a lightweight proxy model. This strategy is theoretically grounded in the Subspace Alignment Hypothesis . Let 𝒈 (𝑀 ) and 
+
+𝒈 (𝑚 ) denote the gradients of the target and proxy models. Assum-ing they share a low-rank structure differing by an isometry P and scaling 𝛼 (i.e., ∥𝒈 (𝑀 ) − 𝛼 P𝒈 (𝑚 ) ∥ ≤ 𝜖 ), the target utility decomposes into 𝑠 (𝑀 ) 
+
+> 𝑖
+
+≈ 𝛼 2𝑠 (𝑚 ) 
+
+> 𝑖
+
++ R noise . Thus, the ranking order remains consis-tent across model scales provided the scaled proxy margin exceeds the alignment noise. 
+
+4 Pipeline 
+
+We propose One-Step-Train (OST) , a pipeline that operationalizes the incremental influence framework into a scalable selection pro-cess. As detailed in Algorithm 1, OST identifies high-utility subsets through three streamlined phases. 
+
+Phase 1: Utility Scoring. For every candidate sample 𝑧 𝑖 , we sim-ulate a single optimization step on the proxy parameters 𝜃 . We quantify the sample’s value as the resulting reduction in validation loss, denoted as Δ𝑖 (Eq. 2). 
+
+Phase 2: Ranking and Filtering. We treat data quality as a ranking problem. The synthetic pool is sorted by utility scores {Δ𝑖 }, and a hard threshold (Top-𝑝 %) is applied to isolate the high-value subset 
+
+Dsel . This step rigorously filters out toxic samples ( Δ𝑖 < 0, causing negative transfer) and ineffective samples ( Δ𝑖 ≈ 0). Jinhao Jing, Qiannian Zhao ∗, Chao Huang, and Zhan Su †-3.0 -1.5 0.0 1.5 3.0 
+
+Actual Difference in Loss (×10 −4 ) 
+
+> -3.0
+> -1.5
+> 0.0
+> 1.5
+> 3.0
+> Estimated Difference in Loss (×10 −4 )
+> MAE = 1.83e-05
+> R2= 0.956
+
+Actual vs. Estimated Loss Difference 
+
+> Ideal Prediction
+
+(a) IF vs. LOO (scatter) 0 10000 20000 30000 40000 50000 
+
+Number of Samples (Max: 55,000) 
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Overlap Percentage (%)
+
+Overlap Consistency (Highest Scores)  
+
+> Actual Overlap (%)
+> Random Baseline
+> Ideal (100%)
+
+(b) Top-𝑝 % overlap 0 10000 20000 30000 40000 50000 
+
+Number of Samples (Max: 55,000) 
+
+> 0
+> 20
+> 40
+> 60
+> 80
+> 100
+> Overlap Percentage (%)
+
+Overlap Consistency (Lowest Scores)  
+
+> Actual Overlap (%)
+> Random Baseline
+> Ideal (100%)
+
+(c) Bottom-𝑝 % overlap Figure 2: Sanity checks on 10-class MNIST (55K examples) using a linear regression model. (a) IF vs. LOO: Comparison between Influence Function (IF) scores and exact Leave-One-Out (LOO) loss changes for the top-200 influential examples. The strong linear alignment validates IF as a reliable proxy for LOO in this convex setting. (b)–(c) Ranking Agreement: Alignment between our One-Step-Train utility and IF. To establish a rigorous evaluation chain, we first validate IF as a computationally tractable proxy for the prohibitively expensive exact LOO in (a), and subsequently utilize IF as the ground truth to benchmark our OST method. The observed overlap for top-𝑝 % and bottom-𝑝 % subsets significantly exceeds the random baseline (dashed line). Note that as the selected subset size reaches the total dataset volume (55,000), any two ranking methods will naturally select the entire pool, causing the overlap to predictably converge to 100%. 
+
+Phase 3: Target Optimization. The large-scale target model 𝜃 target 
+
+is fine-tuned exclusively on the curated subset Dsel . By training solely on samples with positive validation alignment, we maximize data efficiency while minimizing the risk of model collapse. 
+
+5 Experiments 5.1 Experimental Settings 
+
+Data Setup. We construct a training corpus comprising 351,157 multimodal mathematical problems sourced from real-world exam-inations. To enhance reasoning density, we augment this dataset by synthesizing Chain-of-Thought (CoT) rationales using Doubao-Seed-1.6-thinking , followed by a rigorous quality verification pipeline. Detailed synthesis protocols, including the inverse ren-dering technique and filtering hyperparameters, are provided in Appendix C.1. 
+
+Anchor Set and Evaluation Benchmarks. The OST utility calcu-lation relies on a representative validation anchor V. We employ a stratified subset of 100 examples strictly aligned with the dis-tribution of our held-out test set. For downstream evaluation, we assess performance on: (1) An Internal Benchmark of 500 ques-tions spanning four difficulty tiers (Statistics in Table 1); and (2) Four open-source benchmarks: MathVision [36 ], MathVista [ 24 ], 
+
+WeMath [29 ], and LogicVista [ 42 ], to test out-of-distribution gen-eralization. 
+
+Baselines. We evaluate OST against three comparative strategies to isolate the impact of data quality: (1) Full SFT : Fine-tuning on the complete synthetic corpus (351k samples) to benchmark the 
+
+Algorithm 1 One-Step-Train Data Selection 
+
+Require: Synthetic candidate pool Dsyn = {𝑧 𝑖 }𝑁 𝑖 =1; Validation set 
+
+V (Anchor); Model parameters 𝜃 (or Proxy 𝜃 proxy ); Selection ratio 𝑝 %; Learning rate 𝜂 .
+
+Ensure: Selected high-utility subset Dsel .
+
+// Phase 1: Utility Scoring  
+
+> 1:
+
+Compute baseline validation loss:  
+
+> 2:
+
+𝐿 base ← 𝐿 V (𝜃 ) 
+
+> 3:
+
+for each sample 𝑧 𝑖 ∈ D syn do  
+
+> 4:
+
+Step 1.1: Compute gradient on sample 𝑧 𝑖  
+
+> 5:
+
+𝑔 𝑖 ← ∇ ℓ (𝑧 𝑖 ; 𝜃 ) 
+
+> 6:
+
+Step 1.2: Simulate one-step update  
+
+> 7:
+
+𝜃 ′ 
+
+> 𝑖
+
+← 𝜃 − 𝜂 · 𝑔 𝑖  
+
+> 8:
+
+Step 1.3: Measure validation impact  
+
+> 9:
+
+𝐿 new ← 𝐿 V (𝜃 ′ 
+
+> 𝑖
+
+) 
+
+> 10:
+
+Δ𝑖 ← 𝐿 base − 𝐿 new  
+
+> 11:
+
+end for // Phase 2: Ranking and Selection  
+
+> 12:
+
+Sort Dsyn based on scores {Δ𝑖 } in order.  
+
+> 13:
+
+Determine cutoff threshold 𝐾 . 
+
+> 14:
+
+Dsel ← Top-K (D syn , {Δ𝑖 }) .
+
+// Phase 3: Downstream Training  
+
+> 15:
+
+Initialize target model 𝜃 target . 
+
+> 16:
+
+Train 𝜃 target on Dsel (Standard SFT).  
+
+> 17:
+
+return Dsel 
+
+performance ceiling of data quantity versus the risk of noise accu-mulation; (2) Random Selection : Uniformly sampling subsets to Efficient Data Selection for Multimodal Models via Incremental Optimization Utility 
+
+Category Domain Size 
+
+Arithmetic & Algebra 
+
+Calculation 50 Number Concepts 50 Word Problems 50 
+
+Geometry & Visual Geometry 50 Visual & Graphs 50 
+
+K-12 Benchmarks 
+
+Middle School Math Exam 50 High School Math Exam 50 Math Olympiad 50 
+
+Higher Education Graduate Exam (Math I) 50 Graduate Exam (Math III) 50 
+
+Total Internal Test Set 500 
+
+Table 1: Statistics of the Internal Benchmark. The dataset is categorized into four capability groups to evaluate perfor-mance across varying difficulty levels. 
+
+establish a lower bound, representing the expected performance without active filtering; (3) LLM-as-a-Judge : A strong baseline representing the industry standard, which utilizes Qwen3VL-235B-A22B-Instruct [ 2] to verify reasoning correctness for rejection sam-pling (see Appendix E for the verification prompt). (4) DEITA : A state-of-the-art heuristic scoring baseline for data selection [ 22 ]. To adapt this method to our multimodal reasoning context, we em-ploy its open-source scorers to evaluate the textual complexity and quality of the generated CoT rationales. The candidate samples are then ranked by their combined score ( 𝑐𝑜𝑚𝑝𝑙𝑒𝑥𝑖𝑡𝑦 × 𝑞𝑢𝑎𝑙𝑖𝑡𝑦 ) and iteratively selected using its embedding-based diversity module (Repr Filter) to match our target data budget. 
+
+Implementation Framework. We adopt a decoupled proxy-target framework to balance selection cost and training performance. For utility scoring (Phase 1), we employ InternVL3-1B [ 50 ] as a light-weight computational proxy. For downstream validation (Phase 3), we utilize two distinct target architectures: a proprietary 30B Mul-timodal Model (integrating a Qwen3-30B-A3B language backbone [ 43 ] with a ViT-300M vision encoder [ 10 ]) and the open-source Qwen3-VL series (2B, 4B, and 8B). Specific training hyperparame-ters and hardware configurations and detailed setups for the base-lines (including LLM-as-a-Judge and DEITA ) are provided in Ap-pendix C. 
+
+Evaluation Protocols. To rigorously disentangle the impact of data quality from the computational budget, we evaluate the selected subsets Dsel under two distinct training regimes: 
+
+• Protocol A (Proportional Steps): The number of training epochs is fixed across all subsets, meaning the total train-ing steps scale linearly with the subset size. This setting evaluates time efficiency , demonstrating how much training time can be saved in constrained production environments by using a smaller, curated dataset. 
+
+• Protocol B (Fixed Compute): The total computational budget (i.e., total optimization steps) is strictly fixed across all subsets, which naturally requires more training epochs for smaller subsets. This setting isolates intrinsic data den-sity , testing whether training longer on a high-quality sub-set yields better convergence per unit of compute without severe overfitting. 
+
+5.2 Main Results 
+
+We empirically validate the One-Step-Train (OST) framework across computational efficiency and downstream model capability. 
+
+Utility Distribution and Qualitative Analysis. To elucidate the selection mechanism, we visualize the distribution of proxy utility scores in Figure 4. The distribution exhibits a long left tail (negative values), corresponding to samples that effectively reduce validation loss ( Δ𝑖 > 0 in our definition). Conversely, the probability mass centered around zero or positive values represents samples with negligible or conflicting gradient directions. By applying a hard threshold, OST explicitly isolates the high-utility region while fil-tering out the toxic tail that potentially destabilizes training. For a concrete analysis of the semantic differences between these parti-tions, we refer readers to the Qualitative Case Study in Appendix D. Additionally, we verify the statistical independence of these util-ity scores in Appendix C, confirming that the ranking is robust to processing order. −0.020 −0.015 −0.010 −0.005 0.000 
+
+One-Step-Train Utility Scores 
+
+> 0
+> 25
+> 50
+> 75
+> 100
+> 125
+> 150
+> Density
+> Best
+> -0.0236
+> Worst
+> 0.0007
+
+Distribution of Utility Scores 
+
+> Frequency
+> KDE Curve
+> Mean: -0.0158
+> Top 20% Cutoff (-0.018)
+
+Figure 4: Distribution of One-Step-Train Utility Scores. Sam-ples in the Best region (left tail) exhibit strong alignment with the validation anchor, whereas Worst samples (right tail) introduce noise or conflicting updates. The vertical dot-ted line marks the Top-20% selection threshold. 
+
+Data Density. We further isolate the impact of data quality under a fixed compute budget (Protocol B in Table 2). A Less is More phe-nomenon is observed: the Best-20% subset yields the highest return on compute, achieving an average score of 69.3 . This performance significantly outperforms the industry-standard LLM-as-a-Judge 
+
+baseline (63.7) and the larger Top-50% subset (65.5). Most notably, it surpasses the Full-SFT setting (60.5) by a substantial margin of 8.8 
+
+points. These results suggest that deep optimization (more epochs) Jinhao Jing, Qiannian Zhao ∗, Chao Huang, and Zhan Su †
+
+## (a) Overall Impact of Training Budget & Epochs Subset Data Size Protocol A: Proportional Steps Protocol B: Fixed Compute 
+
+## (Selection) (Count) Epochs Steps Avg. Score Epochs Steps Avg. Score 
+
+## Base (Before SFT) - - - 59.0 - - 59.0 Full-SFT (100%) 351.2k ≈1.0 2000 60.5 (-3.2) ≈1.0 2000 60.5 (-3.2) 
+
+## LLM-as-a-Judge 285.2k ≈1.0 1500 63.7 ≈1.0 1500 63.7 
+
+## Best-10% 35.1k ≈1.0 200 61.7 (-2.0) ≈5.0 1000 67.5 (+3.8) 
+
+## Best-20% 70.2k ≈1.0 400 62.9 (-0.8) ≈2.5 1000 69.3 (+5.6) 
+
+## Best-30% 105.3k ≈1.0 600 62.7 (-1.0) ≈1.6 1000 64.1 (+0.4) 
+
+## Best-50% 175.6k ≈1.0 1000 65.5 (+1.8) ≈1.0 1000 65.5 (+1.8) 
+
+(b) Fine-grained Analysis by Category (Actual Score & Δ)Protocol A: Iso-data Protocol B: Iso-Compute Subset Arith. & Alg. Geom. & Vis. K-12 Bench. Higher Ed. Arith. & Alg. Geom. & Vis. K-12 Bench. Higher Ed. 
+
+Base 70.7 59.0 44.7 29.0 70.7 59.0 44.7 29.0 Full-SFT 74.5 (-0.8) 57.0 (-6.0) 60.0 (-5.3) 28.0 (-13.0) 74.5 (-0.8) 57.0 (-6.0) 60.0 (-5.3) 28.0 (-13.0) 
+
+Judge 75.3 63.0 65.3 41.0 75.3 63.0 65.3 41.0 
+
+Best-10% 74.0 (-1.3) 58.0 (-5.0) 61.3 (-4.0) 44.0 (+3.0) 76.6 (+1.3) 65.0 (+2.0) 72.6 (+7.3) 45.0 (+4.0) 
+
+Best-20% 76.0 (+0.7) 61.0 (-2.0) 68.0 (+2.7) 34.0 (-7.0) 80.0 (+4.7) 65.0 (+2.0) 73.3 (+8.0) 48.0 (+7.0) 
+
+Best-30% 74.0 (-1.3) 58.0 (-5.0) 70.0 (+4.7) 36.0 (-5.0) 76.6 (+1.3) 62.0 (-1.0) 68.6 (+3.3) 37.0 (-4.0) 
+
+Best-50% 76.6 (+1.3) 62.0 (-1.0) 72.0 (+6.7) 39.0 (-2.0) 76.6 (+1.3) 62.0 (-1.0) 72.0 (+6.7) 39.0 (-2.0) 
+
+Table 2: Impact of Data Quality vs. Compute Budget. (a) Under Protocol B (Fixed Compute), the Best-20% subset achieves the highest Average Score (+5.6%), significantly outperforming both the LLM-as-a-Judge baseline and the uncurated Full-SFT setting. This validates the Less is More hypothesis, where prioritizing data density yields superior convergence over mere data quantity. (b) The fine-grained breakdown reveals that while Full-SFT struggles with complex reasoning (e.g., Higher Ed), the OST-selected subsets effectively unlock these capabilities, achieving substantial gains over the Base model. 
+
+Method Phase 1: Selection Phase 2: Training (SFT) Avg. Score Resource Time Resource Data Size Epochs Time 
+
+LLM-as-a-Judge API, 0 GPU 5.0h † 64 × H100 285.2k 1 4.2h 63.7 (Base) 
+
+(3 Rounds) 
+
+OST (Top-50%) 
+
+16 × H100 (Block-wise) 4.4h † 64 × H100 175.6k 1 2.4h 65.5 (+1.8) 
+
+OST (Top-30%) 105.3k 1 1.5h 62.7 (-1.0) 
+
+OST (Top-20%) 70.2k 1 0.9h 62.9 (-0.8) 
+
+OST (Top-10%) 35.1k 1 0.5h 61.7 (-2.0) 
+
+Table 3: Efficiency and Performance Trade-off on Internal Benchmark. This table compares the wall-clock time and resulting performance. In terms of total computational cost, the Judge baseline consumes approximately 269 GPU Hours ( 64 GPUs × 4.2h)for training. In contrast, even when including the selection overhead ( 16 GPUs × 4.4h ≈ 70 GPU Hours), the Top-50% OST pipeline consumes only 224 GPU Hours in total ( 70 + 154 ). This achieves a 17% reduction in total compute resources (and a 43% reduction in the expensive training phase) while boosting accuracy by 1.8 points. ( †OST or LLM-as-a-Judge selection is a one-time cost). Efficient Data Selection for Multimodal Models via Incremental Optimization Utility 
+
+Model MathVista MathVision WeMath LogicVista Avg. Δ    
+
+> (Total Samples) (1000) (3040) (525) (447)
+
+Closed-Source SOTA Models 
+
+Gemini3-pro 88.5 83.4 73.8 81.4 81.8 -GPT-5-20250807 81.9 72.0 71.0 70.0 73.7 -Doubao-Seed-1.6 85.9 67.8 78.5 72.5 76.2 -GLM-4.5V 84.6 65.6 68.8 62.4 70.4 -
+
+Open-Source Large Baselines 
+
+Qwen3-VL-235B-Thinking 85.9 74.6 74.9 72.3 76.9 -Kimi-vl-A3B-thinking 80.1 56.8 47.0 51.0 58.7 -
+
+Data Selection Strategy 
+
+Qwen3-VL-2B-Instruct (Base) 64.1 34.5 35.8 46.8 45.3 -+ Full SFT (100%) 63.4 (-0.7) 34.1 (-0.4) 34.9 (-0.9) 45.6 (-1.2) 44.5 -0.8 + Random (20%) 63.8 (-0.3) 34.3 (-0.2) 35.4 (-0.4) 45.9 (-0.9) 44.9 -0.4 + LLM-as-a-Judge (20%) 64.5 (+0.4) 35.0 (+0.5) 36.2 (+0.4) 46.5 (-0.3) 45.5 +0.3 + DEITA (Top-20%) 64.6 (+0.5) 34.9 (+0.4) 36.5 (+0.7) 46.7 (-0.1) 45.7 +0.4 + OST (Ours, Best-20%) 64.9 (+0.8) 34.8 (+0.3) 37.5 (+1.7) 47.0 (+0.2) 46.1 +0.8 Qwen3-VL-4B-Instruct (Base) 74.9 54.1 54.3 60.0 60.8 -+ Full SFT (100%) 73.2 (-1.7) 53.8 (-0.3) 52.6 (-1.7) 58.2 (-1.8) 59.5 -1.3 + Random (20%) 74.2 (-0.7) 54.0 (-0.1) 53.9 (-0.4) 59.5 (-0.5) 60.4 -0.4 + LLM-as-a-Judge (20%) 75.3 (+0.4) 54.6 (+0.5) 55.0 (+0.7) 59.7 (-0.3) 61.2 +0.4 + DEITA (Top-20%) 75.1 (+0.2) 54.5 (+0.4) 55.2 (+0.9) 59.6 (-0.4) 61.1 +0.3 + OST (Ours, Best-20%) 75.8 (+0.9) 54.8 (+0.7) 56.0 (+1.7) 60.4 (+0.4) 61.8 +1.0 Qwen3-VL-8B-Instruct (Base) 77.2 57.8 57.5 61.3 63.5 -+ Full SFT (100%) 70.5 (-6.7) 54.8 (-3.0) 55.2 (-2.3) 60.0 (-1.3) 60.1 -3.4 + Random (20%) 76.1 (-1.1) 57.1 (-0.7) 56.8 (-0.7) 60.6 (-0.7) 62.7 -0.8 + LLM-as-a-Judge (20%) 77.6 (+0.4) 58.2 (+0.4) 58.1 (+0.6) 60.9 (-0.4) 63.7 +0.2 + DEITA (Top-20%) 77.5 (+0.3) 58.3 (+0.5) 58.6 (+1.1) 61.2 (-0.1) 63.9 +0.4 + OST (Ours, Best-20%) 77.4 (+0.2) 58.5 (+0.7) 59.0 (+1.5) 61.5 (+0.2) 64.1 +0.6 
+
+Table 4: Benchmarking Data Selection Strategies. Comparative results on Qwen3-VL series. The table highlights the trade-offs between different selection methods. While the heuristic scoring baseline ( DEITA [ 22 ] Top-20% ) performs competitively and often matches the LLM-as-a-Judge approach, both methods fall short on complex logic tasks compared to optimization-grounded methods. Specifically, they struggle with deep reasoning logic ( LogicVista ), sometimes degrading performance compared to Base. In contrast, OST (Best-20%) consistently improves complex reasoning capabilities ( WeMath , LogicVista ) and provides the highest average gain across all model scales, effectively countering the negative transfer observed in Full SFT. 
+
+on a compact, high-gradient-utility core is far more effective than shallow training on large, noisy corpora. 
+
+Pareto-Optimal Cost. Table 3 delineates the prohibitive compu-tational overhead inherent in the semantic filtering paradigm: the 
+
+LLM-as-a-Judge baseline incurs substantial training overhead (269 GPU Hours) due to high data retention. In contrast, OST achieves a Pareto improvement in resource allocation. Even accounting for the selection overhead (approx. 70 GPU Hours), the Top-50% pipeline reduces the total computational cost by 17% . Notably, for the repetitive SFT phase, OST reduces resource consumption by 43% 
+
+(154h vs. 269h) while simultaneously improving average accuracy by 1.8 points, demonstrating superior scalability for production environments. 
+
+Generalization and Negative Transfer. Finally, we verify the trans-ferability of our findings to the Qwen3-VL series (Table 4). A critical finding is the reversal of negative transfer in complex reasoning tasks. On benchmarks like LogicVista , Full SFT degrades perfor-mance compared to the base model (e.g., -1.8 points on Qwen3-VL-4B), likely due to overfitting on hallucinated reasoning chains. Jinhao Jing, Qiannian Zhao ∗, Chao Huang, and Zhan Su †0 2,000 4,000 6,000 8,000 10,000 
+
+# Training Steps 
+
+0.4 
+
+0.5 
+
+0.6 
+
+0.7 
+
+> Cross-Entropy Loss  Cold Start
+> Warm-up (5%)
+> Loss Stable
+> 1 Epoch Done
+
+# Training Loss Convergence 
+
+0 2,000 4,000 6,000 8,000 10,000 
+
+# Training Steps 
+
+1
+
+2
+
+3
+
+4
+
+5
+
+> Gradient Norm ( L2)
+
+# Gradient Stability 
+
+Figure 3: Training Dynamics and Checkpoint Selection. Checkpoints are saved at four representative stages to score the held-out data pool. 
+
+While heuristic scoring methods like DEITA [22 ] successfully miti-gate this severe degradation by filtering out obvious low-quality noise, they still fall short of optimization-grounded methods in maximizing reasoning gains. Because surface-level heuristics (e.g., length, structural complexity) cannot reliably detect whether a seemingly "complex" reasoning chain contains subtle mathematical flaws, they may still retain samples that limit the model’s reason-ing potential. In contrast, OST identifies and purges toxic samples based on their actual optimization utility, achieving the highest net positive gain (+0.4). This confirms that gradient-based utility serves as a more robust, model-agnostic metric for filtering subtle logical errors than heuristic and semantic judges. 
+
+5.3 Ablation: Utility Dynamics across Training States 
+
+To investigate the impact of proxy optimization on selection qual-ity, we conducted a split-half ablation study. We fine-tuned the InternVL3-1B proxy on the synthetic set Dtrain and evaluated check-points from four phases (Figure 3) by filtering the held-out Dpool .
+
+Proxy Checkpoint Progress Avg. Score Δ
+
+baseline - 63.5 -Cold Start 0% 63.9 +0.4 
+
+Warm-up 5% 64.1 +0.6 
+
+Loss Stable 25% 63.9 +0.4 Converged 100% 63.7 +0.2 
+
+Table 5: Ablation on Proxy Training State. The Warm-up checkpoint achieves optimal selection performance. Further training degrades discriminatory capability due to overfitting to synthetic noise. 
+
+Table 5 reveals a non-monotonic trend where performance peaks at the Warm-up stage (5%, +0.6 ). While the pre-trained proxy (0%) offers effective zero-shot filtering (+0.4), further training to conver-gence degrades performance (+0.2). We attribute this drop to noise overfitting [1]: a converged proxy assimilates synthetic halluci-nations, losing its discriminative power. Thus, a minimally tuned proxy optimally balances CoT adaptation with noise robustness. 
+
+6 Conclusion 
+
+This work reformulates synthetic data curation by shifting from opaque semantic filtering to transparent, optimization-grounded selection. Our One-Step-Train (OST) framework demonstrates that marginal data utility can be effectively captured via simulated gradient updates on lightweight proxies, bypassing the overhead of traditional influence functions. The empirical gains achieved across the QwenVL underscore a critical insight: model scaling is constrained less by data scarcity than by the accumulation of reasoning hallucinations. By identifying and purging these toxic samples, OST provides a Pareto-optimal path for data-efficient train-ing. Looking forward, grounding data quality in optimization dy-namics offers a robust foundation for autonomous, self-improving reasoning systems. 
+
+Limitations 
+
+Dependency on Anchor Quality. OST relies on the validation set 
+
+V to define the optimization direction. Consequently, the method is sensitive to the representativeness of V. If the anchor set is biased or insufficient, the utility metric Δ𝑖 risks guiding the model to overfit specific artifacts rather than acquiring generalized reasoning, posing a challenge for subjective domains where ground truth is ambiguous. 
+
+Point-wise Ranking vs. Collective Influence. OST treats selection as a greedy, point-wise ranking problem. As noted in Most Influ-ential Subset Selection (MISS) research [ 15 ], this additive approach neglects data redundancy and interaction effects. Consequently, Efficient Data Selection for Multimodal Models via Incremental Optimization Utility 
+
+OST may select a subset that is individually high-scoring but col-lectively suboptimal (e.g., lacking diversity) compared to holistic subset selection strategies. 
+
+Bounds of Proxy Transferability. While our experiments validate utility transfer from 1B to 8B models (supported by the Subspace Alignment theory in Appendix B), the limits of this mechanism remain unexplored. The stability of gradient alignment across het-erogeneous architectures (e.g., Transformer to SSM) or extreme pa-rameter scales warrants further theoretical investigation to bound the projection error. 
+
+References 
+
+[1] Devansh Arpit, Stanislaw Jastrzebski, Nicolas Ballas, David Krueger, Emmanuel Bengio, Maxinder S. Kanwal, Tegan Maharaj, Asja Fischer, Aaron C. Courville, Yoshua Bengio, and Simon Lacoste-Julien. 2017. A Closer Look at Memorization in Deep Networks. In Proceedings of the 34th International Conference on Machine Learning, ICML 2017, Sydney, NSW, Australia, 6-11 August 2017 (Proceedings of Machine Learning Research, Vol. 70) , Doina Precup and Yee Whye Teh (Eds.). PMLR, 233–242. http://proceedings.mlr.press/v70/arpit17a.html [2] Shuai Bai, Yuxuan Cai, Ruizhe Chen, Keqin Chen, Xionghui Chen, Zesen Cheng, Lianghao Deng, Wei Ding, Chang Gao, Chunjiang Ge, Wenbin Ge, Zhifang Guo, Qidong Huang, Jie Huang, Fei Huang, Binyuan Hui, Shutong Jiang, Zhaohai Li, Mingsheng Li, Mei Li, Kaixin Li, Zicheng Lin, Junyang Lin, Xuejing Liu, Jiawei Liu, Chenglong Liu, Yang Liu, Dayiheng Liu, Shixuan Liu, Dunjie Lu, Ruilin Luo, Chenxu Lv, Rui Men, Lingchen Meng, Xuancheng Ren, Xingzhang Ren, Sibo Song, Yuchong Sun, Jun Tang, Jianhong Tu, Jianqiang Wan, Peng Wang, Pengfei Wang, Qiuyue Wang, Yuxuan Wang, Tianbao Xie, Yiheng Xu, Haiyang Xu, Jin Xu, Zhibo Yang, Mingkun Yang, Jianxin Yang, An Yang, Bowen Yu, Fei Zhang, Hang Zhang, Xi Zhang, Bo Zheng, Humen Zhong, Jingren Zhou, Fan Zhou, Jing Zhou, Yuanzhi Zhu, and Ke Zhu. 2025. Qwen3-VL Technical Report. arXiv:2511.21631 [cs.CV] https://arxiv.org/abs/2511.21631 [3] Samyadeep Basu, Phillip Pope, and Soheil Feizi. 2021. Influence Functions in Deep Learning Are Fragile. In 9th International Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7, 2021 . OpenReview.net. https:// openreview.net/forum?id=xHKVVHGDOEk [4] André Bauer, Simon Trapp, Michael Stenger, Robert Leppich, Samuel Kounev, Mark Leznik, Kyle Chard, and Ian Foster. 2024. Comprehensive Exploration of Synthetic Data Generation: A Survey. arXiv:2401.02524 [cs.LG] https://arxiv. org/abs/2401.02524 [5] Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei. 2020. Language Models are Few-Shot Learners. In Advances in Neural Information Processing Systems 33: Annual Conference on Neural Information Processing Systems 2020, NeurIPS 2020, December 6-12, 2020, virtual , Hugo Larochelle, Marc’Aurelio Ranzato, Raia Hadsell, Maria-Florina Balcan, and Hsuan-Tien Lin (Eds.). https://proceedings.neurips.cc/paper/2020/ hash/1457c0d6bfcb4967418bfb8ac142f64a-Abstract.html [6] Hsin-Yu Chang, Pei-Yu Chen, Tun-Hsiang Chou, Chang-Sheng Kao, Hsuan-Yun Yu, Yen-Ting Lin, and Yun-Nung Chen. 2024. A Survey of Data Synthesis Approaches. arXiv:2407.03672 [cs.LG] https://arxiv.org/abs/2407.03672 [7] Hao Chen, Yiming Zhang, Qi Zhang, Hantao Yang, Xiaomeng Hu, Xuetao Ma, Yifan Yanggong, and Junbo Zhao. 2023. Maybe Only 0.5% Data is Needed: A Preliminary Exploration of Low Training Data Instruction Tuning. arXiv:2305.09246 [cs.AI] https://arxiv.org/abs/2305.09246 [8] Lichang Chen, Shiyang Li, Jun Yan, Hai Wang, Kalpa Gunaratna, Vikas Yadav, Zheng Tang, Vijay Srinivasan, Tianyi Zhou, Heng Huang, and Hongxia Jin. 2024. AlpaGasus: Training a Better Alpaca with Fewer Data. In The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net. https://openreview.net/forum?id=FdVXgSJhvz [9] R. Dennis Cook and Sanford Weisberg. 1980. Characterizations of an Empirical Influence Function for Detecting Influential Cases in Regression. Technometrics 
+
+22, 4 (1980), 495–508. http://www.jstor.org/stable/1268187 [10] Alexey Dosovitskiy, Lucas Beyer, Alexander Kolesnikov, Dirk Weissenborn, Xi-aohua Zhai, Thomas Unterthiner, Mostafa Dehghani, Matthias Minderer, Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and Neil Houlsby. 2021. An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale. In 9th Interna-tional Conference on Learning Representations, ICLR 2021, Virtual Event, Austria, May 3-7, 2021 . OpenReview.net. https://openreview.net/forum?id=YicbFdNTTy [11] A E Gelfand, D K Dey, and H Chang. 1992. Model Determination using Predictive Distributions with Implementation via Sampling-Based Methods. In 
+
+Bayesian Statistics 4: Proceedings of the Fourth Valencia International Meeting, Dedicated to the memory of Morris H. DeGroot, 1931–1989 . Oxford University Press. arXiv:https://academic.oup.com/book/0/chapter/422209554/chapter-pdf/52447179/isbn-9780198522669-book-part-9.pdf doi:10.1093/oso/ 9780198522669.003.0009 [12] Jiawei Gu, Xuhui Jiang, Zhichao Shi, Hexiang Tan, Xuehao Zhai, Chengjin Xu, Wei Li, Yinghan Shen, Shengjie Ma, Honghao Liu, Saizhuo Wang, Kun Zhang, Yuanzhuo Wang, Wen Gao, Lionel Ni, and Jian Guo. 2025. A Survey on LLM-as-a-Judge. arXiv:2411.15594 [cs.CL] https://arxiv.org/abs/2411.15594 [13] Suchin Gururangan, Ana Marasović, Swabha Swayamdipta, Kyle Lo, Iz Beltagy, Doug Downey, and Noah A. Smith. 2020. Don’t Stop Pretraining: Adapt Language Models to Domains and Tasks. In Proceedings of the 58th Annual Meeting of the Association for Computational Linguistics , Dan Jurafsky, Joyce Chai, Natalie Schluter, and Joel Tetreault (Eds.). Association for Computational Linguistics, Online, 8342–8360. doi:10.18653/v1/2020.acl-main.740 [14] Peter Hart. 1968. The condensed nearest neighbor rule (corresp.). IEEE transac-tions on information theory 14, 3 (1968), 515–516. [15] Yuzheng Hu, Pingbang Hu, Han Zhao, and Jiaqi W. Ma. 2024. Most Influential Subset Selection: Challenges, Promises, and Beyond. In Ad-vances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024 , Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang (Eds.). http://papers.nips.cc/paper_files/paper/2024/hash/ d8684e49752e06ac5e4b554b60ad212a-Abstract-Conference.html [16] Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B. Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei. 2020. Scaling Laws for Neural Language Models. arXiv:2001.08361 [cs.LG] https: //arxiv.org/abs/2001.08361 [17] Pang Wei Koh and Percy Liang. 2017. Understanding Black-box Predictions via Influence Functions. In Proceedings of the 34th International Conference on Machine Learning, ICML 2017, Sydney, NSW, Australia, 6-11 August 2017 (Proceedings of Machine Learning Research, Vol. 70) , Doina Precup and Yee Whye Teh (Eds.). PMLR, 1885–1894. http://proceedings.mlr.press/v70/koh17a.html [18] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph E. Gonzalez, Hao Zhang, and Ion Stoica. 2023. Efficient Memory Management for Large Language Model Serving with PagedAttention. arXiv:2309.06180 [cs.LG] https://arxiv.org/abs/2309.06180 [19] Dawei Li, Bohan Jiang, Liangjie Huang, Alimohammad Beigi, Chengshuai Zhao, Zhen Tan, Amrita Bhattacharjee, Yuxuan Jiang, Canyu Chen, Tianhao Wu, Kai Shu, Lu Cheng, and Huan Liu. 2025. From Generation to Judgment: Opportunities and Challenges of LLM-as-a-judge. arXiv:2411.16594 [cs.AI] https://arxiv.org/ abs/2411.16594 [20] Dawei Li, Renliang Sun, Yue Huang, Ming Zhong, Bohan Jiang, Jiawei Han, Xiangliang Zhang, Wei Wang, and Huan Liu. 2025. Preference Leakage: A Contamination Problem in LLM-as-a-judge. arXiv:2502.01534 [cs.LG] https: //arxiv.org/abs/2502.01534 [21] Xiaochuan Li, Zichun Yu, and Chenyan Xiong. 2024. Montessori-Instruct: Generate Influential Training Data Tailored for Student Learning. arXiv:2410.14208 [cs.CL] https://arxiv.org/abs/2410.14208 [22] Wei Liu, Weihao Zeng, Keqing He, Yong Jiang, and Junxian He. 2024. What Makes Good Data for Alignment? A Comprehensive Study of Automatic Data Selection in Instruction Tuning. In The Twelfth International Conference on Learn-ing Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net. https://openreview.net/forum?id=BTKAeLqLMw [23] Zikang Liu, Kun Zhou, Wayne Xin Zhao, Dawei Gao, Yaliang Li, and Ji-Rong Wen. 2024. Less is More: High-value Data Selection for Visual Instruction Tuning. arXiv:2403.09559 [cs.CL] https://arxiv.org/abs/2403.09559 [24] Pan Lu, Hritik Bansal, Tony Xia, Jiacheng Liu, Chunyuan Li, Hannaneh Hajishirzi, Hao Cheng, Kai-Wei Chang, Michel Galley, and Jianfeng Gao. 2024. MathVista: Evaluating Mathematical Reasoning of Foundation Models in Visual Contexts. In The Twelfth International Conference on Learning Representations, ICLR 2024, Vienna, Austria, May 7-11, 2024 . OpenReview.net. https://openreview.net/forum? id=KUNzEQMWU7 [25] Yingzhou Lu, Lulu Chen, Yuanyuan Zhang, Minjie Shen, Huazheng Wang, Xiao Wang, Capucine van Rechem, Tianfan Fu, and Wenqi Wei. 2025. Machine Learning for Synthetic Data Generation: A Review. arXiv:2302.04062 [cs.LG] https://arxiv.org/abs/2302.04062 [26] Baharan Mirzasoleiman, Jeff A. Bilmes, and Jure Leskovec. 2020. Coresets for Data-efficient Training of Machine Learning Models. In Proceedings of the 37th International Conference on Machine Learning, ICML 2020, 13-18 July 2020, Virtual Event (Proceedings of Machine Learning Research, Vol. 119) . PMLR, 6950–6960. http://proceedings.mlr.press/v119/mirzasoleiman20a.html [27] OpenAI, :, Aaron Hurst, Adam Lerer, Adam P. Goucher, Adam Perelman, Aditya Ramesh, Aidan Clark, AJ Ostrow, Akila Welihinda, Alan Hayes, Alec Radford, Jinhao Jing, Qiannian Zhao ∗, Chao Huang, and Zhan Su †
+
+Aleksander Mądry, Alex Baker-Whitcomb, Alex Beutel, Alex Borzunov, Alex Car-ney, Alex Chow, Alex Kirillov, Alex Nichol, Alex Paino, Alex Renzin, Alex Tachard Passos, Alexander Kirillov, Alexi Christakis, Alexis Conneau, Ali Kamali, Al-lan Jabri, Allison Moyer, Allison Tam, Amadou Crookes, Amin Tootoochian, Amin Tootoonchian, Ananya Kumar, Andrea Vallone, Andrej Karpathy, An-drew Braunstein, Andrew Cann, Andrew Codispoti, Andrew Galu, Andrew Kondrich, Andrew Tulloch, Andrey Mishchenko, Angela Baek, Angela Jiang, Antoine Pelisse, Antonia Woodford, Anuj Gosalia, Arka Dhar, Ashley Pantuliano, Avi Nayak, Avital Oliver, Barret Zoph, Behrooz Ghorbani, Ben Leimberger, Ben Rossen, Ben Sokolowsky, Ben Wang, Benjamin Zweig, Beth Hoover, Blake Samic, Bob McGrew, Bobby Spero, Bogo Giertler, Bowen Cheng, Brad Lightcap, Bran-don Walkin, Brendan Quinn, Brian Guarraci, Brian Hsu, Bright Kellogg, Brydon Eastman, Camillo Lugaresi, Carroll Wainwright, Cary Bassin, Cary Hudson, Casey Chu, Chad Nelson, Chak Li, Chan Jun Shern, Channing Conger, Charlotte Barette, Chelsea Voss, Chen Ding, Cheng Lu, Chong Zhang, Chris Beaumont, Chris Hallacy, Chris Koch, Christian Gibson, Christina Kim, Christine Choi, Christine McLeavey, Christopher Hesse, Claudia Fischer, Clemens Winter, Coley Czarnecki, Colin Jarvis, Colin Wei, Constantin Koumouzelis, Dane Sherburn, Daniel Kappler, Daniel Levin, Daniel Levy, David Carr, David Farhi, David Mely, David Robinson, David Sasaki, Denny Jin, Dev Valladares, Dimitris Tsipras, Doug Li, Duc Phong Nguyen, Duncan Findlay, Edede Oiwoh, Edmund Wong, Ehsan Asdar, Elizabeth Proehl, Elizabeth Yang, Eric Antonow, Eric Kramer, Eric Pe-terson, Eric Sigler, Eric Wallace, Eugene Brevdo, Evan Mays, Farzad Khorasani, Felipe Petroski Such, Filippo Raso, Francis Zhang, Fred von Lohmann, Freddie Sulit, Gabriel Goh, Gene Oden, Geoff Salmon, Giulio Starace, Greg Brockman, Hadi Salman, Haiming Bao, Haitang Hu, Hannah Wong, Haoyu Wang, Heather Schmidt, Heather Whitney, Heewoo Jun, Hendrik Kirchner, Henrique Ponde de Oliveira Pinto, Hongyu Ren, Huiwen Chang, Hyung Won Chung, Ian Kivlichan, Ian O’Connell, Ian O’Connell, Ian Osband, Ian Silber, Ian Sohl, Ibrahim Okuyucu, Ikai Lan, Ilya Kostrikov, Ilya Sutskever, Ingmar Kanitscheider, Ishaan Gulra-jani, Jacob Coxon, Jacob Menick, Jakub Pachocki, James Aung, James Betker, James Crooks, James Lennon, Jamie Kiros, Jan Leike, Jane Park, Jason Kwon, Jason Phang, Jason Teplitz, Jason Wei, Jason Wolfe, Jay Chen, Jeff Harris, Jenia Varavva, Jessica Gan Lee, Jessica Shieh, Ji Lin, Jiahui Yu, Jiayi Weng, Jie Tang, Jieqi Yu, Joanne Jang, Joaquin Quinonero Candela, Joe Beutler, Joe Landers, Joel Parish, Johannes Heidecke, John Schulman, Jonathan Lachman, Jonathan McKay, Jonathan Uesato, Jonathan Ward, Jong Wook Kim, Joost Huizinga, Jordan Sitkin, Jos Kraaijeveld, Josh Gross, Josh Kaplan, Josh Snyder, Joshua Achiam, Joy Jiao, Joyce Lee, Juntang Zhuang, Justyn Harriman, Kai Fricke, Kai Hayashi, Karan Singhal, Katy Shi, Kavin Karthik, Kayla Wood, Kendra Rimbach, Kenny Hsu, Kenny Nguyen, Keren Gu-Lemberg, Kevin Button, Kevin Liu, Kiel Howe, Krithika Muthukumar, Kyle Luther, Lama Ahmad, Larry Kai, Lauren Itow, Lau-ren Workman, Leher Pathak, Leo Chen, Li Jing, Lia Guy, Liam Fedus, Liang Zhou, Lien Mamitsuka, Lilian Weng, Lindsay McCallum, Lindsey Held, Long Ouyang, Louis Feuvrier, Lu Zhang, Lukas Kondraciuk, Lukasz Kaiser, Luke He-witt, Luke Metz, Lyric Doshi, Mada Aflak, Maddie Simens, Madelaine Boyd, Madeleine Thompson, Marat Dukhan, Mark Chen, Mark Gray, Mark Hudnall, Marvin Zhang, Marwan Aljubeh, Mateusz Litwin, Matthew Zeng, Max Johnson, Maya Shetty, Mayank Gupta, Meghan Shah, Mehmet Yatbaz, Meng Jia Yang, Mengchao Zhong, Mia Glaese, Mianna Chen, Michael Janner, Michael Lampe, Michael Petrov, Michael Wu, Michele Wang, Michelle Fradin, Michelle Pokrass, Miguel Castro, Miguel Oom Temudo de Castro, Mikhail Pavlov, Miles Brundage, Miles Wang, Minal Khan, Mira Murati, Mo Bavarian, Molly Lin, Murat Yesil-dal, Nacho Soto, Natalia Gimelshein, Natalie Cone, Natalie Staudacher, Natalie Summers, Natan LaFontaine, Neil Chowdhury, Nick Ryder, Nick Stathas, Nick Turley, Nik Tezak, Niko Felix, Nithanth Kudige, Nitish Keskar, Noah Deutsch, Noel Bundick, Nora Puckett, Ofir Nachum, Ola Okelola, Oleg Boiko, Oleg Murk, Oliver Jaffe, Olivia Watkins, Olivier Godement, Owen Campbell-Moore, Patrick Chao, Paul McMillan, Pavel Belov, Peng Su, Peter Bak, Peter Bakkum, Peter Deng, Peter Dolan, Peter Hoeschele, Peter Welinder, Phil Tillet, Philip Pronin, Philippe Tillet, Prafulla Dhariwal, Qiming Yuan, Rachel Dias, Rachel Lim, Rahul Arora, Rajan Troll, Randall Lin, Rapha Gontijo Lopes, Raul Puri, Reah Miyara, Reimar Leike, Renaud Gaubert, Reza Zamani, Ricky Wang, Rob Donnelly, Rob Honsby, Rocky Smith, Rohan Sahai, Rohit Ramchandani, Romain Huet, Rory Carmichael, Rowan Zellers, Roy Chen, Ruby Chen, Ruslan Nigmatullin, Ryan Cheu, Saachi Jain, Sam Altman, Sam Schoenholz, Sam Toizer, Samuel Miserendino, Sandhini Agarwal, Sara Culver, Scott Ethersmith, Scott Gray, Sean Grove, Sean Metzger, Shamez Hermani, Shantanu Jain, Shengjia Zhao, Sherwin Wu, Shino Jomoto, Shirong Wu, Shuaiqi, Xia, Sonia Phene, Spencer Papay, Srinivas Narayanan, Steve Coffey, Steve Lee, Stewart Hall, Suchir Balaji, Tal Broda, Tal Stramer, Tao Xu, Tarun Gogineni, Taya Christianson, Ted Sanders, Tejal Patwardhan, Thomas Cunninghman, Thomas Degry, Thomas Dimson, Thomas Raoux, Thomas Shad-well, Tianhao Zheng, Todd Underwood, Todor Markov, Toki Sherbakov, Tom Rubin, Tom Stasi, Tomer Kaftan, Tristan Heywood, Troy Peterson, Tyce Wal-ters, Tyna Eloundou, Valerie Qi, Veit Moeller, Vinnie Monaco, Vishal Kuo, Vlad Fomenko, Wayne Chang, Weiyi Zheng, Wenda Zhou, Wesam Manassra, Will Sheu, Wojciech Zaremba, Yash Patil, Yilei Qian, Yongjik Kim, Youlong Cheng, Yu Zhang, Yuchen He, Yuchen Zhang, Yujia Jin, Yunxing Dai, and Yury Malkov. 2024. GPT-4o System Card. arXiv:2410.21276 [cs.CL] https://arxiv.org/abs/2410.21276 [28] Long Ouyang, Jeffrey Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, John Schulman, Jacob Hilton, Fraser Kelton, Luke Miller, Maddie Simens, Amanda Askell, Peter Welinder, Paul F. Christiano, Jan Leike, and Ryan Lowe. 2022. Train-ing language models to follow instructions with human feedback. In Advances in Neural Information Processing Systems 35: Annual Conference on Neural Informa-tion Processing Systems 2022, NeurIPS 2022, New Orleans, LA, USA, November 28 -December 9, 2022 , Sanmi Koyejo, S. Mohamed, A. Agarwal, Danielle Belgrave, K. Cho, and A. Oh (Eds.). http://papers.nips.cc/paper_files/paper/2022/hash/ b1efde53be364a73914f58805a001731-Abstract-Conference.html [29] Runqi Qiao, Qiuna Tan, Guanting Dong, Minhui Wu, Chong Sun, Xiaoshuai Song, Zhuoma GongQue, Shanglin Lei, Zhe Wei, Miaoxuan Zhang, et al . 2024. We-Math: Does Your Large Multimodal Model Achieve Human-like Mathematical Reasoning? arXiv preprint arXiv:2407.01284 (2024). [30] Samyam Rajbhandari, Jeff Rasley, Olatunji Ruwase, and Yuxiong He. 2020. ZeRO: Memory Optimizations Toward Training Trillion Parameter Models. arXiv:1910.02054 [cs.LG] https://arxiv.org/abs/1910.02054 [31] Kashun Shum, Yuzhen Huang, Hongjian Zou, Qi Ding, Yixuan Liao, Xiaoxin Chen, Qian Liu, and Junxian He. 2025. Predictive Data Selection: The Data That Predicts Is the Data That Teaches. arXiv:2503.00808 [cs.CL] https://arxiv.org/ abs/2503.00808 [32] Ilia Shumailov, Zakhar Shumaylov, Yiren Zhao, Yarin Gal, Nicolas Papernot, and Ross Anderson. 2024. The Curse of Recursion: Training on Generated Data Makes Models Forget. arXiv:2305.17493 [cs.LG] https://arxiv.org/abs/2305.17493 [33] Yuxuan Tong, Xiwen Zhang, Rui Wang, Ruidong Wu, and Junxian He. 2024. DART-Math: Difficulty-Aware Rejection Tuning for Mathematical Problem-Solving. In Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024 , Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang (Eds.). http://papers.nips.cc/paper_files/paper/2024/hash/ 0ef1afa0daa888d695dcd5e9513bafa3-Abstract-Conference.html [34] Boris van Breugel, Zhaozhi Qian, and Mihaela van der Schaar. 2023. Synthetic Data, Real Errors: How (Not) to Publish and Use Synthetic Data. In International Conference on Machine Learning, ICML 2023, 23-29 July 2023, Honolulu, Hawaii, USA (Proceedings of Machine Learning Research, Vol. 202) , Andreas Krause, Emma Brunskill, Kyunghyun Cho, Barbara Engelhardt, Sivan Sabato, and Jonathan Scarlett (Eds.). PMLR, 34793–34808. https://proceedings.mlr.press/v202/van-breugel23a.html [35] Pablo Villalobos, Anson Ho, Jaime Sevilla, Tamay Besiroglu, Lennart Heim, and Marius Hobbhahn. 2024. Will we run out of data? Limits of LLM scaling based on human-generated data. arXiv:2211.04325 [cs.LG] https://arxiv.org/abs/2211. 04325 [36] Ke Wang, Junting Pan, Weikang Shi, Zimu Lu, Houxing Ren, Aojun Zhou, Mingjie Zhan, and Hongsheng Li. 2024. Measuring Multimodal Mathematical Reasoning with MATH-Vision Dataset. In Advances in Neural Information Processing Systems 38: Annual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024 ,Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang (Eds.). http://papers.nips.cc/ paper_files/paper/2024/hash/ad0edc7d5fa1a783f063646968b7315b-Abstract-Datasets_and_Benchmarks_Track.html [37] Ke Wang, Jiahui Zhu, Minjie Ren, Zeming Liu, Shiwei Li, Zongye Zhang, Chenkai Zhang, Xiaoyu Wu, Qiqi Zhan, Qingjie Liu, and Yunhong Wang. 2024. A Survey on Data Synthesis and Augmentation for Large Language Models. arXiv:2410.12896 [cs.CL] https://arxiv.org/abs/2410.12896 [38] Zirui Wang, Zihang Dai, Barnabás Póczos, and Jaime G. Carbonell. 2019. Char-acterizing and Avoiding Negative Transfer. In IEEE Conference on Computer Vision and Pattern Recognition, CVPR 2019, Long Beach, CA, USA, June 16-20, 2019 .Computer Vision Foundation / IEEE, 11293–11302. doi:10.1109/CVPR.2019.01155 [39] Jason Wei, Maarten Bosma, Vincent Y. Zhao, Kelvin Guu, Adams Wei Yu, Brian Lester, Nan Du, Andrew M. Dai, and Quoc V. Le. 2022. Finetuned Language Models are Zero-Shot Learners. In The Tenth International Conference on Learning Representations, ICLR 2022, Virtual Event, April 25-29, 2022 . OpenReview.net. https://openreview.net/forum?id=gEZrGCozdqR [40] Alexander Wettig, Aatmik Gupta, Saumya Malik, and Danqi Chen. 2024. QuRat-ing: Selecting High-Quality Data for Training Language Models. In Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024 . OpenReview.net. https://openreview.net/forum?id=GLGYYqPwjy [41] Mengzhou Xia, Sadhika Malladi, Suchin Gururangan, Sanjeev Arora, and Danqi Chen. 2024. LESS: Selecting Influential Data for Targeted Instruction Tuning. In Forty-first International Conference on Machine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024 . OpenReview.net. https://openreview.net/forum?id= PG5fV50maR [42] Yijia Xiao, Edward Sun, Tianyu Liu, and Wei Wang. 2024. LogicVista: Multimodal LLM Logical Reasoning Benchmark in Visual Contexts. arXiv:2407.04973 [cs.AI] https://arxiv.org/abs/2407.04973 Efficient Data Selection for Multimodal Models via Incremental Optimization Utility 
+
+[43] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. 2025. Qwen3 Technical Report. arXiv:2505.09388 [cs.CL] https://arxiv.org/abs/2505.09388 [44] Yu Yang, Siddhartha Mishra, Jeffrey N. Chiang, and Baharan Mirzasoleiman. 2024. SmallToLarge (S2L): Scalable Data Selection for Fine-tuning Large Language Models by Summarizing Training Trajectories of Small Models. In Advances in Neural Information Processing Systems 38: Annual Confer-ence on Neural Information Processing Systems 2024, NeurIPS 2024, Vancou-ver, BC, Canada, December 10 - 15, 2024 , Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang (Eds.). http://papers.nips.cc/paper_files/paper/2024/hash/ 97fe251c25b6f99a2a23b330a75b11d4-Abstract-Conference.html [45] Junjie Oscar Yin and Alexander M. Rush. 2025. Compute-Constrained Data Selection. arXiv:2410.16208 [cs.LG] https://arxiv.org/abs/2410.16208 [46] Hao Zhao, Maksym Andriushchenko, Francesco Croce, and Nicolas Flammar-ion. 2024. Long Is More for Alignment: A Simple but Tough-to-Beat Base-line for Instruction Fine-Tuning. In Forty-first International Conference on Ma-chine Learning, ICML 2024, Vienna, Austria, July 21-27, 2024 . OpenReview.net. https://openreview.net/forum?id=0AZAjkXhit [47] Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica. 2023. Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena. In Advances in Neural Information Pro-cessing Systems 36: Annual Conference on Neural Information Processing Sys-tems 2023, NeurIPS 2023, New Orleans, LA, USA, December 10 - 16, 2023 ,Alice Oh, Tristan Naumann, Amir Globerson, Kate Saenko, Moritz Hardt, and Sergey Levine (Eds.). http://papers.nips.cc/paper_files/paper/2023/hash/ 91f18a1287b398d378ef22505bf41832-Abstract-Datasets_and_Benchmarks.html [48] Chunting Zhou, Pengfei Liu, Puxin Xu, Srinivasan Iyer, Jiao Sun, Yuning Mao, Xuezhe Ma, Avia Efrat, Ping Yu, Lili Yu, Susan Zhang, Gargi Ghosh, Mike Lewis, Luke Zettlemoyer, and Omer Levy. 2023. LIMA: Less Is More for Alignment. In Advances in Neural Information Processing Systems 36: Annual Conference on Neural Information Processing Systems 2023, NeurIPS 2023, New Orleans, LA, USA, December 10 - 16, 2023 , Alice Oh, Tristan Naumann, Amir Globerson, Kate Saenko, Moritz Hardt, and Sergey Levine (Eds.). http://papers.nips.cc/paper_files/paper/ 2023/hash/ac662d74829e4407ce1d126477f4a03a-Abstract-Conference.html [49] Kun Zhou, Beichen Zhang, Jiapeng Wang, Zhipeng Chen, Xin Zhao, Jing Sha, Zhichao Sheng, Shijin Wang, and Ji-Rong Wen. 2024. JiuZhang3.0: Ef-ficiently Improving Mathematical Reasoning by Training Small Data Syn-thesis Models. In Advances in Neural Information Processing Systems 38: An-nual Conference on Neural Information Processing Systems 2024, NeurIPS 2024, Vancouver, BC, Canada, December 10 - 15, 2024 , Amir Globersons, Lester Mackey, Danielle Belgrave, Angela Fan, Ulrich Paquet, Jakub M. Tomczak, and Cheng Zhang (Eds.). http://papers.nips.cc/paper_files/paper/2024/hash/ 0356216f73660e15670510f5e42b5fa6-Abstract-Conference.html [50] Jinguo Zhu, Weiyun Wang, Zhe Chen, Zhaoyang Liu, Shenglong Ye, Lixin Gu, Hao Tian, Yuchen Duan, Weijie Su, Jie Shao, Zhangwei Gao, Erfei Cui, Xuehui Wang, Yue Cao, Yangzhou Liu, Xingguang Wei, Hongjie Zhang, Haomin Wang, Weiye Xu, Hao Li, Jiahao Wang, Nianchen Deng, Songze Li, Yinan He, Tan Jiang, Jiapeng Luo, Yi Wang, Conghui He, Botian Shi, Xingcheng Zhang, Wenqi Shao, Junjun He, Yingtong Xiong, Wenwen Qu, Peng Sun, Penglong Jiao, Han Lv, Lijun Wu, Kaipeng Zhang, Huipeng Deng, Jiaye Ge, Kai Chen, Limin Wang, Min Dou, Lewei Lu, Xizhou Zhu, Tong Lu, Dahua Lin, Yu Qiao, Jifeng Dai, and Wenhai Wang. 2025. InternVL3: Exploring Advanced Training and Test-Time Recipes for Open-Source Multimodal Models. arXiv:2504.10479 [cs.CV] https://arxiv.org/abs/2504.10479 Jinhao Jing, Qiannian Zhao ∗, Chao Huang, and Zhan Su †
+
+A Theoretical Proofs 
+
+In this section, we provide detailed derivations and proofs for the theoretical results presented in Section 3. We begin by formally stat-ing the smoothness and boundedness assumptions that underpin our One-Step-Train (OST) framework. 
+
+General Assumptions. Throughout the proofs, we assume the val-idation loss function 𝐿 V (𝜽 ) and sample-wise loss ℓ (𝑧 𝑖 ; 𝜽 ) satisfy the following properties within the local optimization neighborhood: 
+
+• 𝛽 -Smoothness: The gradient ∇𝐿 V is 𝛽 -Lipschitz continu-ous, i.e., ∥∇ 𝐿 V (𝜽 ′) − ∇ 𝐿 V (𝜽 )∥ ≤ 𝛽 ∥𝜽 ′ − 𝜽 ∥.
+
+• Bounded Gradients: Gradient norms are bounded by con-stants 𝐵 V and 𝐵 𝑖 , such that ∥∇ 𝐿 V ∥ ≤ 𝐵 V and ∥∇ ℓ (𝑧 𝑖 )∥ ≤ 
+
+𝐵 𝑖 .
+
+A.1 Proof of One-Step-Train Utility Expansion 
+
+We first prove that the utility Δ𝑖 (𝜽 ) is dominated by the gradient inner product. 
+
+Lemma 1. If 𝐿 V is 𝛽 -smooth, then the utility can be expanded as Δ𝑖 (𝜽 ) = 𝜂 𝒈 V (𝜽 )⊤𝒈 𝑖 (𝜽 ) + 𝑟 𝑖 , where the remainder is bounded by 
+
+|𝑟 𝑖 | ≤ 𝛽𝜂 2 
+
+> 2
+
+∥𝒈 𝑖 (𝜽 )∥ 2.
+
+Proof. Recall the one-step update rule: 𝜽 + 
+
+> 𝑖
+
+= 𝜽 −𝜂 𝒈 𝑖 (𝜽 ). Let the parameter update vector be 𝒅 𝑖 = 𝒕𝒉𝒆𝒕𝒂 + 
+
+> 𝑖
+
+−𝜽 = −𝜂 𝒈 𝑖 (𝜽 ). By Taylor’s theorem with the Lagrange remainder form, for the function 𝐿 V (𝜽 ),there exists a point 𝝃 on the line segment connecting 𝜽 and 𝜽 +
+
+> 𝑖
+
+such that: 
+
+𝐿 V (𝜽 + 
+
+> 𝑖
+
+) = 𝐿 V (𝜽 ) + ∇ 𝐿 V (𝜽 )⊤𝒅 𝑖 
+
++ 12 𝒅 ⊤ 
+
+> 𝑖
+
+∇2𝐿 V (𝝃 )𝒅 𝑖 . (6) Rearranging terms to match the definition of utility Δ𝑖 (𝜽 ) ≜ 𝐿 V (𝜽 )− 
+
+𝐿 V (𝜽 + 
+
+> 𝑖
+
+):
+
+Δ𝑖 (𝜽 ) = −∇ 𝐿 V (𝜽 )⊤𝒅 𝑖 − 12 𝒅 ⊤ 
+
+> 𝑖
+
+∇2𝐿 V (𝝃 )𝒅 𝑖 
+
+= −𝒈 V (𝜽 )⊤ (− 𝜂 𝒈 𝑖 (𝜽 )) − 12 𝒅 ⊤ 
+
+> 𝑖
+
+∇2𝐿 V (𝝃 )𝒅 𝑖 
+
+= 𝜂 𝒈 V (𝜽 )⊤𝒈 𝑖 (𝜽 ) + 𝑟 𝑖 , (7) where the remainder term is 𝑟 𝑖 = − 12 𝒅 ⊤ 
+
+> 𝑖
+
+∇2𝐿 V (𝝃 )𝒅 𝑖 .Under the 𝛽 -smoothness assumption, the spectral norm (largest eigenvalue) of the Hessian is bounded by 𝛽 , i.e., ∥∇ 2𝐿 V (𝝃 )∥ 2 ≤ 𝛽 .We can thus bound the magnitude of the remainder: 
+
+|𝑟 𝑖 | ≤ 12 ∥𝒅 𝑖 ∥2 ∥∇ 2𝐿 V (𝝃 )∥ 2
+
+≤ 𝛽 
+
+2 ∥ − 𝜂 𝒈 𝑖 (𝜽 )∥ 2 = 𝛽𝜂 2
+
+2 ∥𝒈 𝑖 (𝜽 )∥ 2. (8) This confirms that for small 𝜂 , the linear term dominates, validating Eq. (4) in the main text. □
+
+A.2 Proof of Ranking Consistency 
+
+Theorem 1. Let 𝑠 𝑖 (𝜽 ) = 𝒈 V (𝜽 )⊤𝒈 𝑖 (𝜽 ). If the score margin satis-fies |𝑠 𝑖 (𝜽 ) − 𝑠 𝑗 (𝜽 )| ≥ 𝛾 and 𝜂 is sufficiently small, then Δ𝑖 (𝜽 ) >
+
+Δ𝑗 (𝜽 ) ⇐⇒ 𝑠 𝑖 (𝜽 ) > 𝑠 𝑗 (𝜽 ).
+
+Proof. Using the expansion from Lemma 1, the utility difference between two samples 𝑧 𝑖 and 𝑧 𝑗 is: 
+
+Δ𝑖 − Δ𝑗 = (𝜂𝑠 𝑖 + 𝑟 𝑖 ) − ( 𝜂𝑠 𝑗 + 𝑟 𝑗 )
+
+= 𝜂 (𝑠 𝑖 − 𝑠 𝑗 ) + ( 𝑟 𝑖 − 𝑟 𝑗 ). (9) Without loss of generality, assume 𝑠 𝑖 > 𝑠 𝑗 , implying 𝑠 𝑖 − 𝑠 𝑗 ≥ 𝛾 .To guarantee Δ𝑖 > Δ𝑗 , we need the linear term to overpower the remainder noise: 
+
+𝜂 (𝑠 𝑖 − 𝑠 𝑗 ) > |𝑟 𝑖 − 𝑟 𝑗 |. (10) Using the triangle inequality and the bound from Lemma 1: 
+
+|𝑟 𝑖 − 𝑟 𝑗 | ≤ | 𝑟 𝑖 | + | 𝑟 𝑗 |≤ 𝛽𝜂 2
+
+2 (∥ 𝒈 𝑖 ∥2 + ∥ 𝒈 𝑗 ∥2). (11) Substituting the margin 𝛾 , the sufficient condition becomes: 
+
+𝜂𝛾 ≥ 𝛽𝜂 2
+
+2 (∥ 𝒈 𝑖 ∥2 + ∥ 𝒈 𝑗 ∥2). (12) Dividing by 𝜂 (since 𝜂 > 0) and rearranging yields the bound for the learning rate: 
+
+𝜂 ≤ 2𝛾 𝛽 (∥ 𝒈 𝑖 ∥2 + ∥ 𝒈 𝑗 ∥2) . (13) Thus, providing 𝜂 satisfies this condition (which is typical in fine-tuning where 𝜂 is small), the ranking based on the gradient inner product 𝑠 𝑖 is theoretically consistent with the true utility Δ𝑖 . □
+
+A.3 Proof of Ranking Stability 
+
+We analyze how the score 𝑠 𝑖,𝑡 = 𝒈 V (𝜽 𝑡 )⊤𝒈 𝑖 (𝜽 𝑡 ) changes as the model parameters drift from 𝜽 0 to 𝜽 𝑡 .
+
+Lemma 2 (Score Stability). Let parameter drift be bounded by 
+
+∥𝜽 𝑡 −𝜽 0 ∥ ≤ 𝑅 . Under Lipschitz continuity assumptions with constants 
+
+𝐿 V , 𝐿 𝑖 , the score change is bounded by: 
+
+|𝑠 𝑖,𝑡 − 𝑠 𝑖, 0 | ≤ ( 𝐿 V 𝐵 𝑖 + 𝐿 𝑖 𝐵 V )𝑅. (14) 
+
+Proof. Let 𝜹 = 𝜽 𝑡 − 𝜽 0. We decompose the score difference: 
+
+𝑠 𝑖,𝑡 − 𝑠 𝑖, 0 = 𝒈 V (𝜽 𝑡 )⊤𝒈 𝑖 (𝜽 𝑡 ) − 𝒈 V (𝜽 0)⊤𝒈 𝑖 (𝜽 0)
+
+= 𝒈 V (𝜽 𝑡 )⊤ (𝒈 𝑖 (𝜽 𝑡 ) − 𝒈 𝑖 (𝜽 0)) + ( 𝒈 V (𝜽 𝑡 ) − 𝒈 V (𝜽 0)) ⊤𝒈 𝑖 (𝜽 0). (15) Applying the Cauchy-Schwarz inequality and Lipschitz definitions: 
+
+|𝑠 𝑖,𝑡 − 𝑠 𝑖, 0 | ≤ ∥ 𝒈 V (𝜽 𝑡 )∥∥ 𝒈 𝑖 (𝜽 𝑡 ) − 𝒈 𝑖 (𝜽 0)∥ + ∥ 𝒈 V (𝜽 𝑡 ) − 𝒈 V (𝜽 0)∥∥ 𝒈 𝑖 (𝜽 0)∥ ≤ 𝐵 V · ( 𝐿 𝑖 ∥𝜽 𝑡 − 𝜽 0 ∥) + ( 𝐿 V ∥𝜽 𝑡 − 𝜽 0 ∥) · 𝐵 𝑖 
+
+= (𝐵 V 𝐿 𝑖 + 𝐿 V 𝐵 𝑖 )∥ 𝜽 𝑡 − 𝜽 0 ∥. (16) Substituting ∥𝜽 𝑡 − 𝜽 0 ∥ ≤ 𝑅 yields the lemma. □
+
+Theorem 2 (Ranking Preservation). If the initial margin satis-fies |𝑠 𝑖, 0 −𝑠 𝑗, 0 | > 2(𝐿 V (𝐵 𝑖 +𝐵 𝑗 ) + ( 𝐿 𝑖 +𝐿 𝑗 )𝐵 V )𝑅 , then 𝑠 𝑖, 0 > 𝑠 𝑗, 0 =⇒
+
+𝑠 𝑖,𝑡 > 𝑠 𝑗,𝑡 .
+
+Proof. Let 𝑀 0 = 𝑠 𝑖, 0 − 𝑠 𝑗, 0 be the initial margin. The deviation of the margin at step 𝑡 is: 
+
+(𝑠 𝑖,𝑡 − 𝑠 𝑗,𝑡 ) − 𝑀 0 = (𝑠 𝑖,𝑡 − 𝑠 𝑖, 0) − ( 𝑠 𝑗,𝑡 − 𝑠 𝑗, 0). (17) Efficient Data Selection for Multimodal Models via Incremental Optimization Utility 
+
+Using Lemma 2, we bound the total deviation: 
+
+|𝐷𝑒𝑣𝑖𝑎𝑡𝑖𝑜𝑛 | ≤ | 𝑠 𝑖,𝑡 − 𝑠 𝑖, 0 | + | 𝑠 𝑗,𝑡 − 𝑠 𝑗, 0 |≤ [ 𝐿 V (𝐵 𝑖 + 𝐵 𝑗 ) + 𝐵 V (𝐿 𝑖 + 𝐿 𝑗 )] 
+
+| {z } 
+
+> Constant 𝐾
+
+𝑅. (18) The condition states 𝑀 0 > 2𝐾𝑅 . Thus, the worst-case margin at step 𝑡 is: 
+
+𝑠 𝑖,𝑡 − 𝑠 𝑗,𝑡 ≥ 𝑀 0 − 𝐾𝑅 > 2𝐾𝑅 − 𝐾𝑅 > 0. (19) Since the margin remains positive, the ranking order is preserved. 
+
+□
+
+B Cross-Model Transferability 
+
+To justify the transferability of utility scores from a lightweight proxy to a large target model, we rely on the Subspace Alignment Hypothesis . This framework posits that models trained on simi-lar data manifolds share a common low-rank gradient structure, differing primarily by a rotation and scaling factor. 
+
+Gradient Subspace Alignment Assumption. Let 𝒈 (𝑚 ) and 𝒈 (𝑀 ) de-note the gradient vectors of the proxy model 𝑚 and target model 𝑀 ,respectively. We assume there exists a linear isometry P (represent-ing projection/rotation between feature spaces) and a global scaling factor 𝛼 > 0 such that the target gradients can be approximated by the proxy gradients with a bounded error 𝜖 :
+
+∥𝒈 (𝑀 ) − 𝛼 P𝒈 (𝑚 ) ∥ ≤ 𝜖. (20) 
+
+Implication for Ranking Consistency. Under this assumption, the utility score on the target model 𝑠 (𝑀 ) 
+
+> 𝑖
+
+can be analytically decom-posed into the scaled proxy score and a residual noise term due to misalignment: 
+
+𝑠 (𝑀 ) 
+
+> 𝑖
+
+≈ 𝛼 2𝑠 (𝑚 ) 
+
+> 𝑖
+
++ R noise , (21) where 𝑠 (𝑚 ) 
+
+> 𝑖
+
+is the utility calculated on the lightweight proxy. This relationship implies that the **ranking order is preserved** (𝑠 (𝑀 ) 
+
+> 𝑖
+
+> 𝑠 (𝑀 ) 
+
+> 𝑗
+
+implies 𝑠 (𝑚 ) 
+
+> 𝑖
+
+> 𝑠 (𝑚 ) 
+
+> 𝑗
+
+) provided that the utility mar-gin measured by the proxy is sufficiently large to dominate the projection error: 
+
+𝛼 2 (𝑠 (𝑚 ) 
+
+> 𝑖
+
+− 𝑠 (𝑚 ) 
+
+> 𝑗
+
+)
+
+| {z }
+
+> Scaled Proxy Margin
+
+> |R noise ,𝑖 − R noise ,𝑗 |
+
+| {z }
+
+> Alignment Noise
+
+. (22) Therefore, OST is theoretically grounded to select high-utility data for the target model as long as the proxy maintains a structural gradient alignment (low 𝜖 ) with the target architecture. 
+
+C Implementation Details C.1 Data Construction Pipeline 
+
+Our training corpus originates from a proprietary collection of authentic mathematical problems acquired from professional data vendors. These resources are extensively sourced from standard textbooks and auxiliary teaching materials. To simulate realistic visual reasoning scenarios, we employed an inverse rendering 
+
+technique: the textual question stems, geometric diagrams, and multiple-choice options were rendered together onto a single com-posite image. To bridge the reasoning gap in this raw visual data, we deployed a robust synthesis pipeline: 
+
+• CoT Synthesis: We utilized Doubao-seed-1.6-thinking 
+
+to generate step-by-step Chain-of-Thought (CoT) rationales (Prompt detailed in Figure 8). The generation process was configured with a temperature 𝑇 = 0.3, 𝑡𝑜𝑝 _𝑝 = 0.95 , and a maximum token limit of 16,384. Under these settings, the model was prompted to decompose complex logic into intermediate derivations before concluding with a final answer. 
+
+• Quality Filtration: To ensure high data fidelity, we ap-plied a rigorous three-stage filtering protocol to the raw synthetic corpus: (1) Format Verification to ensure valid Markdown syntax and the presence of a \\boxed {} an-swer; (2) Ground Truth Consistency check, where sam-ples are discarded if the synthesized answer deviates from the gold standard; and (3) Length Constraint : we observed that responses exceeding 10,000 tokens frequently exhib-ited degeneration issues (e.g., repetition loops), and thus excluded these samples to maintain data density. The final filtered dataset Dsyn comprises 351,157 high-quality sam-ples with an average length of 2,880 tokens. 
+
+C.2 OST Utility Scoring (Phase 1) 
+
+We employ InternVL3-1B as the lightweight computational proxy. The scoring pipeline is implemented on a node with 8 × NVIDIA H100 GPUs using DeepSpeed ZeRO Stage 1 [ 30 ]. To overcome the I/O bottleneck inherent in the train-validate-revert loop, we customized the Accelerate library to enable persistent in-memory caching of model parameters and optimizer states. 
+
+• Anchor Set ( V): We constructed a representative valida-tion anchor by stratified sampling 100 examples from a held-out pool of 500 problems. To minimize data loading latency during frequent evaluation, these samples are pre-loaded and pinned in CPU memory. 
+
+• Gradient Simulation: For each candidate 𝑧 𝑖 , we simulate a single optimization step using SGD (LR 1e-7, batch size 1). We measure utility Δ𝑖 as the reduction in cross-entropy loss on V immediately following this look-ahead update. Thanks to the state-caching mechanism, we achieved a high throughput of 0.5–1.0 seconds per sample in bfloat16 
+
+precision. 
+
+• Independence Verification: To ensure that the utility scores ( Δ𝑖 ) reflect the intrinsic quality of the data rather than artifacts of the sequential processing (e.g., curriculum effects or state drift), we conducted a statistical indepen-dence test. As shown in Figure 5, the scores exhibit a neg-ligible linear trend (Slope ≈ − 1.6 × 10 −9, 𝑅 2 ≈ 0.003 ) and near-zero autocorrelation across lags. This confirms that the scoring process is statistically stationary and robust to permutation. 
+
+C.3 Target Model Training (Phase 2) 
+
+We evaluate the selected subsets on two distinct target architectures using standard Supervised Fine-Tuning (SFT). Jinhao Jing, Qiannian Zhao ∗, Chao Huang, and Zhan Su †0 50000 100000 150000 200000 250000 300000 350000 
+
+Sample Index 
+
+−0.0225 
+
+−0.0200 
+
+−0.0175 
+
+−0.0150 
+
+−0.0125 
+
+−0.0100 
+
+−0.0075 
+
+−0.0050 
+
+−0.0025   
+
+> Influence Score
+> Spearman ρ: -0.059
+> Kendall τ: -0.062
+> R2: 0.003
+
+Linear Fit of Influence (Centered) 
+
+> Linear Fit (Slope=-1.6e-09)
+
+0 10 20 30 40 50 
+
+Lag 
+
+−0.2 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Autocorrelation
+
+Autocorrelation (ACF) 
+
+> 95% Conf. Int.
+
+Figure 5: Statistical Verification of Utility Independence. Left : The linear fit of influence scores against the sample index shows no significant temporal drift ( 𝑅 2 ≈ 0.003 ). Right : The Autocorrelation Function (ACF) indicates no significant dependency between consecutive samples, validating the independent nature of the proxy scoring. 
+
+Internal 30B Multimodal Model. This model integrates a Qwen3-30B-A3B language backbone with a ViT-300M vision encoder. Train-ing is conducted on a cluster of 64 × NVIDIA H100 GPUs em-ploying 8-way Tensor Parallelism (TP) and Pipeline Parallelism (PP). To prevent catastrophic forgetting, we adopt a data mixing strategy where the selected math data is combined with general text corpora (sampling weight 0.25) and multimodal interleaved data (weight 0.025). Optimization uses the AdamW optimizer with 
+
+𝛽 1 = 0.9, 𝛽 2 = 0.95 , a global batch size of 64, and a peak learning rate of 1e-5 with cosine decay. 
+
+Open-Source Qwen3-VL Series. To verify generalization, we fine-tune the Qwen3-VL-2B, 4B, and 8B Instruct models. Experiments run on a single node with 8 × NVIDIA H100 GPUs using Deep-Speed ZeRO Stage 3 . We freeze the vision encoder and only update the LLM backbone. Hyperparameters include a learning rate of 1e-7,a global batch size of 32 (16 for the 8B model), and a maximum sequence length of 16,384 tokens. 
+
+C.4 Evaluation and Baselines 
+
+Baselines. We compare OST against: (1) Full SFT , using the entire dataset to establish a performance ceiling/floor; (2) Random Selection , providing a lower bound; and (3) LLM-as-a-Judge , the industry standard where Qwen3VL-235B-A22B-Instruct acts as a verifier to perform rejection sampling based on reasoning correctness (Prompt detailed in Figure 9). 
+
+Inference Protocol. We adopt a dual-track evaluation covering our 500-sample Internal Benchmark (10 sub-domains) and four external benchmarks ( MathVision , MathVista , WeMath , Log-icVista ). Inference is accelerated via vLLM [18 ] with temperature 
+
+𝑇 = 0.6, 𝑡𝑜𝑝 _𝑝 = 0.95 , and a max token limit of 32,768. Open-ended responses are scored by GPT-4o-mini [27 ] to ensure impartial evaluation. 
+
+D Case Study 
+
+We present a comparative analysis focusing on the integrity of multimodal data and the reliability of automated verification. To illustrate the distinction between toxic noise and high-utility data, we pair bad samples (failures/bias, ranking bottom 5%) with good samples (strong alignment, ranking top 5%) in Figures 6, 7. 
+
+E Prompts 
+
+This section details the specific instructions used for data synthesis and the baseline comparison. Figure 8 illustrates the prompt used to generate step-by-step reasoning chains, while Figure 9 displays the verification instruction used for the LLM-as-a-Judge baseline. Efficient Data Selection for Multimodal Models via Incremental Optimization Utility 2. Influence 计算 
+
+每条训练数据 A 在模型上执行一次前向和反向传播，在测试集 
+
+(subject_0512) 上计算： 
+
+🀀 Global ID: 81980 
+
+🐀 Score : 0.000699 
+
+✅ Format Judge: False 
+
+✅ LLM Judge: False 
+
+✅ Human Judge: False 
+
+"conversations": [ 
+
+{
+
+"from": "human", 
+
+"value": "<image>\n 请仔细观察这张图片，并回答相 
+
+关问题。 "
+
+}, 
+
+{
+
+"from": "gpt", 
+
+"value": "\n 抱歉，您的问题我无法识别。 "
+
+} ] 
+
+"conversations": [ 
+
+{
+
+"from": "human", 
+
+"value": " <image> \nPlease examine this image carefully 
+
+and answer the relevant questions." 
+
+}, 
+
+{
+
+"from": "gpt", 
+
+"value": "\nI'm afraid I cannot make out your question." 
+
+} ] 
+
+Image 
+
+Score s Original Data Translation (for review) 
+
+(a) Bad Sample: Visual Recognition Failure (Refusal) 
+
+Judge: False. The model fails to extract features from the chart, triggering a safety refusal. Training on such data dilutes instruction-following capabilities. 2. Influence 计算 
+
+每条训练数据 A 在模型上执行一次前向和反向传播，在测试集 
+
+(subject_0512) 上计算： 
+
+🀀 Global ID: 190527 
+
+🐀 Score : -0.022512 
+
+✅ Format Judge: True 
+
+✅ LLM Judge: True 
+
+✅ Human Judge: True 
+
+"conversations": [ 
+
+{
+
+"from": "human", 
+
+"value": "<image>\n 请你关注这张图片中的问题，并根据自己的理解和知 
+
+识提供相关解答。 "
+
+}, 
+
+{
+
+"from": "gpt", 
+
+"value": "\n 用户现在需要解决两个问题：一是求 ∠BDF 的大小，二是求 
+
+AE 的长。题目背景是在直角三角形 ABC 中， ∠C=90 °，AB=10 ，AC=8 ，将 
+
+AB 绕点 A逆时针旋转 90 °得到 AD ，△EFG 由△ABC 沿CB 方向平移得到，且直 
+
+线EF 过点 D ...... 则\\( \\cos\\theta=\\frac{25}{10\\sqrt{2} \\cdot 
+
+\\frac{5}{2}}=\\frac{\\sqrt{2}}{2} \\) ，故 \\( \\theta=45^\\circ \\) 。\n\n\n### 求
+
+\\( AE \\) 的长： \n\n\\( E \\) 为\\( A \\) 平移后对应点，坐标 \\( E(8,t)=(8,-
+
+\\frac{25}{2}) \\) ，\\( A(8,0) \\) ，故 \\( AE=|-\\frac{25}{2}-0|=\\frac{25}{2} \\) 。
+
+\n\n\n **答案 **：\\(\\boxed{45^\\circ}\\) ，\\(\\boxed{\\frac{25}{2}}\\)" 
+
+} ] 
+
+"conversations": [ 
+
+{
+
+"from": "human", 
+
+"value": " <image> \nPlease examine the issues depicted in this image and 
+
+provide relevant solutions based on your understanding and knowledge." 
+
+}, 
+
+{
+
+"from": "gpt", 
+
+"value": "\nThe user now needs to solve two problems: first, determine the 
+
+measure of ∠BDF; second, find the length of AE. The problem setting is as 
+
+follows: in right triangle ABC, ∠C = 90 °, AB = 10, AC = 8. Rotate AB 
+
+counterclockwise 90 ° around point A to obtain AD...... Find the length of \\( AE 
+
+\):\n\ n\\( E \) is the corresponding point after translating \\( A \), with coordinates 
+
+\\( E(8,t)=(8,-\frac{25}{2}) \). Since \\( A(8,0) \), \\( AE=|-\frac{25}{2}-
+
+0|=\frac{25}{2} \). \n\n\n **Answer **: \\(\boxed{45^\circ}\\), 
+
+\\(\boxed{\frac{25}{2}}\\) "
+
+} ] 
+
+Image 
+
+Score s Original Data Translation (for review) 
+
+(b) Good Sample: Conceptual Grounding 
+
+Judge: True. In contrast, this sample correctly translates visual abstractions (geometric slope) into symbolic equations without hallucination. Figure 6: Comparison Group 1: Basic Perception. While the negative sample (a) fails at the pixel-to-text stage, the positive sample (b) demonstrates successful grounding of abstract visual concepts. Jinhao Jing, Qiannian Zhao ∗, Chao Huang, and Zhan Su †2. Influence 计算 
+
+每条训练数据 A 在模型上执行一次前向和反向传播，在测试集 
+
+(subject_0512) 上计算： 
+
+🀀 Global ID: 58080 
+
+🐀 Score : -0.003325 
+
+✅ Format Judge: False 
+
+✅ LLM Judge: False 
+
+✅ Human Judge: False 
+
+"conversations": [ 
+
+{
+
+"from": "human", 
+
+"value": "<image>\n 请您解答一下图片所提出的问题。 "
+
+}, 
+
+{
+
+"from": "gpt", 
+
+"value": "\n 用户提供的问题中存在关键信息缺失，比如 
+
+圆柱体玻璃容器的底面积 ...... 无法计算石头的体积。请补 
+
+充完整题目信息。 "
+
+} ] 
+
+"conversations": [ 
+
+{
+
+"from": "human", 
+
+"value": " <image> \nPlease address the issue raised in the 
+
+image." 
+
+}, 
+
+{
+
+"from": "gpt", 
+
+"value": "\nThe question provided by the user lacks crucial 
+
+information, such as the base area of the cylindrical glass container and 
+
+the specific depth of the water ...... it is impossible to calculate the 
+
+volume of the stone. Please provide the complete problem statement." 
+
+} ] 
+
+Image 
+
+Score s Original Data Translation (for review) 
+
+(c) Bad Sample: Contextual Information Loss 
+
+Judge: False. Critical conditions (e.g., dimensions) are missing due to cropping/OCR errors. This represents dead-end noise. 2. Influence 计算 
+
+每条训练数据 A 在模型上执行一次前向和反向传播，在测试集 
+
+(subject_0512) 上计算： 
+
+🀀 Global ID: 298407 
+
+🐀 Score : -0.022515 
+
+✅ Format Judge: True 
+
+✅ LLM Judge: True 
+
+✅ Human Judge: True 
+
+"conversations": [ 
+
+{
+
+"from": "human", 
+
+"value": "<image>\n 能否为这张图片中呈现的问题提供解答？ "
+
+}, 
+
+{
+
+"from": "gpt", 
+
+"value": "\n 用户现在需要解决的问题是在矩形 ABCD 中， AB=√3 ，AD=1 ，
+
+点P是CD 的中点，求向量 DA· 向量 DB 加上向量 AP· 向量 DB 的值。首先，我 
+
+得回忆一下向量的数量积（点积）的计算方法，通常可以用坐标法或者几 
+
+何法来计算。 \n\n 首先，我需要确定矩形各个顶点的坐标 ...... 数量积为： \n 
+
+\\(\\left(\\frac{\\sqrt{3}}{2}\\right) \\cdot \\sqrt{3} + 0 \\cdot (-1) = \\frac{3}{2} 
+
++ 0 = \\frac{3}{2}\\) 。 \n\n\n### **最终结果 ** \n\\(\\overrightarrow{DA} 
+
+\\cdot \\overrightarrow{DB} + \\overrightarrow{AP} \\cdot \\overrightarrow{DB} 
+
+= \\frac{3}{2}\\) 。\n\n\\(\\boxed{B}\\) "
+
+} ] 
+
+"conversations": [ 
+
+{
+
+"from": "human", 
+
+"value": " <image> \nCan you provide a solution to the problem depicted in 
+
+this image?" 
+
+}, 
+
+{
+
+"from": "gpt", 
+
+"value": "\nThe problem the user now needs to solve is: Given rectangle 
+
+ABCD where AB = √3 and AD = 1, point P is the midpoint of CD. Find the 
+
+value of vector DA · vector DB plus vector AP · vector DB. \n\nFirst, I need to 
+
+determine the coordinates of each vertex of the rectangle ...... The dot product is: 
+
+\n \\(\\left(\\frac{\\sqrt{3}}{2}\\right) \\cdot \\sqrt{3} + 0 \\cdot (-1) = 
+
+\\frac{3}{2} + 0 = \\frac{3}{2}\\) \n\n\n### **Final Result **
+
+\n\\(\\overrightarrow{DA} \\cdot \\overrightarrow{DB} + \\overrightarrow{AP} 
+
+\\cdot \\overrightarrow{DB} = \\frac{3}{2}\\) \n\n\\(\\boxed{B}\\) " 
+
+} ] 
+
+Image 
+
+Score s Original Data Translation (for review) 
+
+(d) Good Sample: Spatial Transformation Consistency 
+
+Judge: True. A high-utility sample requiring multi-step spatial tracking (rotation/translation). The derivation aligns perfectly with visual constraints. Figure 7: Comparison Group 2: Context and Reasoning. Contrast between incomplete data that prevents reasoning (c) and data rich in spatial constraints (d) that provides strong gradient signals. Efficient Data Selection for Multimodal Models via Incremental Optimization Utility Prompt for Data Synthesis 
+
+## 任务 
+
+你是数学专家。请结合图片内容，一步步进行逻辑推理并解答，最后给出明确的答案。 
+
+## 题目 
+
+{human_content} 
+
+## 图片 
+
+{image_content} 
+
+## 注意 
+
+输出严格遵循以下格式：请确保将最终答案放入\\boxed{}中 
+
+> English Translation only for Review Purposes
+
+## Task 
+
+You are a mathematics expert. Please integrate the content of the image to perform step-by-step logical reasoning and solve the 
+
+problem, providing a clear final answer. 
+
+## Question 
+
+{human_content} 
+
+## Image 
+
+{image_content} 
+
+## Note 
+
+The output must strictly follow this format: Please ensure that your final answer is enclosed within \\boxed{}. 
+
+Figure 8: Prompt for CoT Synthesis. The instruction template used to generate reasoning traces with Doubao-Seed-1.6-thinking during data construction. Jinhao Jing, Qiannian Zhao ∗, Chao Huang, and Zhan Su †Prompt for Verification 
+
+## 任务 
+
+你是一名经验丰富的改卷老师。你的任务是比较学生答案与参考答案，判断它们在含义上是否一致。 
+
+请忽略以下与内容无关的格式差异： 
+
+- 多余的空格 
+
+- LaTeX 数学符号的不同（如 \[ \]、\( \)、或 $） 
+
+- 小的 LaTeX 格式差异（例如 \text{} 与 \mathrm{} 的区别 
+
+## 注意 
+
+- 如果题目为填空题或应用题有多个答案，则只有在**每个答案都正确**时才视为正确； 
+
+- 检查答案是否有多个表达，相符或表示相同的值可得分 
+
+- 如果所有答案和参考答案在实质内容上相符或表示相同的值，请仅回答“yes”； 
+
+- 如果不相等，请仅回答“no”。 
+
+## 题目 
+
+{question} 
+
+## 参考答案 
+
+{gt} 
+
+## 学生答案 
+
+{pred} 
+
+> English Translation only for Review Purposes
+
+## Task 
+
+You are an experienced grader. Your task is to compare the student's answer with the reference answer and determine if they are 
+
+semantically identical. 
+
+Please ignore the following content-irrelevant formatting differences: 
+
+- Excess whitespace. 
+
+- Differences in LaTeX math delimiters (e.g., `\[ \]`, `\( \)`, or `$`). 
+
+- Minor LaTeX formatting variations (e.g., the difference between ` ext{}` and `\mathrm{}`). 
+
+## Note 
+
+- If the question is a fill-in-the-blank or word problem with multiple parts, the answer is considered correct only if **every part is 
+
+correct**. 
+
+- Check if the answer has multiple valid expressions; give credit if they match or represent the same value. 
+
+- If all student answers match the substantive content or represent the same value as the reference answers, answer only "yes". 
+
+- If they are not equivalent, answer only "no". 
+
+## Question 
+
+{question} 
+
+## Reference Answer 
+
+{gt} 
+
+## Student Answer 
+
+{pred} 
+
+Figure 9: Prompt for LLM-as-a-Judge. The verification instruction template used by Qwen3VL-235B-A22B-Instruct for the baseline rejection sampling.

@@ -1,0 +1,928 @@
+Title: RcLLM: Accelerating Generative Recommendation via Beyond-Prefix KV Caching
+
+URL Source: https://arxiv.org/pdf/2605.07443v1
+
+Published Time: Mon, 11 May 2026 01:07:10 GMT
+
+Number of Pages: 11
+
+Markdown Content:
+# RcLLM: Accelerating Generative Recommendation via Beyond-Prefix KV Caching 
+
+Zhan Zhao 
+
+Department of Computer Science Hong Kong Baptist University 
+
+Hong Kong, China zhanzhao@comp.hkbu.edu.hk 
+
+Yuxin Wang 
+
+Department of Computer Science Hong Kong Baptist University 
+
+Hong Kong, China yxwang@comp.hkbu.edu.hk 
+
+Amelie Chi Zhou 
+
+Department of Computer Science Hong Kong Baptist University 
+
+Hong Kong, China amelieczhou@comp.hkbu.edu.hk 
+
+Abstract —Large Language Models (LLMs) are transforming recommendation into a generative task, yet their industrial deployment is hindered by the prohibitive latency of processing long, personalized prompts where standard prefix caching fails due to non-contiguous reuse patterns. To address this, we propose RcLLM, a distributed inference system that accelerates genera-tive recommendation via Beyond-Prefix KV Caching. RcLLM decomposes prompts into reusable blocks and manages the massive scale of item catalogs through a stratified distributed storage architecture: compact user histories are replicated for zero-latency retrieval, while massive item caches are sharded using a similarity-aware placement algorithm. RcLLM effectively eliminates redundant quadratic computation with two strategic techniques: 1) an affinity-based global scheduler to maximize data locality, and 2) a selective attention mechanism to correct approximation errors. Evaluations on real-world datasets demon-strate that RcLLM reduces Time-To-First-Token (TTFT) by 1.31 ×–9.51 × compared to state-of-the-art prefix caching systems, enabling real-time serving compliance with negligible impact on recommendation accuracy. 
+
+I. I NTRODUCTION 
+
+Large Language Models (LLMs) are transforming rec-ommendation systems from static retrieval engines [1], [2] into generative reasoners. Unlike classical ID-based pipelines, LLM-based recommenders [3], [4] can rank or generate items by reading rich user contexts (e.g., interaction traces and natural-language preferences) and reasoning deeply over item semantics. However, while this unification of heterogeneous signals enhances explainability and personalization, it intro-duces severe serving costs that clash with the strict latency Service Level Objectives (SLOs) of high-traffic industrial environments [2]. For instance, industrial stacks like Amazon’s often require end-to-end response latencies within ∼100 ms [5], [6], while the model-side budget is typically only a small fraction of that after accounting for network hops, feature retrieval, ranking orchestration, and business logic. This constraint is especially severe for long-context LLM inference. In generative recom-mendation, prompts typically aggregate extensive user histo-ries and verbose item metadata (e.g., titles and descriptions), often spanning thousands of tokens [4]. The computational cost of this extensive context is dom-inated by the prefill stage [7], which constructs the Key-Value (KV) cache for the prompt [8]. Due to the quadratic complexity of self-attention, prefill latency scales poorly with prompt length. Crucially, recommendation-style generation is structurally distinct from conversational tasks: it is “prefill-heavy and decode-light” [4], typically emitting only a ranked list of items or short IDs. Consequently, the massive prefill overhead cannot be amortized over a long decoding phase, making Time-To-First-Token (TTFT) the definitive bottleneck in the serving pipeline. To mitigate prefill costs, modern LLM serving stacks rely heavily on prefix caching [9], [10], which reuses KV states for requests sharing identical leading segments. While effective for chatbots, this paradigm is structurally incompatible with recommendation workloads where the most computationally expensive segments rarely form a stable prefix. Specifically: (i) user histories , though semantically redundant across the population, are lexically unique and positionally fluid for each user; and (ii) candidate item sets are frequently permuted and appended after these variable user contexts. Because conventional prefix caches require a contiguous match from the first token, they suffer from near-zero hit rates on this dominant token mass, forcing redundant O(n2) attention for the same content and leading to tail-latency violations that fail to meet stringent industrial recommendation SLOs [5], [6]. To address this challenge, we decompose LLM recommen-dation prompts into two reusable KV components that enable 
+
+beyond-prefix reuse : (i) a semantic history KV cache pool that captures and quantizes recurring patterns in user reviews and interactions, and (ii) a candidate item KV cache pool that precomputes and shards item-level KV blocks offline for non-contiguous assembly during online prefill. While this decomposition enables beyond-prefix reuse, im-plementing it at scale presents significant system challenges: 
+
+First , the item catalog is massive, requiring a distributed KV storage strategy that balances limited per-node capacity with high cache hit rates. Second , distributing KV states across nodes introduces non-trivial scheduling challenges, as poorly coordinated execution can place cross-node communication on the critical path of inference. Finally , stitching together non-contiguous KV blocks disrupts the model’s global attention, potentially degrading recommendation accuracy. To surmount these hurdles, we present RcLLM , a dis-tributed inference system that decouples KV management from 
+
+> arXiv:2605.07443v1 [cs.DC] 8 May 2026
+
+online execution via a split-phase architecture. Specifically, at 
+
+offline phase , RcLLM (1) builds a compact, replicated seman-tic history library to handle recurring user review patterns, and (2) shards the massive item KV cache across the cluster using a similarity-aware placement strategy that preserves locality. At the online phase , a cache-aware scheduler routes requests to nodes with high cache affinity while balancing queueing loads. The local execution engine then performs zero-copy assembly of non-contiguous KV blocks. To mitigate approximation errors from block reuse, RcLLM employs selective recom-putation: it identifies and recomputes a small set of “heavy-hitter” tokens that disproportionately influence attention, while reusing cached states for the remaining majority. We evaluate RcLLM on Amazon, Yelp, and Goodreads datasets. RcLLM substantially improves TTFT compared to prefix caching, delivering a 1.31 ×–9.51 × speedup while maintaining competitive ranking quality under appropriate recomputation budgets. The reduction in TTFT makes it feasible for LLM-based recommendation systems to operate within stringent industrial tail-latency SLOs, bridging the gap between model capability and production requirements. In summary, we make the following contributions:  
+
+> •
+
+We identify and quantify significant beyond-prefix re-dundancy in LLM-based recommendation prompts, con-centrated in (i) static candidate item descriptions and (ii) semantically repetitive user histories, making prefill computation highly redundant.  
+
+> •
+
+We design RcLLM, a distributed serving architecture that enables cross-request KV reuse for non-contiguous, beyond-prefix segments via a stratified cache (semantic-history pool + sharded item-KV pool), together with similarity/graph-aware cache placement and cache-aware scheduling.  
+
+> •
+
+We demonstrate that RcLLM delivers up to 9.51 ×
+
+speedups over prefix caching while preserving ranking accuracy, bridging the gap between LLM capability and industrial latency requirements. II. B ACKGROUND AND MOTIVATION 
+
+A. LLM-Based Recommendation Systems 
+
+The landscape of Recommendation Systems (RecSys) is undergoing a fundamental paradigm shift. While traditional approaches like the Deep Learning Recommendation Model (DLRM) [2] rely on sparse ID-based features to model user preferences, recent advancements have moved toward prompt-based Large Language Models (LLMs). Emerging frameworks such as OneRec [3] and HLLM [11] demonstrate that leverag-ing the extensive world knowledge and reasoning capabilities of pre-trained models can significantly enhance recommen-dation accuracy. In these scenarios, the recommendation task is reformulated from a classification problem into a language generation or ranking task, where the model must “read” a user’s context and “reason” about the best next item. The core of this workflow is the prompt construction, which serves as the input workload for the model. As illustrated in Figure 1, the system does not ingest simple vectors, but rather constructs a composite textual prompt comprising three primary elements: detailed user history, a set of candidate items, and specific task instructions. For example, Figure 1a illustrates the prompt structure used by an LLM-driven agent. The prompt begins with a system prompt specifying the agent’s objectives, followed by user-related information such as historical purchase or review records to capture personalized preferences. Afterward, a collection of candidate items is appended, where each item includes verbose attributes (titles, descriptions, metadata as shown in Figure 1b) alongside de-tailed instructions guiding the ranking process. Leveraging this extensive contextual information, the LLM infers the user’s preferences and produces an ordered ranking of the items, which constitutes the final recommendation result. To achieve high accuracy, these prompts act as extensive context windows, often exceeding thousands of tokens to capture the necessary semantic nuance. While this length is manageable for offline processing, it is prohibitive for real-time inference. In production recommender stacks, the model-side budget is typically very tight (e.g., < 100 ms [5], [6]), making the Time-To-First-Token (TTFT) (i.e., time to emit the first recommendation item) the dominant latency metric. As shown in Figure 1c, TTFT increases sharply with prompt length on the Amazon Reviews dataset [12], and can easily exceed this budget even with an 8B model. This gap motivates system techniques that reduce the prefill cost on long, personalized recommendation prompts. We next examine the underlying autoregressive inference mechanism. 
+
+B. The Autoregressive LLM Inference 
+
+Modern LLM-based recommendation systems typically rely on Transformer-based architectures (e.g., Llama [13], Qwen [14]) to generate rankings autoregressively. As illus-trated in Figure 2, the inference workflow is functionally divided into two distinct phases, each with unique compu-tational characteristics: the Prefill stage and the Decode stage: In the prefill phase, the model processes the entire prompt (user history, candidate items, and system instructions) in parallel to compute attention scores and populate the Key-Value (KV) cache for every token in the input sequence. The core computational engine driving this stage is the Self-Attention mechanism. For a sequence of length n, the mecha-nism projects tokens into Query ( Q), Key ( K), and Value ( V )matrices and computes interactions via: Attention (Q, K, V ) = softmax 
+
+ QK T
+
+√dk
+
+
+
+V (1) where dk is the dimension of the key vectors. Once the prefill is complete and the first output token is generated, the system shifts to the decode stage. Here, tokens are generated sequentially. Each newly generated token is appended to the sequence and attended to the cached states until an end-of-sequence token is reached. This architecture reveals the root cause of the latency bottleneck identified in Section II-A. The time complexity (a) Prompt Example (b) Review and Item Example 2000 4000 6000 8000 10000  
+
+> Prompt Length (tokens)
+> 0
+> 1
+> 2
+> 3
+> 4
+> TTFT (s)
+> Llama3-8B
+> Qwen3-8B
+> Llama3-70B
+> Qwen-72B
+> Industry Requirement (100ms)
+
+(c) Latency vs. Industrial SLO 
+
+Fig. 1: Prompt analysis for generative recommendation. (a) An example prompt combining user interaction history, candidate items, and task instructions. (b) An example item with typical product fields (title, category, description) forming mostly static prompt content, and a review example with semantically redundant text. (c) Inference latency exceeding industrial SLOs (typically under 100 ms) as prompt length increases, underscoring the need for optimization. 
+
+Fig. 2: Standard Autoregressive Inference Process of the self-attention mechanism is O(n2) with respect to the sequence length n. Since recommendation prompts are dominated by long interaction histories and verbose item descriptions (often exceeding thousands of tokens), the prefill stage bears the vast majority of the computational load and latency. While state-of-the-art inference engines employ tech-niques like Prefix Caching [9], [10] to reduce prefill costs, they are structurally ill-suited for this workload. Traditional prefix caching is designed to reuse the initial static segment of a prompt (e.g., system instructions) within a single session or for requests sharing a common start. However, recommendation workloads require cross-request reuse for content that is not a prefix: identical candidate items appear repeatedly across millions of different requests, but they are often positioned after unique user histories or permuted in different orders. Because these repeated item blocks do not form a consistent prefix, standard mechanisms fail to detect them, forcing the engine to re-compute the massive KV cache from scratch for every requests. This structural inefficiency creates the primary barrier to real-time deployment of LLM-based recommenda-tion systems. 
+
+C. Insights and Motivation 
+
+The severe latency bottleneck imposed by prefill stems from the inefficiency of treating every recommendation prompt as a unique computational event. In reality, the prompt context is dominated by two highly repetitive components: 1) candidate items , which are immutable strings known offline, and 2) 
+
+user histories , which are sequences of past product reviews sharing a limited semantic vocabulary. Because these massive segments do not fundamentally change between requests, the corresponding O(n2) matrix calculations performed during the prefill stage are effectively redundant. To validate the feasibility of eliminating this redundancy, we analyzed the data characteristics and attention mechanisms of representative LLMs (Qwen3-8B and Llama-3.1) on the Amazon Reviews dataset [12]. Our investigation reveals three critical insights: 
+
+Insight 1: Semantic Redundancy in User History. User histories also occupy a significant portion of the prompt context and exhibit strong semantic locality. Unlike arbitrary dialogue, these reviews exhibit strong semantic patterns. As shown in Figure 3a, when we project token embeddings from 1-star and 5-star reviews, distinct clusters emerge, confirming that sentiments and descriptive patterns are highly consistent within specific rating groups. To quantify this reusability, we constructed a compact semantic library (on the order of 10 5
+
+position-aware prototypes) derived from historical data, and for each incoming history token we retrieve its nearest proto-type in embedding space. Figure 3b presents the Cumulative Distribution Function (CDF) of the resulting maximum cosine similarity scores. The results are compelling: more than 93% of tokens in new user reviews find a near-identical match (cosine similarity close to 1.0) within this static pool. This demonstrates that the expensive prefill computation for user history is largely repetitive and can be effectively accelerated via semantic reuse. 
+
+Insight 2: Static Nature of Candidate Items. Recom-mendation prompts include a substantial segment dedicated to candidate items, containing verbose attributes like titles and descriptions (see examples in Figure 1b). Crucially, this information is inherently static and fully known prior to inference. Consequently, the KV cache for millions of items can be pre-computed offline. This implies that instead of processing item descriptions repeatedly for every request, the system can simply retrieve and concatenate these static blocks during online inference. 
+
+Insight 3: Sparsity and Locality in Attention. To ensure that aggressive caching and reuse strategies do not degrade ranking accuracy, we further analyze the self-attention patterns Dimension 1 
+
+> Dimension 2
+> pathetic
+> repetitive
+> worst
+> garbage
+> worthless
+> useless
+> mess
+> worse
+> generic
+> awful
+> ugly
+> disappointment
+> waste
+> poor
+> junk
+> enjoyed
+> passionate
+> loving
+> beautifully
+> Amazing
+> laughs
+> happy
+> Fantastic
+> enjoyment
+> Love
+> Joy
+> Real
+> rewarding
+> gifted
+> beauty
+> 1-star only
+> 5-star only
+
+(a) Semantic Clustering of Tokens 0.5 0.6 0.7 0.8 0.9 1.0  
+
+> Max Similarity to Cached Tokens
+> 0%
+> 1%
+> 10%
+> 100%
+> Cumulative Proportion of Query Tokens
+> 1-star (avg=1.000)
+> 2-star (avg=0.983)
+> 3-star (avg=0.990)
+> 4-star (avg=0.997)
+> 5-star (avg=1.000)
+
+(b) Token Reusability CDF (c) Attention Sparsity in Qwen3-8B 
+
+Fig. 3: Analysis of token characteristics and attention mechanisms. (a) Visualizing token embeddings from 1-star and 5-star reviews in 2D space reveals distinct semantic clusters indicating a limited reusable vocabulary. (b) The CDF of cosine similarity shows over 93% of tokens in new reviews find a near-identical match in a static historical pool, suggesting high potential for KV cache reuse. (c) The average attention score heatmap across heads and layers exhibits strong diagonal locality and sparsity, indicating minimal contribution from distant tokens absent specific heavy hitters .of Qwen3-8B. Figure 3c visualizes the average attention weights aggregated across all layers and heads. We observe two prominent characteristics.  
+
+> •
+
+Locality (Block-Diagonal Structure). The attention heatmap exhibits strong diagonal-dominated structures, characterized by distinct triangular blocks aligned along the main diagonal. These blocks correspond exactly to the boundaries of the static candidate items described in Insight 1, confirming that the model processes each item as a self-contained semantic unit: tokens within an item description heavily attend to their neighbors (the triangle) but exhibit negligible cross-attention to the content of other items. This structural independence scientifically permits us to cache items as independent blocks and stitch them together without disrupting the model’s reasoning.  
+
+> •
+
+Sparsity with Structural Anchors. Beyond local neigh-borhoods, long-range attention is highly sparse, with most distant token pairs receiving near-zero weights. However, the heatmap also reveals prominent vertical stripes corre-sponding to a small set of “ heavy hitter ” tokens (e.g., sys-tem instructions or item delimiters) that consistently attract attention across the entire sequence. These tokens serve as global anchors, aggregating high-level semantic signals. This suggests that precise recomputation is only necessary for these few structural anchors, while the repetitive semantic content of the history can be safely retrieved from the semantic library. 
+
+Motivation. Collectively, these insights reveal a fundamen-tal inefficiency in current serving paradigms: the prohibitive latency of LLM-based recommendation is not an intrinsic property of the task, but a consequence of failing to exploit its structural decomposability. The block-diagonal attention 
+
+observed in Insight 3 validates that static candidate items (Insight 1) function as independent semantic units, permitting them to be cached as discrete blocks. Simultaneously, the pres-ence of global anchors (Insight 3) suggests that the semantic redundancy of user history (Insight 2) can be managed by preserving just a few critical tokens, rather than recomputing the entire sequence. However, translating these insights into a practical system faces three fundamental challenges that standard inference engines cannot address:  
+
+> •
+
+Incompatibility with prefix caching : Standard engines rely on requests sharing a common prefix. In recommendation, however, static candidate items are permuted and positioned after unique user histories, preventing standard reuse.  
+
+> •
+
+Massive storage : Caching an industrial-scale item catalog requires terabytes of memory (e.g., Table II), far exceeding single-node GPU capacity.  
+
+> •
+
+Accuracy degradation : Naively stitching together inde-pendent cached blocks disrupts the attention mechanism’s positional encoding, leading to severe ranking errors. Driven by these limitations, we propose RcLLM , a special-ized inference engine designed to bridge the gap. III. S YSTEM DESIGN 
+
+A. System Overview 
+
+In this paper, we propose RcLLM, a distributed inference system designed to bridge the gap between the computational demands of generative recommendation and the strict latency constraints of industrial serving. As illustrated in Figure 4, RcLLM adopts a split-phase architecture that fundamentally decouples the management of KV cache states from real-time inference execution. 
+
+1) Offline Phase (§III-B): The offline pipeline (bottom of Figure 4) is designed to align storage strategies with the distinct scale and access patterns of recommendation data. Instead of a monolithic cache, RcLLM stratifies the prompt context into two distinct KV storage pools as shown in Table I:  
+
+> •
+
+Semantic History (Replicated) : Recognizing that user histo-ries are semantically repetitive but compact, we compress them into a semantic review library and replicate it across all nodes. This ensures that the highly variable history component is always “local”, eliminating network latency for this segment.  
+
+> •
+
+Candidate Items (Partitioned) : For the massive, immutable item catalog, we employ graph-based partitioning to min-Fig. 4: RcLLM System Architecture TABLE I: Summary of RcLLM’s two cache pools          
+
+> Cache Type Scale Accuracy Placement
+> Semantic History Small (GBs) Approx. Replicated Candidate Item Massive (TBs) Exact Sharded
+
+imize cross-node KV retrieval overhead. By analyzing co-occurrence patterns, we identify clusters of correlated items and shard them onto specific nodes. This transforms the distributed storage problem into a locality optimization problem, proactively maximizing data locality for requests. 
+
+2) Online Phase (§III-C): In standard LLM serving, the scheduler treats nodes as identical and routes requests using simple stateless algorithms (e.g., round robin). Some prefix-aware scheduling algorithms [15] may also degrade due to too few prefix match opportunities. However, in RcLLM, the massive item cache is sharded across nodes and worker nodes become “stateful” (holding different item shards). The online phase shifts the scheduling paradigm from stateless load balancing to stateful, locality-aware orchestration:  
+
+> •
+
+Locality-Aware Routing : The global scheduler routes re-quests based on cache affinity, namely directing computation to the specific node where the required item KV blocks are resident, effectively “moving compute to data”.  
+
+> •
+
+Zero-Copy Execution : Once at the target node, the engine addresses non-prefix access patterns via zero-copy block retrieval . Instead of physical concatenation, it maps logical prompt sequences to scattered physical memory pages. Finally, it employs selective attention to dynamically stitch these blocks together, correcting boundary artifacts to pre-serve model fidelity. In the following, we introduce technical details of the two phases separately. 
+
+B. Offline Phase: Distributed KV Construction and Placement 
+
+The offline phase is responsible for materializing reusable KV states and preparing them for efficient access during online inference. As introduced above, RcLLM builds two fundamentally different KV cache pools, including the KV cache pool for semantic review histories and the pool for candidate items .                 
+
+> Item Count Token Count per Item
+> 50 100 200 10K 137.5 GB 275 GB 550 GB 100K 1.38 TB 2.75 TB 5.5 TB 200K 2.75 TB 5.5 TB 11 TB 500K 6.88 TB 13.75 TB 27.5 TB 1000K 13.75 TB 27.5 TB 55 TB
+
+TABLE II: Item KV Cache Scale Analysis (Qwen3-8B) 10 0 10 1 10 2 10 3 10 4
+
+> Number of Reviews
+> 0.00
+> 0.25
+> 0.50
+> 0.75
+> 1.00
+> CDF
+> Amazon
+> Yelp
+> Goodreads
+
+Fig. 5: Item popularity distri-bution of three datasets 
+
+First, for semantic review histories , the cache must satisfy three key requirements: (i) Compact , as user histo-ries are included in every request and accessed frequently; (ii) Position-aware , since Transformer representations couple token semantics with positional information; (iii) Low-latency 
+
+local access, to avoid cross-node communication on the critical inference path. We construct the semantic history KV cache using a three-stage pipeline to meet these design requirements:  
+
+> •
+
+Position-Aware Embedding : To preserve positional effects, RcLLM embeds each token jointly with its position. For a token t appearing at position p, its embedding et,p incorpo-rates both lexical semantics and positional encoding. This avoids incorrect reuse across tokens that are semantically similar but appear in different structural contexts.  
+
+> •
+
+LSH-Based Semantic Clustering : The position-aware em-beddings are clustered using Locality-Sensitive Hashing (LSH) [16], which efficiently groups tokens into discrete semantic regions. This step quantizes the large space of user history tokens into a bounded set of semantic prototypes, each representing a recurring semantic–positional pattern.  
+
+> •
+
+KV Materialization : For each semantic prototype, RcLLM selects a canonical representative token (e.g., the cluster centroid) and pre-computes its layer-wise KV states of-fline. These precomputed KV blocks form the semantic history cache and can be reused across requests via nearest-prototype matching at inference time. In our implementa-tion, this process yields a compact cache containing on the order of 10 5 semantic prototypes. Though compact, the size of this cache remains too large to reside entirely in GPU memory (e.g., ∼30GB for 10 5 prototypes using Qwen3-8B model). RcLLM therefore stores it in CPU memory and replicates it across all serving nodes. Our semantic clustering introduces approximation into the KV states, and could hence harm the accuracy of inference. RcLLM mitigates approximation errors via selective recom-putation during online inference (§III-C), which recomputes a small set of structurally important tokens (heavy hitters) while reusing the remaining majority. 
+
+Second, for candidate items , RcLLM precomputes their KV blocks offline and reuses them as non-contiguous blocks during online prefill, adjusting positions at assembly time. Any cross-context discrepancy introduced by block reuse is mitigated by selective recomputation (§III-C). The candidate item catalog presents a scale challenge. To understand the scale of these KV states, we analyzed three datasets: Amazon Reviews [17], Yelp [18] and Goodreads [19]. The total number of items is high, e.g., reaching 778K in Amazon for just three categories. The average length of their candidate items are 87, 76 and 124, respectively. The storage requirement for caching all item KVs in the three datasets is shown in Table II, which easily reaches terabytes in size. Since item descriptions are immutable, we pre-compute the KV matrices for all candidate items and treat the precomputed data as a sharded distributed KV store. Unlike the replicated semantic history library, a specific item’s KV block exists only on a subset of nodes, necessitating a placement strategy that minimizes remote fetches. The primary objective of our placement strategy is to maximize the local cache hit rate. Achieving this requires navigating two conflicting data characteristics, namely popu-larity skew and item correlation . As illustrated in Figure 5, item popularity follows a heavy-tailed distribution. Naively partitioning hot items to a single node would create “hotspots” and frequent cache misses for other nodes. On another hand, items often exhibit strong co-occurrence patterns (e.g., books in a specific series). Placing highly relevant items on the same instance minimizes the network overhead of fetching scattered KV blocks, treating correlated items as a cohesive unit rather than independent entities. Based on the above intuitions, we propose a graph-based partitioning strategy as detailed in Algorithm 1. First , we address the popularity skew by replicating hot items (Lines 1–12). To eliminate cache misses for the most frequent queries, we identify the top 0.1% most popular items based on histor-ical access frequency and replicate their KV caches across all model instances. Because the absolute number of these hot items is small, this replication strategy incurs negligible memory overhead while guaranteeing local access for the most common requests. Second , we construct an item similarity graph to manage the placement of the rest long-tail items (Lines 13–22). The nodes in the graph represent items and edge weights represent relevance derived from co-occurrence in historical requests. We then apply METIS [20] to partition this graph into k subgraphs ( k is the number of instances). By minimizing the edge cuts between partitions, this step ensures that strongly correlated items are grouped onto the same phys-ical node, thereby maximizing cache affinity for multi-item requests while maintaining balanced memory usage across the cluster. The offline placement is not static. To accommodate catalog evolution and popularity drifts, we periodically refresh the placement. Structural updates (e.g., new item ingestion) or significant distributional shifts trigger a background re-execution of Algorithm 1. 
+
+C. Online Phase: Cache-Aware Distributed Inference 
+
+The online phase executes the stateful inference pipeline introduced in the overview (§III-A). It orchestrates three pipelined stages to minimize TTFT while preserving model fidelity, including affinity scheduling , zero-copy retrieval , and 
+
+selective recomputation .
+
+1) Cache-Aware Global Scheduling: Standard load bal-ancers (e.g., Round-Robin or Least-Loaded [21]) are agnostic 
+
+Algorithm 1 Similarity-aware item placement algorithm with global replicas                                                                                                          
+
+> 1: Input : items I, reviews R, number of instances k
+> 2: Output :ksubgraphs {G1, . . . , G k}
+> 3: ▷Phase 1: Compute item popularity
+> 4: for each item i∈Ido
+> 5: hi=|{ r∈R:r. item id =i}|
+> 6: Sort items in descending order of hi
+> 7: Let Ihot be the top 0.1% items
+> 8: Let Icold =I\Ihot
+> 9: Initialize node set V=∅and heat map H
+> 10: ▷Phase 2: Create global replicas for hot items
+> 11: for each item i∈Ihot do
+> 12: for j= 1 to kdo
+> 13: Create replica i(j)for instance j
+> 14: Add i(j)to V; set H[i(j)] = hi/k
+> 15: ▷Phase 3: Add cold items
+> 16: for each item i∈Icold do
+> 17: Add ito V; set H[i] = hi
+> 18: ▷Phase 4: Build item similarity graph
+> 19: G←(V, ∅)
+> 20: E←BUILD ITEM SIMILARITY GRAPH (V, I, R )
+> 21: G←(V, E )
+> 22: ▷Phase 5: Graph partitioning
+> 23: {G1, . . . , G k} ← PART GRAPH BYMETIS (G, k )
+> 24: return {G1, . . . , G k}
+
+to the distributed state, leading to frequent cache misses in our sharded architecture. To maximize the utility of distributed KV cache, RcLLM employs a global scheduler that synchronizes item placement data with real-time node utilization. The scheduler routes incoming requests by optimizing two competing goals: data locality (minimize item retrieval over-head) and load balancing (prevent hotspots on popular shards). We quantify this trade-off using a request-node affinity score :Affinity (R, p ) = α · cHit (R, p ) + β · (1 − Load (p)) (2) 
+
+Here, cHit (R, p ) estimates the item-cache hit ratio for request 
+
+R on instance p (e.g., |I(R) ∩ C(p)|/|I(R)|, where I(R) is the set of requested candidate items and C(p) is the set of items cached on p). Load (p) denotes the normalized runtime load (e.g., GPU utilization or queue depth). Hyperparameters 
+
+α and β allow the system to dynamically adapt between cache-priority and load-priority depending on traffic intensity. We empirically study the impact of the two parameters in §IV-D2. 
+
+2) Zero-Copy Retrieval and Selective Attention: Once a request reaches the target instance, the local KV cache manager constructs the prompt context. This module addresses the challenge of assembling non-contiguous semantic blocks while correcting the approximation errors inherent in reuse. 
+
+a) KV Block Retrieval. The prompt is decomposed into three components, each handled differently to ensure cor-rectness: i) Instruction tokens , which are instance-dependent and require strict adherence to system prompts. They are always fully recomputed. ii) Review tokens , which exhibit high semantic redundancy and are mapped to the nearest pre-computed semantic prototype using LSH-based matching [16]. Crucially, to prevent incorrect cross-context contamination, caching is strictly limited to natural language content, while instance-specific fields (e.g., timestamps, item identifiers, and delimiters) are isolated and always recomputed. iii) Candidate item tokens , which represent immutable catalog data and are retrieved from the local CPU cache using Item IDs. Valid hits are transferred directly to GPU memory via a zero-copy path [22], while cache misses are computed on-the-fly. 
+
+b) Selective Recomputation. To mitigate the semantic bias (for reviews) or contextual misalignment (for items) intro-duced by stitching cached blocks, RcLLM implements asystem-level compensation mechanism. Leveraging the observation that token importance persists across layers [23], [24], we perform full attention computation in the first decoder layer to identify “heavy hitters” (i.e., structurally critical tokens requiring update). We select these tokens using an importance score Si:
+
+Si = (1 − λ)∥Ai∥1 + λ X  
+
+> M∈{ K,V }
+
+∥M new  
+
+> i
+
+− M cached  
+
+> i
+
+∥1 (3) 
+
+where Ai is the attention weight of token i. The second term measures the divergence between the current context and the cached state. For review tokens, λ balances structural importance with semantic drift. For item tokens, where the cached block is a lexical match, the divergence term vanishes, and selection relies solely on Ai.In subsequent layers, RcLLM recomputes exact attention only for these heavy hitters and the local sliding window, reusing cached states for the remainder of the sequence. 
+
+3) End-to-End Prefill Pipeline: The final execution pipeline integrates these steps to minimize the critical path: (i) 
+
+Assembly : KV blocks are gathered from the replicated library and local item shard; (ii) Alignment : Reused blocks undergo positional adjustment (e.g., RoPE rotation [25]) to align with the current request’s indices; (iii) Correction : The selective recomputation kernel updates heavy hitters. We optimize this pipeline by overlapping the first-layer attention computation with the PCI-e transfer of KV blocks from CPU to GPU, effectively hiding the transmission latency. 
+
+D. System Implementation 
+
+To validate RcLLM’s design across both performance and accuracy dimensions, we developed a hybrid implementation framework comprising two distinct artifacts:  
+
+> •
+
+Distributed Serving Engine : We implemented RcLLM’s distributed logic on top of Vidur [26], a high-fidelity LLM inference simulator. We extended Vidur’s kernel to support our graph-based item placement, affinity-aware global scheduler, and non-contiguous KV retrieval. This implementation models the full distributed stack, including PCIe transfers, 100Gbps network interconnects, and request queueing dynamics, enabling accurate cluster-scale latency measurements.  
+
+> •
+
+Accuracy Prototype : For verifying recommendation fi-delity, we built a functional prototype using HuggingFace transformers [8]. We modified the underlying attention mechanism of Qwen3-8B to support selective attention, allowing us to inject sparse attention masks and measure the exact ranking impact of our semantic and item KV reuse strategies on real datasets. 0.00 0.25 0.50 0.75 1.00 
+
+> TTFT (s)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> Full-Recompute
+> Prefix-Cache
+> RcLLM
+
+(a) Amazon (Qwen3-8B) 0.2 0.4 0.6 0.8  
+
+> TTFT (s)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> Full-Recompute
+> Prefix-Cache
+> RcLLM
+
+(b) Yelp (Qwen3-8B) 0.2 0.4 0.6 0.8 1.0  
+
+> TTFT (s)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> Full-Recompute
+> Prefix-Cache
+> RcLLM
+
+(c) Goodreads (Qwen3-8B) 0 1 2 3 4 5
+
+> TTFT (s)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> Full-Recompute
+> Prefix-Cache
+> RcLLM
+
+(d) Amazon (Qwen-72B) 1 2 3 
+
+> TTFT (s)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> Full-Recompute
+> Prefix-Cache
+> RcLLM
+
+(e) Yelp (Qwen-72B) 1 2 3 4 5 
+
+> TTFT (s)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> Full-Recompute
+> Prefix-Cache
+> RcLLM
+
+(f) Goodreads (Qwen-72B) 
+
+Fig. 6: TTFT CDF comparison in a distributed setting with 
+
+K=40 instances for Qwen3-8B (top) and Qwen-72B (bottom) across three datasets. RcLLM consistently shifts the distribu-tion left, demonstrating significant latency reductions. IV. E VALUATION 
+
+We evaluate RcLLM along three dimensions: (1) End-to-end Latency , quantifying speedups in distributed serving; (2) 
+
+Recommendation Accuracy , assessing the fidelity of selective recomputation; and (3) System Ablations , isolating the benefits of placement and scheduling. 
+
+A. Experimental Setup 
+
+Testbed Environment. We simulate a local cluster with 
+
+K = 40 instances by default and scale to K ≤ 100 in scalability ablations. For experiments with Qwen3-8B [14], each instance is equipped with a single NVIDIA A100 GPU (80GB). For the larger Qwen-72B [27], each instance utilizes 4 NVIDIA A100 GPUs interconnected via pairwise NVLink, with the model deployed using Tensor Parallelism (TP=4) to meet its memory and computational demands. All instances are connected via a 100Gbps high-bandwidth interconnect. We employ Qwen3-8B as the primary model for evaluating recommendation accuracy, while Qwen-72B is additionally used to assess system performance and scalability. This se-lection reflects a balance between reasoning capability and industrial serving costs. Models with even larger parameters are not considered due to the prohibitive gap between their baseline inference latency and the stringent recommendation SLOs (Figure 1c). 
+
+Datasets and Workloads. We evaluate on three widely used recommendation datasets, using raw review data to synthesize prompts following the structure in §II-C (i.e., Instruction + History + Items):  
+
+> •
+
+Amazon Reviews [17]: Covers three categories (Industrial, Musical Instruments, and Video Games) to balance domain diversity.  
+
+> •
+
+Yelp [18] & Goodreads [19]: Selected to stress-test perfor-mance on datasets with longer, verbose user histories. For Goodreads, we include three categories: Children, Graphic, and Poetry. 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0                                                                                            
+
+> Item Token Recompute Ratio
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Review Token Recompute Ratio
+> -0.041 -0.001 -0.030 +0.027 +0.012 -0.005 -0.043 -0.143 -0.148 -0.066
+> -0.040 -0.001 -0.019 +0.019 -0.002 +0.006 -0.032 -0.133 -0.179 -0.099
+> -0.031 -0.029 +0.005 +0.028 +0.007 +0.022 -0.031 -0.137 -0.158 -0.097
+> -0.038 -0.014 +0.024 -0.017 +0.019 -0.009 -0.056 -0.127 -0.140 -0.072
+> -0.044 -0.032 -0.018 -0.010 -0.012 -0.025 -0.061 -0.153 -0.162 -0.098
+> -0.053 -0.042 -0.028 -0.036 -0.023 -0.019 -0.048 -0.134 -0.145 -0.065
+> -0.054 -0.026 -0.021 -0.025 -0.025 -0.027 -0.055 -0.132 -0.139 -0.089
+> -0.088 -0.061 -0.042 -0.009 -0.057 -0.045 -0.113 -0.173 -0.149 -0.063
+> -0.116 -0.107 -0.067 -0.093 -0.060 -0.115 -0.125 -0.161 -0.165 -0.030
+> -0.099 -0.070 -0.093 -0.089 -0.111 -0.136 -0.119 -0.103 -0.132 +0.000 0.3
+> 0.2
+> 0.1
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+
+(a) Amazon 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0                                                                                             
+
+> Item Token Recompute Ratio
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Review Token Recompute Ratio
+> -0.034 -0.043 -0.030 -0.020 -0.070 -0.105 -0.097 -0.003 -0.029 -0.034
+> -0.053 -0.059 -0.016 -0.048 -0.056 -0.070 -0.084 -0.010 -0.043 -0.034
+> -0.048 -0.040 -0.045 -0.047 -0.056 -0.101 -0.085 -0.025 -0.038 -0.037
+> -0.038 -0.031 -0.032 -0.044 -0.080 -0.102 -0.082 -0.022 -0.018 -0.027
+> -0.052 -0.046 -0.069 -0.050 -0.059 -0.142 -0.101 -0.022 -0.015 -0.026
+> -0.043 -0.065 -0.093 -0.093 -0.058 -0.120 -0.063 -0.004 -0.025 -0.029
+> -0.061 -0.053 -0.063 -0.073 -0.089 -0.098 -0.086 -0.002 -0.012 -0.031
+> -0.062 -0.070 -0.077 -0.090 -0.089 -0.073 -0.088 -0.022 -0.050 -0.024
+> -0.051 -0.052 -0.074 -0.080 -0.078 -0.115 -0.074 -0.031 -0.080 -0.017
+> -0.070 -0.073 -0.027 -0.018 -0.050 -0.062 -0.056 -0.009 -0.071 +0.000 0.3
+> 0.2
+> 0.1
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+
+(b) Goodreads 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0                                                                                             
+
+> Item Token Recompute Ratio
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Review Token Recompute Ratio
+> -0.136 -0.145 -0.095 -0.079 -0.099 -0.066 -0.069 -0.105 -0.111 -0.060
+> -0.151 -0.133 -0.109 -0.113 -0.086 -0.078 -0.071 -0.116 -0.135 -0.043
+> -0.138 -0.157 -0.116 -0.096 -0.084 -0.073 -0.080 -0.131 -0.127 -0.072
+> -0.152 -0.156 -0.130 -0.106 -0.104 -0.087 -0.087 -0.105 -0.142 -0.064
+> -0.135 -0.145 -0.126 -0.077 -0.098 -0.092 -0.073 -0.133 -0.133 -0.023
+> -0.103 -0.133 -0.087 -0.100 -0.097 -0.092 -0.095 -0.136 -0.142 -0.053
+> -0.127 -0.101 -0.101 -0.085 -0.104 -0.116 -0.085 -0.122 -0.134 -0.064
+> -0.096 -0.142 -0.134 -0.119 -0.104 -0.073 -0.071 -0.118 -0.097 -0.036
+> -0.154 -0.125 -0.120 -0.100 -0.080 -0.088 -0.074 -0.085 -0.131 -0.040
+> -0.150 -0.160 -0.100 -0.100 -0.109 -0.094 -0.068 -0.089 -0.137 +0.000 0.3
+> 0.2
+> 0.1
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+
+(c) Yelp 
+
+Fig. 7: Difference between the NDCG of RcLLM and that of Full-Recompute (the higher the better). RcLLM maintains ranking quality under moderate recomputation budgets, enabling substantial KV reuse with limited accuracy loss. TABLE III: Recommendation accuracy comparison. Best result is bolded and second best result is underlined. 
+
+Dataset Method HR@1 HR@3 HR@5 HR@10 MRR NDCG@5 NDCG@10 NDCG@20 
+
+Amazon Full-Recompute 0.160 0.380 0.520 0.700 0.333 0.346 0.403 0.480 RcLLM ( ritem =0 .3, r rev =0 .3) 0.220 0.340 0.500 0.740 0.360 0.360 0.438 0.485 
+
+CacheBlend 0.142 0.300 0.420 0.620 0.294 0.295 0.360 0.403 EPIC 0.100 0.200 0.280 0.440 0.209 0.191 0.241 0.346 Goodreads Full-Recompute 0.163 0.408 0.510 0.776 0.338 0.344 0.427 0.484 
+
+RcLLM ( ritem =0 .3, r rev =0 .2) 0.143 0.286 0.469 0.776 0.287 0.295 0.393 0.468 CacheBlend 0.122 0.224 0.387 0.653 0.244 0.246 0.329 0.370 EPIC 0.102 0.265 0.387 0.551 0.249 0.248 0.300 0.400 Yelp Full-Recompute 0.256 0.558 0.628 0.698 0.413 0.456 0.477 0.497 
+
+RcLLM ( ritem =0 .4, r rev =0 .5) 0.140 0.442 0.535 0.744 0.307 0.341 0.407 0.414 CacheBlend 0.043 0.128 0.277 0.489 0.150 0.149 0.220 0.255 EPIC 0.021 0.192 0.319 0.468 0.153 0.169 0.219 0.259 
+
+• Trace Generation: Online inference traffic is generated using real-world interaction traces sourced from [28]. 
+
+Baselines. We compare RcLLM against two categories of baselines, namely system baselines for latency comparison and algorithmic baselines for accuracy comparison. 
+
+• System Baselines : 1) Full-Recompute, which is the standard autoregressive inference with no reuse; 2) Prefix-Cache (SOTA), which is the industrial standard (e.g., vLLM [9], SGLang [10]) reusing only contiguous prefixes. 
+
+• Algorithmic Baselines : 1) CacheBlend [24], a beyond-prefix KV reuse baseline that caches KV states for reusable context chunks and blends cached knowledge with the current prompt to approximate full attention context (widely used in RAG-style serving); 2) EPIC [29], a position-independent KV caching baseline that decouples/corrects positional effects so cached KV blocks can be reused even when inserted at different positions, enabling non-prefix reuse across requests. Note that CacheBlend and EPIC lack distributed scheduling logic, so they are compared only on accuracy benchmarks. 
+
+Metrics. For latency evaluation, we compare Time-To-First-Token (TTFT) at P50, P90, and P99. TTFT is the bottle-neck metric for generative recommendation as systems act immediately on the first emitted item. For accuracy evaluation, we adopt a few metrics commonly used in recommendation systems, including Hit Rate (HR@K), Mean Reciprocal Rank (MRR), and NDCG@K. 
+
+Configurations. We control approximation aggressiveness via recompute ratios ( rrev for history, ritem for items). Based on the sensitivity analysis in §IV-C and §IV-D3, we use the following defaults which maximize speed while maintain-ing accuracy parity: rrev =ritem =0.3 for Amazon, rrev =0.2, 
+
+ritem =0.3 for Goodreads and rrev =0.5, ritem =0.4 for Yelp. 
+
+B. End-to-End Latency Performance 
+
+We focus our primary evaluation on the distributed setting (K = 40 instances), which represents a realistic industrial deployment where the massive item catalog must be sharded. Figure 6 shows the performance comparison results between RcLLM and the two system baselines (i.e., Full-Recompute and Prefix-Cache). We make several important observations. 
+
+First , as shown in Figure 6, RcLLM delivers substantial latency reductions across all datasets for both Qwen3-8B (top row) and Qwen-72B (bottom row). For Qwen3-8B, RcLLM improves median (P50) TTFT by 1.5 ×–2.2 × and tail (P99) TTFT by 1.4 ×–2.4 ×; for Qwen-72B, it achieves 1.3 ×–2.1 ×
+
+(P50) and 1.4 ×–2.8 × (P99) compared to Prefix-Cache, the industrial SOTA solution. This effect is more pronounced for Qwen-72B, where a higher prefill cost amplifies the benefit of reuse. This performance gap stems from the structural compo-sition of recommendation prompts. Across our traces, the me-dian prefill length spans 2.2K–3.0K tokens (with P90 reaching 4.0K–4.3K), yet the only truly shared contiguous prefix is the fixed system prompt (207 tokens), representing just ∼7–10% of the prefill. Consequently, Prefix-Cache eliminates only a negligible fraction of the computation. In contrast, RcLLM targets the dominant token mass: candidate items (66–82% of prefill) and user histories (11–26%). By decomposing the prompt and reusing these segments at the content-block granularity (item blocks and semantic prototypes), RcLLM K=1    
+
+> QPS=1
+> K=20
+> QPS=20
+> K=40
+> QPS=40
+> K=80
+> QPS=80
+> K=100
+> QPS=100
+> Number of Instances
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+> 3.5
+> Normalized Performance
+> 3.02x
+> 2.28x 2.23x 2.23x 2.29x
+> Prefix-Cache
+> P50
+> P90
+> P99
+
+(a) Amazon (Qwen3-8B) K=1   
+
+> QPS=1
+> K=20
+> QPS=20
+> K=40
+> QPS=40
+> K=80
+> QPS=80
+> K=100
+> QPS=100
+> Number of Instances
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> Normalized Performance
+> 2.07x
+> 1.75x
+> 1.51x
+> 1.37x 1.31x
+> Prefix-Cache
+> P50
+> P90
+> P99
+
+(b) Yelp (Qwen3-8B) K=1    
+
+> QPS=1
+> K=20
+> QPS=20
+> K=40
+> QPS=40
+> K=80
+> QPS=80
+> K=100
+> QPS=100
+> Number of Instances
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> 3.0
+> 3.5
+> 4.0
+> Normalized Performance
+> 3.55x
+> 2.52x 2.38x 2.34x 2.40x
+> Prefix-Cache
+> P50
+> P90
+> P99
+
+(c) Goodreads (Qwen3-8B) K=1  
+
+> QPS=0.5
+> K=20
+> QPS=10
+> K=40
+> QPS=20
+> K=80
+> QPS=40
+> K=100
+> QPS=50
+> Number of Instances
+> 0
+> 2
+> 4
+> 6
+> 8
+> Normalized Performance
+> 7.22x
+> 4.93x
+> 2.76x
+> 2.30x 2.60x
+> Prefix-Cache
+> P50
+> P90
+> P99
+
+(d) Amazon (Qwen-72B) K=1    
+
+> QPS=0.5
+> K=20
+> QPS=10
+> K=40
+> QPS=20
+> K=80
+> QPS=40
+> K=100
+> QPS=50
+> Number of Instances
+> 0.0
+> 0.5
+> 1.0
+> 1.5
+> 2.0
+> 2.5
+> Normalized Performance
+> 2.28x
+> 1.46x 1.44x
+> 1.28x 1.27x
+> Prefix-Cache
+> P50
+> P90
+> P99
+
+(e) Yelp (Qwen-72B) K=1    
+
+> QPS=0.5
+> K=20
+> QPS=10
+> K=40
+> QPS=20
+> K=80
+> QPS=40
+> K=100
+> QPS=50
+> Number of Instances
+> 0
+> 2
+> 4
+> 6
+> 8
+> 10
+> Normalized Performance
+> 9.51x
+> 2.15x 2.29x 2.18x 2.35x
+> Prefix-Cache
+> P50
+> P90
+> P99
+
+(f) Goodreads (Qwen-72B) 
+
+Fig. 8: Normalized performance (speedup) of RcLLM compared to Prefix-Cache under different cluster sizes for Qwen3-8B (top) and Qwen-72B (bottom). RcLLM maintains significant speedups across both model scales and various cluster configurations. 1 10 20 30 40 50 60 70 80 90 100 
+
+Number of Instances (K) 
+
+0
+
+20 
+
+40 
+
+60 
+
+80 
+
+100 
+
+> Cache Hit Rate (%)
+
+Amazon 
+
+Yelp 
+
+Goodreads 
+
+(a) Item-cache hit rate 1 10 20 30 40 50 60 70 80 90 100 
+
+Number of Instances (K) 
+
+10 2
+
+10 3
+
+10 4
+
+> Tokens per Instance (K)
+
+Amazon 
+
+Yelp 
+
+Goodreads (b) Per-replica item-cache footprint 
+
+Fig. 9: The trade-off between locality and scalability under dis-tributed sharding. (a) As K increases, the item-cache hit rate naturally declines due to sharding; however, our similarity-aware placement maintains high locality (e.g., ≥ 75% even at K = 100 ). (b) The per-replica cached item footprint drops near-linearly with K, reducing the massive catalog to a manageable size for CPU caching. 10 20 30 40 
+
+> QPS
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> TTFT Mean (s)
+> Cache-Aware (RcLLM)
+> Hit-Only
+> Load-Only
+
+(a) Amazon 10 20 30 40  
+
+> QPS
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> TTFT Mean (s)
+> Cache-Aware (RcLLM)
+> Hit-Only
+> Load-Only
+
+(b) Yelp 10 20 30 40  
+
+> QPS
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> TTFT Mean (s)
+> Cache-Aware (RcLLM)
+> Hit-Only
+> Load-Only
+
+(c) Goodreads 
+
+Fig. 10: The impact of scheduling policy on latency under increasing load. RcLLM achieves the best (or near-best) mean TTFT by jointly optimizing cache locality and load balance. effectively bypasses the majority of the quadratic attention bottleneck that the baseline must fully recompute. The gains are most pronounced on Amazon and Goodreads, reaching up to 2.8 × speedup at P99, where the prefill is dominated by reusable item/history context. 
+
+Second , beyond median improvements, RcLLM signifi-cantly tightens the latency distribution for both model scales, 0.0 0.2 0.4 0.6 0.8 1.0 1.2 
+
+> TTFT (s)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> Prefix-Cache
+> RcLLM (recompute=0.1)
+> RcLLM (recompute=0.3)
+> RcLLM (recompute=0.5)
+> RcLLM (recompute=0.8)
+
+(a) Amazon 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> TTFT (s)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> Prefix-Cache
+> RcLLM (recompute=0.1)
+> RcLLM (recompute=0.3)
+> RcLLM (recompute=0.5)
+> RcLLM (recompute=0.8)
+
+(b) Yelp 0.0 0.2 0.4 0.6 0.8 1.0  
+
+> TTFT (s)
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> CDF
+> Prefix-Cache
+> RcLLM (recompute=0.1)
+> RcLLM (recompute=0.3)
+> RcLLM (recompute=0.5)
+> RcLLM (recompute=0.8)
+
+(c) Goodreads 
+
+Fig. 11: The latency cost of increased fidelity ( rrev =ritem =r)for Qwen3-8B. Higher recomputation budgets shift the TTFT distributions right, illustrating the trade-off between computa-tional cost and model fidelity. avoiding the severe tail spikes seen in the baseline. This stability is driven by the high local hit rates achieved by our placement and scheduling strategies. With similarity-aware placement and cache-aware routing, a single locality-optimal replica already covers a median of 90% of a request’s candi-date items at K = 40 (mean 85%–88% across datasets). Since item blocks are largely served locally from CPU memory and history KV reuse is local by construction (due to replication), only the residual item misses and sparse “heavy-hitter” tokens require online recomputation. This drastic reduction in critical-path work minimizes processing variance, yielding consistent improvements in both median and tail TTFT. 
+
+C. Recommendation Accuracy 
+
+We next evaluate whether RcLLM can maintain ranking fidelity despite the approximations introduced by KV reuse. We compare against Full-Recompute (the “Gold Standard”) and approximate baselines (CacheBlend, EPIC). Figure 7illustrates the trade-off between recomputation budget ( r) and ranking accuracy. We make the following observations. 
+
+First , we identify a stable “Pareto frontier” at moderate budgets where RcLLM matches Full-Recompute. On Amazon (r = 0 .3) and Goodreads ( r = [0 .2, 0.3] ), RcLLM retains 96–100% of the baseline NDCG while caching over 70% of the prompt. Surprisingly, on Amazon, RcLLM slightly out-performs Full-Recompute on accuracy, boosting NDCG@10 from 0.403 to 0.438 (+8.6%) and HR@10 from 0.70 to 0.74, as shown in Table III. This counter-intuitive gain indicates that full recomputation often over-attends to noisy, template-heavy item metadata. By retrieving generic item prototypes and restricting high-precision compute to heavy hitter tokens via selective attention, RcLLM effectively acts as a regularizer, filtering out semantic noise while sharpening the signal on dis-criminative tokens. Yelp presents a harder boundary, requiring a higher budget ( r ≈0.5) to maintain parity (HR@10=0.744 vs. 0.698 on baseline). This is because Yelp reviews are sig-nificantly longer (mean 178 tokens vs. ∼80 for Amazon) and multi-faceted; aggressive reuse can blur fine-grained sentiment shifts (e.g., “great food” vs. “slow service”), necessitating more online recomputation to preserve ranking order. 
+
+Second , compared to CacheBlend and EPIC, Table III shows that RcLLM consistently dominates generic base-lines. On Amazon, while RcLLM improves NDCG@10 to 0.438, CacheBlend drops to 0.360 (-10% vs. baseline) and EPIC collapses to 0.241 (-40%). Similarly, on Goodreads, RcLLM matches the baseline HR@10 of 0.776, whereas CacheBlend and EPIC drop to 0.653 and 0.551, respectively. This performance chasm validates our domain-specific design: CacheBlend treats retrieved chunks as unstructured context rather than positional sequence components, disrupting the fine-grained relative scoring needed for ranking 20+ items; while EPIC decouples positional embeddings to allow flexible reuse, but recommendation prompts rely on strict ordering (e.g., history →item A→item B). In contrast to these two baselines, RcLLM maintains the ranking signal by explicitly preserving the structural skeleton (instruction tokens) and cor-recting semantic drift where attention is high (heavy hitters). 
+
+D. Ablation Studies 
+
+We perform controlled ablations to isolate the impact of our three core system components: distributed sharding, affinity scheduling, and recomputation budgets. 
+
+1) Scalability vs. Locality Trade-off: We vary the cluster size K ∈ { 1, 20 , 40 , 80 , 100 } to evaluate how sharding impacts system performance. Figure 8 shows the performance speedup obtained by RcLLM compared to Prefix-Cache, the industrial standard. We make the following observations. RcLLM consistently outperforms Prefix-Cache across all scales, delivering up to 3.5 × (Qwen3-8B) and 9.5 × (Qwen-72B) speedups in P99 TTFT. While the absolute speedup narrows slightly as K increases (due to reduced probabil-ity of local hits), the system remains robust. This ablation validates the feasibility of our design: on Amazon, the per-replica cached item footprint drops from ∼66M tokens at 
+
+K = 1 to ∼1.7M tokens at K = 40 (Figure 9b), making CPU-side caching practical. Although sharding reduces the theoretical maximum hit rate (Figure 9a), our similarity-aware placement algorithm recovers a substantial fraction of locality by grouping correlated items, maintaining high hit rates even at large K.
+
+2) Scheduling policy: To validate the global scheduler, we compare it against single-objective policies: i) Hit-Only (optimizing purely for cache locality) and ii) Load-Only (optimizing purely for queue depth). Figure 10 presents the performance results under different scheduling policies with increasing load (QPS). As shown in the figure, RcLLM’s cache-aware routing achieves the lowest (or near-lowest) mean TTFT across all traffic intensities. At high concurrency, Hit-Only degrades sharply (mean TTFT increases by 1.6 ×–4.0 × at the highest QPS) because it blindly routes requests to popular hot shards, creating severe queueing backlogs. Load-Only avoids queues but sacrifices locality (hit rate collapses to < 11% at high QPS), forcing frequent on-the-fly recomputation and under-mining caching benefits. In contrast, RcLLM’s affinity score successfully navigates this Pareto frontier. By dynamically weighting load ( β) against locality ( α), it exploits cached states during quiet periods while shedding traffic to less-loaded (but colder) nodes during bursts, preventing both compute and queueing bottlenecks. 
+
+3) Recompute ratio vs. latency: Finally, we quantify the latency penalty of increasing the recomputation budget r in the distributed setting ( K = 40 ). Figure 11 presents the CDF of TTFT latency under varying recomputation budgets (rrev = ritem = r), illustrating the trade-off between fidelity and speed. As r increases from 0.1 to 0.8, the CDF curves shift progressively to the right, indicating a uniform increase in service time across all percentiles. Despite this penalty, the gap between RcLLM and the baseline remains decisive. At the empirically optimal budget of 
+
+r = 0 .3 (orange curve), RcLLM still substantially outperforms Prefix-Cache (grey dashed). For example, on Amazon with Qwen3-8B (Figure 11a), P90 TTFT drops from 0.38s (Prefix-Cache) to 0.18s (RcLLM). V. R ELATED WORK 
+
+LLM-based Recommendation. LLM-based recommenda-tion casts ranking and next-item prediction as language gen-eration, covering zero-shot ranking [30], [31], prompting and empirical frameworks [32], training-free and two-stage rank-ing [33], [34], reasoning-enhanced sequential recommenda-tion [35], interactive/explainable recommenders [36], and di-rect generation [37]. Recent work further explores agentic rec-ommenders with tool use and multi-step planning [38]–[41], knowledge-augmented ranking with structured sources [42], and Transformer architectures tailored to recommendation [3], [11], [43]. These works improve recommendation quality and modeling capacity; RcLLM is complementary, targeting serv-ing latency for long, non-contiguous recommendation prompts. 
+
+KV Caching for Accelerating LLM Inference. LLM serving systems such as vLLM [9] and SGLang [10] accelerate inference through exact-prefix caching, but recommendation prompts often append permuted item descriptions after unique user histories, yielding few prefix hits. BAT [44] accelerates recommendation prefill with bilateral attention, yet its reuse pattern remains tied to contiguous structures. CacheBlend [24] and EPIC [29] enable KV sharing across shifted contexts, but they are general-purpose and do not jointly address ranking-sensitive accuracy recovery, locality-aware routing, or massive sharded item catalogs. RcLLM addresses these recommendation-specific serving constraints with stratified caches, affinity scheduling, and selective recomputation. VI. C ONCLUSION 
+
+This paper presents RcLLM, a distributed serving system that accelerates LLM-based recommendation by reusing non-contiguous KV blocks from semantic histories and candidate items. RcLLM combines stratified caching, similarity-aware item placement, affinity scheduling, and selective recompu-tation to reduce redundant prefill while preserving ranking fidelity. Across three datasets and two model scales, RcLLM substantially lowers TTFT over prefix caching and keeps accuracy competitive, making real-time generative recommen-dation practical under industrial latency SLOs. ACKNOWLEDGEMENTS 
+
+This work is supported by Guangdong and Hong Kong Universities “1+1+1” Joint Research Collaboration Scheme (project No. 2025A0505000012). Amelie Chi Zhou is the corresponding author. REFERENCES [1] S. Chen, H. Tan, A. C. Zhou, Y. Li et al. , “Updlrm: Pim-based accelerator to address the memory bottleneck in dlrm inference,” in 
+
+DAC’24 , 2024, pp. 1–6. [2] W. Yu, S. Chen, A. C. Zhou, and C. Chen, “Near-zero-overhead fresh-ness for recommendation systems via inference-side model updates,” in 
+
+HPCA’26 , 2026. [3] G. Zhou, J. Deng, J. Zhang, K. Cai et al. , “Onerec technical report,” 
+
+arXiv:2506.13695 , 2025. [4] J. Li, W. Zhang, T. Wang, G. Xiong et al. , “Gpt4rec: A generative frame-work for personalized recommendation and user interests interpretation,” 
+
+arXiv:2304.03879 , 2023. [5] J. Beswick. (2021) Operating lambda: Performance optimization – part 1. AWS Compute Blog. [Online]. Available: https://aws.amazon.com/ blogs/compute/operating-lambda-performance-optimization-part-1/ [6] U. Gupta, S. Hsia, V. Saraph, X. Wang et al. , “Deeprecsys: A system for optimizing end-to-end at-scale neural recommendation inference,” in 
+
+ISCA’20 , 2020. [7] H. Jiang, Y. Li, C. Zhang, Q. Wu et al. , “Minference 1.0: Accelerat-ing pre-filling for long-context llms via dynamic sparse attention,” in 
+
+NeurIPS’24 , 2024. [8] T. Wolf, L. Debut, V. Sanh, J. Chaumond et al. , “Transformers: State-of-the-art natural language processing,” in EMNLP’20 , 2020. [9] W. Kwon, Z. Li, S. Zhuang, Y. Sheng et al. , “Efficient memory management for large language model serving with pagedattention,” in 
+
+SOSP’23 , 2023. [10] L. Zheng, L. Yin, Z. Xie, C. Sun et al. , “Sglang: efficient execution of structured language model programs,” in NeurIPS’24 , 2024. [11] J. Chen, L. Chi, B. Peng, and Z. Yuan, “Hllm: Enhancing sequential recommendations via hierarchical large language models for item and user modeling,” arXiv:2409.12740 , 2024. [12] R. He and J. McAuley, “Ups and downs: Modeling the visual evolution of fashion trends with one-class collaborative filtering,” in WWW ’16 ,2016. [13] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey et al. , “The llama 3 herd of models,” arXiv:2407.21783 , 2024. [14] A. Yang, A. Li, B. Yang, B. Zhang et al. , “Qwen3 technical report,” 
+
+arXiv:2505.09388 , 2025. [15] V. Srivatsa, Z. He, R. Abhyankar, D. Li et al. , “Preble: Efficient distributed prompt scheduling for LLM serving,” in ICLR’25 , 2025. [16] O. Jafari, P. Maurya, P. Nagarkar, K. M. Islam et al. , “A sur-vey on locality sensitive hashing algorithms and their applications,” 
+
+arXiv:2102.08942 , 2021. [17] Y. Hou, J. Li, Z. He, A. Yan et al. , “Bridging language and items for retrieval and recommendation,” arXiv:2403.03952 , 2024. [18] Y. Inc. (2025) Yelp open dataset. Yelp Open Dataset. [Online]. Available: https://business.yelp.com/data/resources/open-dataset/ [19] M. Wan and J. McAuley, “Item recommendation on monotonic behavior chains,” in RecSys’18 , 2018. [20] G. Karypis and V. Kumar, “Multilevelk-way partitioning scheme for irregular graphs,” Journal of Parallel and Distributed computing , 1998. [21] T. A. Team, J. Shan, V. Gupta, L. Xu et al. , “Aibrix: Towards scalable, cost-effective large language model inference infrastructure,” 
+
+arXiv:2504.03648 , 2025. [22] S. Kato, J. Aumiller, and S. Brandt, “Zero-copy i/o processing for low-latency gpu computing,” in ICCPS’13 , 2013. [23] X. Zhao and S. Mastorakis, “Semsharekv: Efficient kvcache sharing for semantically similar prompts via token-level lsh matching,” in AACL-IJCNLP’25 , 2025. [24] J. Yao, H. Li, Y. Liu, S. Ray et al. , “Cacheblend: Fast large language model serving for rag with cached knowledge fusion,” in EuroSys ’25 ,2025. [25] J. Su, M. Ahmed, Y. Lu, S. Pan et al. , “Roformer: Enhanced transformer with rotary position embedding,” Neurocomputing , 2024. [26] A. Agrawal, N. Kedia, J. Mohan, A. Panwar et al. , “Vidur: A large-scale simulation framework for llm inference,” in MLSYS’24 , 2024. [27] A. Yang, B. Yang, B. Hui, B. Zheng et al. , “Qwen2 technical report,” 
+
+arXiv:2407.10671 , 2024. [28] Y. Yan, Y. Shang, Q. Zeng, Y. Li et al. , “Agentsociety challenge: Designing llm agents for user modeling and recommendation on web platforms,” in WWW’25 , 2025. [29] J. Hu, W. Huang, W. Wang, H. Wang et al. , “EPIC: Efficient position-independent caching for serving large language models,” in ICML ’25 ,2025. [30] L. Wang and E.-P. Lim, “Zero-shot next-item recommendation using large pretrained language models,” arXiv:2304.03153 , 2023. [31] Y. Hou, J. Zhang, Z. Lin, H. Lu et al. , “Large language models are zero-shot rankers for recommender systems,” in ECIR’24 , 2024. [32] L. Xu, J. Zhang, B. Li, J. Wang et al. , “Tapping the potential of large language models as recommender systems: A comprehensive framework and empirical analysis,” ACM TKDD , 2025. [33] D.-H. Lee, A. Kraft, L. Jin, N. Mehta et al. , “Star: A simple training-free approach for recommendations using large language models,” 
+
+arXiv:2410.16458 , 2025. [34] Z. Yue, S. Rabhi, G. de Souza Pereira Moreira, D. Wang et al. ,“Llamarec: Two-stage recommendation using large language models for ranking,” arXiv:2311.02089 , 2023. [35] Y. Wang, Z. Liu, J. Zhang, W. Yao et al. , “Drdt: Dynamic reflection with divergent thinking for llm-based sequential recommendation,” 
+
+arXiv:2312.11336 , 2023. [36] Y. Gao, T. Sheng, Y. Xiang, Y. Xiong et al. , “Chat-rec: Towards interactive and explainable llms-augmented recommender system,” 
+
+arXiv:2303.14524 , 2023. [37] J. Ji, Z. Li, S. Xu, W. Hua et al. , “Genrec: Large language model for generative recommendation,” in ECIR’24 , 2024. [38] Y. Zhao, J. Wu, X. Wang, W. Tang et al. , “Let me do it for you: Towards llm empowered recommendation via tool learning,” in SIGIR’24 , 2024. [39] Y. Wang, Z. Jiang, Z. Chen, F. Yang et al. , “RecMind: Large language model powered agent for recommendation,” in NAACL’24 , 2024. [40] J. Zhang, Y. Hou, R. Xie, W. Sun et al. , “Agentcf: Collaborative learning with autonomous language agents for recommender systems,” in WWW’24 , 2024. [41] A. Zhang, Y. Chen, L. Sheng, X. Wang et al. , “On generative agents in recommendation,” in SIGIR’24 , 2024. [42] V. Azizi and F. Koochaki, “Llamarec-lkg-rag: A single-pass, learnable knowledge graph-rag framework for llm-based ranking,” 
+
+arXiv:2506.07449 , 2025. [43] J. Zhai, L. Liao, X. Liu, Y. Wang et al. , “Actions speak louder than words: trillion-parameter sequential transducers for generative recom-mendations,” in ICML’24 , 2024. [44] J. Sun, S. Wang, Z. Zhang, Z. Liu et al. , “Bat: Efficient generative recommender serving with bipartite attention,” in ASPLOS’26 , 2026.
