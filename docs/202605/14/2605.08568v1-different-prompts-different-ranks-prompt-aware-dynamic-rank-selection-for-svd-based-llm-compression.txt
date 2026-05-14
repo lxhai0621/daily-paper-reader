@@ -1,0 +1,924 @@
+Title: Different Prompts, Different Ranks: Prompt-aware Dynamic Rank Selection for SVD-based LLM Compression
+
+URL Source: https://arxiv.org/pdf/2605.08568v1
+
+Published Time: Tue, 12 May 2026 00:25:39 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# Different Prompts, Different Ranks: Prompt-aware Dynamic Rank Selection for SVD-based LLM Compression 
+
+Hengyi Zhu 1 Zhendong Mi 1 Grace Li Zhang 2 Shaoyi Huang 1∗
+
+> 1
+
+Stevens Institute of Technology, Hoboken, USA 
+
+> 2
+
+Technical University of Darmstadt, Darmstadt, Germany 
+
+{hzhu37, zmi2, shuang59}@stevens.edu, grace.zhang@tu-darmstadt.de 
+
+Abstract 
+
+Large language models (LLMs) have rapidly grown in scale, creating substantial memory and computational costs that hinder efficient deployment. Singular value decomposition (SVD) has emerged as an effective post-training compression tech-nique, but existing SVD-based methods rely on static rank truncation, applying a fixed prefix of singular components to all inputs regardless of their diversity. We identify two limitations of this static design: the optimal rank varies across individual prompts, and the selected rank is sensitive to the choice of calibration set, leading to suboptimal performance across diverse inputs. To address these challenges, we propose PARSE , a post-training framework for Prompt-Aware 
+
+Rank Selection as Experts in SVD-compressed LLMs. PARSE trains a linear router offline to perform prompt-aware rank selection, decoupling it from cali-bration information by supervising the router against dense-model outputs on a large-scale corpus. We further observe that rank-selection patterns are shared across semantically similar prompts and remain stable across decoding steps, allowing appropriate rank subsets to be served directly from a pattern cache at inference. Complemented by expert memory aggregation and kernel fusion for system-level efficiency, PARSE is orthogonal to existing SVD-based pipelines and consistently improves both model quality and inference efficiency. Integrated with four repre-sentative SVD-based methods, PARSE improves average task accuracy by up to 10% at a compression ratio of 0.6 on LLaMA-7B, and achieves up to 2.5 × prefill and 2.4 × decode speedup over native SVD execution. 
+
+1 Introduction 
+
+Large language models (LLMs) have become foundational across diverse applications, from natural language generation and translation to complex mathematical and code reasoning [ 1, 2 ]. Guided by scaling laws [ 3 ], modern LLMs such as GPT [ 4], PaLM [ 5], LLaMA [ 6], DeepSeek [ 1], and Qwen [ 7] have grown to hundreds of billions of parameters. While such scale unlocks remarkable capabilities [ 8 , 9], it also incurs heavy computational overhead that hinders inference on resource-constrained hardware and inflates the economic and environmental costs of large-scale serving [ 10 –13 ]. Improving LLM efficiency has therefore become a critical challenge for real-world deployment [ 14 , 15 ]. Common compression strategies, including quantization [ 16 – 18 ], pruning [ 19 – 21 ], and distillation [ 22 , 23 ], often depend on specific hardware [ 24 , 17 ] or require costly retraining [ 25 , 26 ]. In contrast, low-rank compression decomposes each weight matrix into three matrices and approximates it by discarding small singular values, directly reducing both parameter count and computational cost. 
+
+> ∗Corresponding author. Preprint.
+> arXiv:2605.08568v1 [cs.LG] 9 May 2026
+
+Recent advances in low-rank compression for LLMs, including ASVD [ 27 ], SVD-LLM [ 28 ], Basis Sharing [ 15 ], and AdaSVD [ 29 ], have demonstrated that low-rank approximations can shrink model size with limited performance degradation. Nevertheless, existing approaches still face two notable challenges. (1) Input-agnostic rank allocation. Existing SVD-based methods typically determine the truncation rank through a one-shot calibration on a fixed dataset, yielding a single static rank applied uniformly to all inputs at inference time. This rigid allocation overlooks the fact that the rank required to faithfully preserve model behavior is itself input prompt-dependent, varying with the complexity and semantics of each prompt. A globally fixed rank is therefore inevitably suboptimal for some inputs and leads to unstable performance across heterogeneous prompts. (2) Calibration-domain mismatch. The static rank obtained from one-shot calibration is tightly coupled to the calibration set. When downstream tasks deviate semantically from this set, the chosen rank becomes misaligned with the target distribution, resulting in degraded performance on downstream inputs. To address these challenges, we propose PARSE , a post-training framework for Prompt-Aware Rank 
+
+Selection as Experts in SVD-compressed LLMs, orthogonal to existing SVD-based compression baselines. PARSE trains a linear router offline to learn prompt-aware rank selection and serves the selected rank subsets from a rank cache at inference. Specifically, we reformulate each SVD-compressed weight matrix as a mixture of rank experts, allowing the router to select a prompt-specific subset from a discrete set of independent rank components. To decouple rank selection from calibration information, the router is supervised against dense-model outputs on a large-scale corpus. To eliminate router overhead at inference, we retrieve cached subsets for semantically similar prompts and reuse the selected subset across decoding steps within the same prompt. We further introduce system-level optimizations, including expert memory aggregation and kernel fusion, to reduce runtime overhead. Our contributions are summarized as follows: • We identify two limitations of static rank truncation in SVD-compressed LLMs: (1) rank selection is sensitive to both individual input prompts within the same dataset and the choice of calibration dataset, leading to suboptimal performance. • We propose PARSE , a post-training framework that trains a linear router offline to perform prompt-aware rank selection, decoupling rank selection from calibration information by supervising the router against dense-model outputs on a large-scale corpus. PARSE is orthogonal to existing SVD-based compression baselines and consistently improves their performance. • We observe that rank patterns are shared across semantically similar prompts and remain stable across decoding steps within the same prompt, enabling rank subset retrieval at prefilling stage and rank reuse at decoding stage to reduce inference overhead. We further develop expert memory aggregation and kernel fusion to reduce system-level overhead. 
+
+2 Preliminaries 
+
+For a weight matrix W ∈ Rm×n, its SVD is given by W = U ΣV ⊤, where U ∈ Rm×m and 
+
+V ∈ Rn×n are orthogonal matrices, and Σ ∈ Rm×n is a diagonal matrix with singular values in descending order. Letting rmax = min( m, n ), this decomposes W into a sum of rank components: 
+
+W =
+
+> rmax
+
+X
+
+> i=1
+
+σiuiv⊤ 
+
+> i
+
+, (1) where σi, ui, and vi are the i-th singular value and left and right singular vectors. By the Eckart– Young–Mirsky theorem [ 30 ], retaining the top-r components ˜W = Pri=1 σiuiv⊤ 
+
+> i
+
+minimizes the weight reconstruction error ∥ ˜W − W ∥2 
+
+> F
+
+among all rank-r approximations. Minimizing weight reconstruction error does not, however, directly minimize activation reconstruction loss. The compression objective relevant to inference is: 
+
+∥ ˜W X − W X ∥2 
+
+> F
+
+, (2) where X ∈ Rn×d denotes the layer input activations over d tokens. To establish a direct correspondence between singular values and this loss, SVD-LLM [ 28 ] introduces a data whitening step: a whitening matrix S ∈ Rn×n is derived via Cholesky decomposition [ 31 ]of XX ⊤, enforcing S−1XX ⊤(S−1)⊤ = I. SVD is then applied to W S instead of W , under which the activation reconstruction loss from truncating the i-th component equals exactly σi. The 2compressed weight is recovered as W ′ = Ur Σr V ⊤ 
+
+> r
+
+S−1, and this pipeline has been widely adopted in subsequent work [ 14 , 32 ]. In practice, X is estimated from a static calibration dataset, and the rank-r approximation is applied uniformly to all inputs at inference time. 
+
+3 Observations 
+
+Following SVD-LLM [ 28 ] and subsequent works [ 33 , 14 , 15 , 32 ], existing SVD-based methods construct the whitening matrix from activations sampled from a calibration dataset. We identify two limitations of this static design. 36 40 46  
+
+> Window index
+> 4
+> 6
+> 8
+> 10
+> 12
+> PPL  +5.2 PPL
+> 11.1 Gap
+> Dense
+> Compressed
+
+Figure 1: Per-prompt window perplex-ity on WikiText-2 for the dense and com-pressed LLaMA-7B. 
+
+Observation 1: Rank selection is sensitive to input prompts. Prior work [ 33 , 14 , 15 , 32 ] typically evaluates compressed models by partitioning the test set into fixed-length windows and averaging perplexity (PPL) across them. Such aggregate metrics, however, mask the per-prompt behavior of the compressed model. Figure 1 re-ports the per-window PPL of the dense and compressed models on WikiText-2, where each window is a contiguous block of 2048 tokens. While the PPL increase is uniform across most windows, certain windows (e.g., index 40) exhibit sharp spikes that far exceed the rest, even though the dense model remains stable at these locations. This indicates that static rank truncation discards components that are critical for specific prompts, causing localized degradation. The observation motivates our first research question (RQ1) as follows: 
+
+RQ1: Can we design a rank selection strategy that dynamically adapts to each input prompt, retaining the critical singular components for that prompt? WikiT.  
+
+> PTB
+> C4
+> WikiT.
+> PTB
+> C4
+> OpenB.
+> ARC-E
+> ARC-C
+> WinoG.
+> HellaS.
+> PIQA
+> MathQA
+> Calib.
+> Eval.
+> Drop Ratio log(PPL)
+> OpenB.
+> ARC-E
+> ARC-C
+> WinoG.
+> HellaS.
+> PIQA
+> MathQA
+> Accuracy
+> log(PPL)
+> 0.0
+> 0.5
+> 1.0
+> Acc. 0.00
+> 0.05
+> 0.10
+> 0.15
+
+(a)                       
+
+> Calib. ∆PPL ∆Acc.(%) WikiT. +5.30 -9.81 PTB +18.81 -14.48 C4 +4.36 -7.18 OpenB. +9.17 -7.85 ARC-E +9.32 -3.58 ARC-C +9.74 -4.30 WinoG. +8.99 -10.54 HellaS. +10.58 -6.04 PIQA +8.74 -6.85 MathQA +18.35 -14.49
+
+(b) 0 Compression Ratio 0.2 4095  
+
+> SVD rank
+> WikiText-2
+> MathQA
+> WikiText-2
+> MathQA
+> WikiText-2 Calibration
+> MathQA Calibration
+> low
+> high
+> Connection sensitivity
+
+(c) 
+
+Figure 2: (a) Cross-dataset evaluation of SVD-compressed LLaMA-7B under different calibration datasets. (b) Average off-diagonal degradation for each calibration dataset. (c) Gradient-based rank importance differs between WikiText-2 and MathQA for layers.19.self_attn.o_proj , indicating that different calibration domains emphasize different singular components. 
+
+Observation 2: Rank selection is sensitive to the choice of calibration dataset. We evaluate all combinations of calibration and evaluation datasets in Figure 2(a). Performance drops consistently when the evaluation dataset differs from the calibration set, with the largest gaps appearing when a specialized corpus such as MathQA or PTB is used for calibration, as reported in Figure 2(b). To diagnose the cause, we run the full SVD model without truncation and measure the rank-level connection sensitivity [ 34 ] of each rank component across inputs from different tasks (Figure 2(c)). The top-ranked components remain consistently important across datasets, while the importance of tail ranks is highly dataset-dependent. For WikiText-2, the critical components concentrate in the top ranks, whereas MathQA relies on a different and more dispersed subset; the asymmetry holds in the reverse direction as well. At a compression ratio of 0.2, components essential for one dataset are truncated when calibrating on another. This indicates that the whitening matrix encodes the activation statistics of the calibration set, biasing the retained components toward calibration-specific information. The observation motivates our second research question (RQ2) as follows: 3Whitened SVD          
+
+> W∈ℝ5×5
+> UΣV
+> 𝑢 1𝑢 2𝑢 3𝑢 4𝑢 5
+> 𝑣 1
+> ⊤𝜎 1
+> 𝜎 2
+> 𝜎 3
+> 𝜎 4
+> 𝜎 5
+> 𝑣 2
+> ⊤
+> 𝑣 3
+> ⊤
+> 𝑣 4
+> ⊤
+> 𝑣 5
+> ⊤
+> ××
+
+(a) Rank Expert Decomposition  (b) Router Training                         
+
+> Weight Matrix
+> Reformulation
+> W=UΣ V⊤
+> =෍
+> 𝑖 =1
+> 5
+> 𝜎 𝑖 𝑢 𝑖 𝑣 𝑖
+> ⊤
+> 𝐑𝐨𝐮𝐭𝐞𝐫 𝐎𝐮𝐭𝐩𝐮𝐭
+> ෡𝑊 𝑥 =෍
+> 𝑖 ∈𝑅 (𝑥 )
+> 𝑚 𝑖 𝜎 𝑖 𝑢 𝑖 𝑣 𝑖
+> 𝑇 𝑥
+> 𝐑𝐞𝐟𝐞𝐫𝐞𝐧𝐜𝐞
+> 𝐎𝐮𝐭𝐩𝐮𝐭
+> 𝑊𝑥
+> 𝐑𝐞𝐜𝐨𝐧𝐬𝐭𝐫𝐮𝐜𝐭𝐢𝐨𝐧 𝐋𝐨𝐬𝐬
+> ℒ=෡𝑊 𝑥 −𝑊𝑥 𝐹
+> 2
+> 𝐒𝐜𝐨𝐫𝐞𝐬
+> 𝑓 𝜃 𝑥
+> Forward (𝐇𝐚𝐫𝐝 𝐌𝐚𝐬𝐤 )
+> 𝑚 𝑖
+> hard =𝟏 𝑖 ∈TopK 𝑓 𝜃 𝑥
+> E5E4E2E3E1
+> Straight -through Top -
+
+K estimator    
+
+> 𝐑𝐨𝐮𝐭𝐞𝐫 𝐈𝐧𝐩𝐮𝐭 𝑥 1𝐈𝐧𝐩𝐮𝐭 𝑥 2
+
+⨁      
+
+> 𝐎𝐮𝐭𝐩𝐮𝐭 𝑦 1𝐎𝐮𝐭𝐩𝐮𝐭 𝑦 2
+> 𝑢 1𝑢 2
+> 𝜎 1
+> 𝜎 2
+> 𝑣 1
+> ⊤
+> 𝑣 2
+> ⊤
+> 1
+> Trunc.(U) Trunc.(V) Trunc.( Σ)
+> ××
+
+(c) Static vs. Prompt -Aware Selection         
+
+> 𝐎𝐮𝐭𝐩𝐮𝐭 𝑦
+> +
+> Static SVD Truncation
+> 𝐈𝐧𝐩𝐮𝐭
+> 𝑥
+> Prompt -Aware Selection
+> E5
+> E4
+> E3
+> E2
+> E1
+> E1E2𝑥 𝑥
+> +E1E2𝑥 𝑥 +E1E4𝑥 𝑥
+> E5E4E3E2E1
+
+⨁                                      
+
+> E5E4E3E2E1
+> 𝑅 (x)=Top 𝐾 𝑓 𝜃 𝑥
+> 𝑅 𝑥 1={𝐸 1,𝐸 4}𝑅 𝑥 1={𝐸 1,𝐸 2}
+> 1𝐈𝐧𝐩𝐮𝐭
+> 𝑥 𝐑𝐨𝐮𝐭𝐞𝐫
+> E2
+> E4
+> E5𝐑𝐨𝐮𝐭𝐞𝐫
+> 𝑢 5
+> 𝜎 5𝑣 5
+> ⊤××
+> 𝑢 4
+> 𝜎 4𝑣 4
+> ⊤××
+> 𝑢 3
+> 𝜎 3𝑣 3
+> ⊤××
+> 𝑢 2
+> 𝜎 2𝑣 2
+> ⊤××
+> 𝑢 1
+> 𝜎 1𝑣 1
+> ⊤××E1
+> E3
+> Singular Expert 1
+> E1=𝜎 1𝐮 𝟏 𝐯 𝟏
+> ⊤
+> Backward (𝐒𝐨𝐟𝐭 𝐆𝐚𝐭𝐞 )
+> 𝑚 =𝑚 hard −stopgrad 𝑚 soft +𝑚 soft
+> E5E4E2E3E1
+
+Figure 3: Overview of the proposed framework with example of W ∈ R5×5. (a) Rank Expert Decomposition. Each SVD-compressed weight matrix is reformulated as a set of independent rank experts. (b) Router Training. The router is optimized via a straight-through top-K estimator with a reconstruction loss against the dense model output. (c) Static vs. Prompt-Aware Selection. Static truncation retains a static subset for all inputs, while our router selects a prompt-aware subset. 
+
+RQ2: Can we make rank selection independent of the choice of calibration dataset, such that the compressed model generalizes across diverse downstream datasets? 
+
+4 Method 
+
+Motivated by these observations, we propose PARSE , a post-training framework that performs prompt-aware rank selection through an offline-trained router and cached rank retrieval at inference. We reformulate SVD-compressed weights as mixtures of rank experts, where the model dynami-cally retrieves prompt-aware rank subsets pre-optimized through offline router-based selection and truncation. The router is trained over the full-rank space of the dense model, enabling calibration-independent routing and allowing the model to select suitable rank subsets under different whitening and truncation settings. We further introduce rank retrieval and reuse strategies, memory aggregation and kernel fusion for efficient inference. Figure 3 provides an overview. 
+
+4.1 Rank Expert Formulation for Prompt-Aware Selection 0.0 0.2 0.4 0.6 0.8 1.0 
+
+Prompt embedding cosine similarity 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> Rank subset overlap
+
+Spearman ρ = 0.78 
+
+Figure 4: Correlation between rank subset over-lap and prompt embedding cosine similarity. We reformulate each weight matrix as a mixture of independent rank experts and introduce an offline linear router that selects a prompt-aware subset for each input, addressing the static rank truncation in Observation 1 that discards components critical for specific prompts. As established in Section 2, applying a weight matrix W to an input activation 
+
+x can be written as a sum of rank contributions: 
+
+W x =
+
+rmax X
+
+i=1 
+
+σiuiv⊤
+
+i x, (3) where rmax denotes the total number of rank components. We treat each term σiuiv⊤
+
+i as an indepen-dent rank expert Ei, as illustrated in Figure 3(a). Rather than statically retaining a fixed prefix, we select a prompt-aware index set R(x) of size K from all rank experts. This defines a prompt-specific effective weight ˆW = P
+
+i∈R (x) σiuiv⊤
+
+i , whose output is: 
+
+ˆW x = X
+
+i∈R (x)
+
+σiuiv⊤
+
+i x, |R (x)| = K, (4) 4where K < r max is the per-layer rank budget that controls the compression ratio. To predict 
+
+R(x), inspired by the gating mechanism in Mixture-of-Experts [ 35 ], we attach a linear router 
+
+fθ : Rn → Rrmax to each weight matrix, where n is the input dimension. The router produces a score 
+
+fθ (x) ∈ Rrmax over all rank experts given the input activation x, and R(x) is defined as the indices of the top-K scores: 
+
+R(x) = TopK( fθ (x)) . (5) As shown in Figure 3(c), this allows different prompts to activate different rank subsets. The per-layer budget K is determined offline via Lagrangian multiplier-based optimization guided by each layer’s information density [36], preserving the same global compression ratio as the baseline. As shown in Figure 4, prompts whose first-step prefill hidden states share high cosine similarity tend to produce highly overlapping router-selected rank subsets (Spearman ρ = 0 .78 ), suggesting that rank selection patterns are largely determined by the semantic content of the prompt, already captured in the first-layer hidden representation. Consequently, at inference time we avoid invoking fθ online: instead, we use the prefill hidden state as a prompt embedding to retrieve the nearest cached rank subset, as detailed in Section 4.3. 
+
+4.2 Calibration-Decoupled Router Training Dense-model-Supervised Calibration-Independent Router training. Following the post-training compression paradigm, we keep the SVD weights fixed and train only the router parameters θ.Observation 2 shows that existing SVD-based methods perform a one-shot calibration on a specific dataset, which encodes dataset-specific activation statistics into the whitening matrix S. To decouple rank selection from calibration information, we train the router on a large-scale diverse corpus (e.g., C4) and supervise it against the output of the original dense model: 
+
+Lrec = ˆW x − W x 2
+
+> F
+
+, (6) where W x is the reference dense output. Training on a diverse corpus encourages the router to learn generalizable rank-selection patterns across domains, while supervision from dense-model outputs aligns these patterns with the original model behavior rather than calibration-specific statistics. Consequently, regardless of the calibration dataset used for whitening and truncation, the router adaptively selects a suitable rank subset for each input, making rank selection substantially less sensitive to calibration data. 
+
+Straight-through Top-K Estimator. Since the Top-K selection is discrete and non-differentiable, gradients cannot flow back to the router parameters θ during training. We address this with a straight-through estimator that uses a hard mask in the forward pass and a differentiable surrogate in the backward pass. In the forward pass, we apply a binary mask mhard  
+
+> i
+
+to each rank expert: 
+
+mhard  
+
+> i
+
+= 1[i ∈ R (x)] , (7) so that the prompt-aware output becomes ˆW x = P 
+
+> i
+
+mhard  
+
+> i
+
+σiuiv⊤ 
+
+> i
+
+x, which is equivalent to Equa-tion (4) . In the backward pass, the effective mask m ∈ Rrmax used for gradient computation substitutes mhard with a differentiable surrogate msoft :
+
+m = mhard − stopgrad( msoft ) + msoft . (8) Here stopgrad( ·) returns its input value in the forward pass but blocks gradient propagation in the backward pass. We define msoft via sigmoid gating over the full set of rank experts: 
+
+msoft  
+
+> i
+
+= K · sigmoid( fθ (x)i/τ )
+
+P 
+
+> j
+
+sigmoid( fθ (x)j /τ ) + ϵ , (9) where τ is a temperature hyperparameter and ϵ ensures numerical stability. The K-normalization keeps the expected gate magnitude consistent with the hard mask, while full-set coverage ensures all experts receive gradient signal regardless of whether they are currently selected. 
+
+4.3 Rank Retrieval for Prefilling and Reuse for Decoding 
+
+While the router enables prompt-aware rank selection, it introduces overhead at both prefilling and decoding stages. We identify one property for each stage that allows this cost to be avoided, and validate each empirically. 5Rank Retrieval for Prefilling. At each prefilling stage, invoking the router incurs an additional forward pass through fθ for every incoming prompt. We therefore investigate whether rank patterns can be shared across prompts, avoiding per-prompt routing entirely. Figure 4 shows that semantically similar prompts tend to produce highly similar router-selected rank subsets. Motivated by this, we construct a rank pattern cache that maps representative prompt embeddings to their corresponding rank subsets. At inference time, the incoming prompt is matched to its nearest neighbor in the cache, and the associated rank subset is retrieved directly without invoking the router. 0 10 20 30 40 50 60 
+
+Decoding step 
+
+0.86 
+
+0.88 
+
+0.90 
+
+0.92 
+
+0.94 
+
+0.96 
+
+> Rank overlap
+
+Figure 5: Rank overlap between the subset se-lected at prefilling and those selected at each subsequent decoding step. 
+
+Rank Reuse for Decoding. At each decoding step, querying the router introduces an additional forward pass through fθ before every matrix computation, ac-cumulating latency overhead across all layers and steps. As shown in Figure 5, the rank subset selected at prefilling remains highly consistent throughout gen-eration, with rank overlap staying above 0.86 across 60 decoding steps. This allows us to fix the rank subset at prefilling and reuse it for all subsequent decoding steps, eliminating router overhead entirely during generation. 
+
+4.4 Memory Aggregation and Kernel Fusion 
+
+Following the pipeline in Section 2, we absorb Σ into the left singular matrix and S−1 into the right singular matrix offline: 
+
+A = U Σ ∈ Rm×r , B = S−⊤ V ∈ Rn×r , W x = A(B⊤x) = 
+
+> r
+
+X
+
+> i=1
+
+aib⊤ 
+
+> i
+
+x. (10) 
+
+Here, r is the per-layer rank budget, and ai ∈ Rm and bi ∈ Rn are the i-th columns of A and B,respectively. This removes Σ and S−1 from online computation, leaving two sequential MatMuls; each aib⊤
+
+i corresponds to one rank expert Ei defined in Section 4.1. MatMul         
+
+> (𝑩 𝑸
+> ⊤)
+> Fused MatMul
+> (Concat [𝑩 𝑸
+> ⊤;𝑩 𝑲
+> ⊤;𝑩 𝑽
+> ⊤])
+> Batched MatMul
+> (Diag [𝑨 𝑸 ;𝑨 𝑲 ;𝑨 𝑽 ])
+> MatMul
+> (𝑩 𝑲
+> ⊤)
+> MatMul
+> (𝑩 𝑽
+> ⊤)
+> MatMul
+> (𝑨 𝑸 )
+> MatMul
+> (𝑨 𝑲 )
+> MatMul
+> (𝑨 𝑽 )
+
+GPU Memory 
+
+GPU Memory          
+
+> MatMul
+> (𝑩 𝒖𝒑
+> ⊤)
+> MatMul
+> (𝑩 𝒈𝒂𝒕𝒆
+> ⊤)
+> MatMul
+> (𝑩 𝒅𝒐𝒘𝒏
+> ⊤)
+> MatMul
+> (𝑨 𝒖𝒑 )
+> MatMul
+> (𝑨 𝒈𝒂𝒕𝒆 )
+> MatMul
+> (𝑨 𝒅𝒐𝒘𝒏 )
+> Fused MatMul
+> (Concat [𝑩 𝒖𝒑
+> ⊤;𝑩 𝒈𝒂𝒕𝒆
+> ⊤])
+> Batched MatMul
+> (Diag [𝑨 𝒖𝒑 ;𝑨 𝒈𝒂𝒕𝒆 ])
+
+Native SVD 
+
+PARSE (Ours) 
+
+(b) Kernel Fusion  
+
+> MatMul
+> (𝑩 𝒅𝒐𝒘𝒏
+> ⊤)
+> MatMul
+> (𝑨 𝒅𝒐𝒘𝒏 )
+> Shared Experts
+> Prompt -specific Experts
+
+(a) Memory Aggregation 
+
+> Warp 1
+
+Before Aggregation                             
+
+> After Aggregation
+> Memory
+> Transaction 1 Memory
+> Transaction 2
+> Coalesced Reads 1 Coalesced Reads 2
+> 5Non -coalesced Reads
+> Warp 2
+> Warp 1 Warp 2
+> 𝐸 1𝐸 2𝐸 3𝐸 4𝐸 5𝐸 6𝐸 7𝐸 8𝐸 9
+> 𝐸 1𝐸 2𝐸 5𝐸 4𝐸 7𝐸 9
+> Memory
+> Transaction 1 Memory
+> Transaction 5 234
+> Threads
+> Threads
+> 𝑇 1𝑇 2𝑇 3
+> 𝑇 1𝑇 2𝑇 3
+> 𝑇 1𝑇 2𝑇 3
+> 𝑇 1𝑇 2𝑇 3
+
+Figure 6: (a) Memory aggregation reduces scattered expert reads to coalesced transactions. (b) Kernel fusion reduces redundant MatMul launches. 
+
+Expert Memory Aggregation. 
+
+Since the rank components selected by R(x) are physically scattered across A and B, they fall on different cache lines, preventing GPU memory coalescing and inflating memory transactions. To address this, we reorganize the rank components into contiguous memory blocks once offline, as shown in Figure 6(a). Components with the largest singu-lar values are selected by nearly all prompts; we designate these as shared experts and place them at the head of memory, followed contiguously by the remaining prompt-specific components. As a result, K scattered reads collapse into two coalesced memory accesses, with no change to the forward computation. 
+
+Kernel Fusion. SVD compression decomposes each weight matrix into two MatMuls per projection, doubling the number of kernel launches relative to the original dense layer. Since this overhead accumulates across all projections and layers, we reduce it by fusing operations that share the same input as shown in Figure 6(b). 
+
+B⊤-side. The B⊤-side projections of Q, K, V in the attention module share the same input activation 
+
+x, as do the up- and gate-projections in the MLP module. We stack their B⊤ matrices and issue one fused MatMul per module, producing low-rank intermediates zi = B⊤
+
+i x:
+
+[[ zQ; zK ; zV ]] = [( BQ)⊤; ( BK )⊤; ( BV )⊤]x, [zup ; zgate ] = [( Bup )⊤; ( Bgate )⊤]x. (11) 
+
+6A-side. Each intermediate zi is then projected by its corresponding Ai. Since these projections are independent across projections, they are batched into a single batched MatMul kernel per module: 
+
+[Q; K; V ] = Diag( AQ, A K , A V )[ zQ; zK ; zV ], [up; gate] = Diag( Aup , A gate )[ zup ; zgate ]. (12) 
+
+For models with grouped query attention (GQA) [ 37 ], where K and V have fewer heads than Q, the 
+
+A-side of Q cannot be batched with K and V due to mismatched output dimensions, increasing the attention-side batched MatMul count from 1 to 2. 
+
+5 Experiment 
+
+5.1 Experimental Setup Models and Datasets. We conduct experiments on open-source LLMs and widely used language modeling and zero-shot reasoning benchmarks. For model selection, we consider representative architectures including LLaMA-7B, LLaMA-13B, LLaMA-30B [ 6] and Qwen2.5-7B [ 38 ]. For evaluation, we report perplexity on WikiText2 [ 39 ], PTB [ 40 ], and C4 [ 41 ], and zero-shot accuracy on OpenBookQA [ 42 ], ARC-e, ARC-c [ 43 ], WinoGrande [ 44 ], HellaSwag [ 45 ], PIQA [ 46 ], and MathQA [ 47 ]. All downstream reasoning tasks are evaluated in the zero-shot setting using the LM-Evaluation-Harness [48]. 
+
+Baselines. Our method is not a standalone matrix decomposition framework, but a rank selection mechanism built on top of existing SVD-based compression methods. Therefore, we evaluate it by integrating it with several representative and influential SVD-based methods, including SVD-LLM [ 28 ], Dobi-SVD [ 14 ], Basis Sharing [ 15 ], and SAES-SVD [ 32 ]. We also include earlier methods such as FWSVD [49] and ASVD [27] as additional baselines. 
+
+Implementation Details. The router is implemented as a single linear gating layer. We use AdamW with a learning rate of 2 × 10 −4, weight decay of 10 −3, and a cosine learning-rate schedule with 10% warmup. The maximum sequence length is set to 2048, and training is performed in bfloat16. The global batch size is 64 with gradient accumulation. For router training, we sample 5K prompts from C4 and train the router for 5 epochs, requiring approximately 6 GPU-hours on NVIDIA RTX A6000 GPUs. All latency measurements are conducted on 2 NVIDIA RTX A6000 48GB GPUs. Table 1: Performance comparison under different compression ratios. Our method is orthogonal to existing SVD-based compression methods and can be integrated into different backbones consistently. Lower is better for Wiki2, PTB, and C4; higher is better for the remaining benchmarks.                                                                                                                                                                                                                                                                                                                                                                                              
+
+> Compression PPL (↓)Accuracy (↑)
+> Ratio Method Wiki2 PTB C4 Openb. ARC_e ARC_c WinoG. HellaS. PIQA MathQA Avg.
+> 0.0 Baseline 5.68 8.35 7.34 0.28 0.67 0.38 0.67 0.56 0.78 0.27 0.52 0.2 FWSVD 1727 2152 1511 0.09 0.11 0.06 0.05 0.08 0.10 0.05 0.08 ASVD 11.14 16.55 15.93 0.25 0.53 0.27 0.64 0.41 0.68 0.24 0.43 SVD-LLM V2 7.12 -10.47 0.32 0.72 -0.70 0.52 0.75 0.24 -SVD-LLM 7.94 16.22 15.84 0.22 0.58 0.29 0.63 0.43 0.69 0.24 0.44 SVD-LLM + PARSE 7.43 14.37 14.18 0.26 0.63 0.32 0.66 0.48 0.75 0.25 0.48
+> Dobi-SVD 8.54 14.83 10.01 0.26 0.59 0.31 0.66 0.44 0.70 0.23 0.46 Dobi-SVD + PARSE 7.79 13.90 9.92 0.27 0.65 0.35 0.67 0.46 0.76 0.25 0.49
+> Basis Sharing 7.74 17.35 15.03 0.28 0.66 0.36 0.66 0.46 0.71 0.25 0.48 Basis Sharing + PARSE 7.21 14.98 14.06 0.28 0.67 0.37 0.67 0.50 0.77 0.27 0.51
+> SAES-SVD 7.17 15.16 13.77 0.29 0.68 0.36 0.65 0.45 0.75 0.25 0.49 SAES-SVD + PARSE 7.01 13.96 12.84 0.28 0.67 0.37 0.67 0.50 0.78 0.27 0.51
+> 0.4 FWSVD 18156 20990 12847 0.06 0.05 0.02 0.02 0.00 0.05 0.03 0.03 ASVD 1407 3292 1109 0.13 0.28 0.22 0.48 0.26 0.55 0.19 0.30 SVD-LLM 13.11 63.75 49.83 0.19 0.42 0.25 0.58 0.33 0.60 0.21 0.37 SVD-LLM + PARSE 12.48 50.17 35.61 0.22 0.48 0.27 0.62 0.37 0.68 0.24 0.41
+> Dobi-SVD 13.54 46.38 23.54 0.22 0.41 0.27 0.58 0.34 0.61 0.23 0.38 Dobi-SVD + PARSE 12.33 40.16 20.89 0.23 0.52 0.29 0.63 0.38 0.69 0.25 0.43
+> Basis Sharing 12.39 55.78 41.28 0.22 0.52 0.27 0.61 0.35 0.62 0.23 0.40 Basis Sharing + PARSE 10.98 44.49 33.19 0.24 0.58 0.30 0.65 0.39 0.70 0.25 0.44
+> SAES-SVD 10.42 45.13 32.79 0.23 0.50 0.29 0.62 0.36 0.65 0.23 0.41 SAES-SVD + PARSE 9.88 42.13 29.76 0.25 0.54 0.31 0.66 0.40 0.70 0.25 0.44
+> 0.6 FWSVD 32194 23575 29292 0.06 0.01 0.00 0.00 0.01 0.01 0.00 0.01 ASVD 57057 45218 43036 0.12 0.26 0.21 0.49 0.26 0.53 0.18 0.29 SVD-LLM 53.74 438.58 345.49 0.14 0.28 0.22 0.50 0.27 0.55 0.21 0.31 SVD-LLM + PARSE 27.18 298.46 209.92 0.18 0.35 0.27 0.55 0.31 0.58 0.24 0.35
+> Dobi-SVD 46.18 238.91 190.62 0.15 0.31 0.20 0.52 0.28 0.54 0.22 0.32 Dobi-SVD + PARSE 23.28 156.41 126.54 0.20 0.36 0.29 0.57 0.33 0.60 0.24 0.37
+> Basis Sharing 43.81 352.64 250.19 0.15 0.34 0.21 0.53 0.29 0.54 0.21 -Basis Sharing + PARSE 21.56 175.64 101.21 0.21 0.40 0.30 0.64 0.37 0.65 0.24 0.40
+> SAES-SVD 22.01 116.83 93.97 0.16 0.33 0.25 0.52 0.30 0.54 0.23 0.34 SAES-SVD + PARSE 19.83 96.17 81.46 0.22 0.40 0.31 0.63 0.39 0.65 0.24 0.44
+
+75.2 Main Results Accuracy. Table 1 reports PPL and zero-shot accuracy results on LLaMA-7B across multiple SVD-based compression backbones and compression ratios. Overall, PARSE consistently achieves lower PPL and higher average zero-shot accuracy than the corresponding baselines. At compression ratio 0.2, PARSE improves the average accuracy of SVD-LLM, Dobi-SVD, Basis Sharing, and SAES-SVD by 4.0, 3.0, 3.0, and 2.0 percentage points, respectively. The improvements become larger under more aggressive compression. For example, at compression ratio 0.6, PARSE improves SAES-SVD from 0.34 to 0.44 average accuracy. Similar gains are also observed in language modeling performance, where PARSE reduces C4 PPL from 250.19 to 101.21 on Basis Sharing and from 93.97 to 81.46 on SAES-SVD. These results demonstrate that prompt-aware rank selection effectively preserves model quality under aggressive SVD compression. 0
+
+10000 
+
+> 217
+> 844
+> 3.3k
+> 13.6k
+> 211
+> 811
+> 3.2k
+> 12.8k
+> 134
+> 516
+> 2.0k
+> 8.0k
+> 121
+> 445
+> 1.7k
+> 6.9k
+
+Latency (ms) 
+
+> 223
+> 856
+> 3.4k
+> 12.7k
+> 211
+> 811
+> 3.2k
+> 12.8k
+> 134
+> 516
+> 2.0k
+> 8.0k
+> 101
+> 349
+> 1.4k
+> 5.4k
+> 176
+> 704
+> 2.7k
+> 10.3k
+> 211
+> 811
+> 3.2k
+> 12.8k
+> 134
+> 516
+> 2.0k
+> 8.0k
+> 71.8
+> 269
+> 1.0k
+> 4.1k
+
+1 4 16 64 
+
+0
+
+200 
+
+> 25.6
+> 35.0
+> 66.2
+> 179
+> 26.6
+> 34.1
+> 65.6
+> 184
+> 21.1
+> 23.8
+> 34.6
+> 96.4
+> 19.1
+> 21.3
+> 32.4
+> 89.7
+
+Latency (ms) 
+
+1 4 16 64 
+
+> 22.3
+> 32.9
+> 65.3
+> 168
+> 26.6
+> 34.1
+> 65.6
+> 184
+> 21.1
+> 23.8
+> 34.6
+> 96.4
+> 14.5
+> 17.3
+> 28.0
+> 66.5
+
+1 4 16 64 
+
+> 19.9
+> 27.3
+> 60.4
+> 150
+> 26.6
+> 34.1
+> 65.6
+> 184
+> 21.1
+> 23.8
+> 34.6
+> 96.4
+> 11.5
+> 14.1
+> 24.5
+> 62.7
+
+Prefill 
+
+Decode 
+
+Batch size 
+
+Compression Ratio=0.2 Compression Ratio=0.4 Compression Ratio=0.6 
+
+Native SVD Dense (PyTorch) Dense (vLLM) PARSE 
+
+Figure 7: Prefill latency (ms) and Decode latency (ms) of each token of Native SVD, Dense(Pytorch), Dense(vLLM) and PARSE on LLaMA-7B, across compression ratios and batch sizes. Table 2: PPL and average accuracy comparison of SAES-SVD and PARSE at compression ratio 0.2.                                       
+
+> PPL (↓)Avg. Accuracy (↑)
+> Model Method WikiText-2 PTB C4 Zero-shot Tasks
+> LLaMA-13B SAES-SVD 6.34 35.76 11.47 0.51 SAES-SVD + PARSE 6.05 30.27 9.31 0.55
+> LLaMA-30B SAES-SVD 5.49 29.78 9.16 0.57 SAES-SVD + PARSE 5.21 27.04 8.27 0.59
+> Qwen2.5-7B SAES-SVD 8.23 17.64 19.47 0.58 SAES-SVD + PARSE 7.83 15.52 16.57 0.61
+
+Performance on Larger and Newer Models. Table 2 compares SAES-SVD with PARSE under compression ratio 0.2 on larger models (i.e., LLaMA-13B and LLaMA-30B) and Qwen2.5-7B model. PARSE consistently improves both PPL and zero-shot accuracy across different models. For example, on LLaMA-13B, PARSE reduces WikiText-2 PPL from 6.34 to 6.05 and improves average accuracy from 0.51 to 0.55. Similar gains are observed on LLaMA-30B and Qwen2.5-7B, where PARSE further reduces PTB PPL from 29.78 to 27.04 and C4 PPL from 19.47 to 16.57, respectively. These results demonstrate that PARSE generalizes effectively across both large-scale LLaMA models and newer models. 
+
+Latency. Figure 7 compares the prefill and decode latency of Native SVD, Dense (PyTorch), Dense (vLLM), and PARSE on LLaMA-7B. All SVD-based baselines in Table 1 share the same two-MatMul execution path, so we report them as a single Native SVD baseline. Overall, PARSE consistently achieves lower latency across compression ratios and batch sizes. The advantage becomes more substantial at larger batch sizes. For prefilling, PARSE achieves up to 2.5× speedup over Native SVD and reaches 4.1s latency at batch size 64 under compression ratio 0.6. For decoding at same settings, PARSE achieves up to 2.4× speedup and reduces per-token latency to 62.7ms under the same setting. PARSE also outperforms Dense (vLLM) by up to 2.0× in prefilling under the strongest compression setting. These results demonstrate that PARSE provides practical inference speedup while preserving the quality gains of prompt-aware rank selection. 
+
+5.3 Ablation Studies Effects of Rank Retrieval and Reuse. Table 3 evaluates the effect of the proposed rank retrieval and reuse strategies on model inference. The router-based PARSE achieves the best overall perplexity and accuracy but introduces substantial overhead from dynamic routing at every decoding step. On the SVD-LLM backbone, PARSE (Router) improves WikiText-2 perplexity from 7.94 to 7.16 and lifts average zero-shot accuracy from 0.44 to 0.52, but prefill latency rises from 217.08 ms to 516.49 ms. Rank retrieval reduces prefill latency to 121.64 ms while preserving competitive perplexity and accuracy, and rank reuse cuts decode latency from 68.14 ms to 20.78 ms by sharing routing 80
+
+10000 
+
+> 224
+> 848
+> 3.3k
+> 13.2k
+> 202
+> 755
+> 2.9k
+> 11.7k
+> 143
+> 538
+> 2.1k
+> 8.4k
+> 121
+> 445
+> 1.7k
+> 6.9k
+
+Latency (ms) 
+
+> 216
+> 804
+> 3.0k
+> 12.1k
+> 199
+> 752
+> 2.9k
+> 11.5k
+> 118
+> 401
+> 1.5k
+> 6.1k
+> 101
+> 349
+> 1.4k
+> 5.4k
+> 211
+> 780
+> 2.9k
+> 11.6k
+> 196
+> 745
+> 2.8k
+> 11.3k
+> 87.1
+> 304
+> 1.1k
+> 4.5k
+> 71.8
+> 269
+> 1.0k
+> 4.1k
+
+1 4 16 64 
+
+0
+
+100 
+
+> 37.0
+> 38.0
+> 48.7
+> 119
+> 33.0
+> 36.0
+> 46.7
+> 115
+> 23.0
+> 23.3
+> 34.4
+> 89.0
+> 19.1
+> 21.3
+> 32.4
+> 85.0
+
+Latency (ms) 
+
+1 4 16 64 
+
+> 49.1
+> 52.2
+> 63.6
+> 136
+> 33.0
+> 35.4
+> 46.9
+> 120
+> 30.6
+> 34.1
+> 44.7
+> 82.6
+> 14.5
+> 17.3
+> 28.0
+> 66.5
+
+1 4 16 64 
+
+> 42.8
+> 45.5
+> 57.0
+> 133
+> 33.0
+> 35.1
+> 46.6
+> 121
+> 21.2
+> 24.5
+> 34.9
+> 74.5
+> 11.5
+> 14.1
+> 24.5
+> 62.7
+
+Prefill 
+
+Decode 
+
+Batch size 
+
+Compression Ratio=0.2 Compression Ratio=0.4 Compression Ratio=0.6    
+
+> PARSE (no Optimization) PARSE (w/o Memory Aggregation) PARSE (w/o Kernel Fusion) PARSE (Full)
+
+Figure 8: Prefill latency (ms) and decode latency (ms) of each token of PARSE under different hardware optimization configurations on LLaMA-7B. decisions across generated tokens. Combining both yields PARSE (Full), which achieves the lowest overall latency on both SVD-LLM (19.06 ms) and SAES-SVD (18.94 ms). Despite a slight quality drop relative to the router-only variant, PARSE (Full) still substantially outperforms the original compressed baselines in both ppl and reasoning accuracy, delivering up to 1.8 × prefill and 1.4 ×
+
+decode speedup when batch size is 1. Table 3: Effects of inference optimization components on LLaMA-7B with compression ratio 0.2. Batch size is 1.                                                                                
+
+> PPL (↓)Avg. Accuracy (↑)Latency (ms) ↓
+> Method Wikitext-2 PTB C4 Zero-shot Tasks Prefill Decode
+> SVD-LLM 7.94 16.22 15.84 0.44 217.08 25.56 +PARSE (Router) 7.16 13.75 12.41 0.52 516.49 68.14 + Rank Retrieval 7.43 14.37 14.18 0.50 121.64 68.19 + Rank Reuse 7.16 13.75 12.41 0.49 517.61 20.78 +PARSE (Full) 7.43 14.37 14.18 0.48 120.72 19.06
+> SAES-SVD 7.17 15.16 13.77 0.49 216.69 26.18 +PARSE (Router) 6.82 12.84 11.96 0.53 517.56 70.15 + Rank Retrieval 7.01 13.96 12.84 0.53 123.84 71.91 + Rank Reuse 6.82 12.84 11.96 0.52 516.28 19.21 +PARSE (Full) 7.01 13.96 12.84 0.51 121.11 18.94
+
+Effect of Memory Aggregation and Ker-nel Fusion. Figure 8 ablates the two sys-tem optimizations used by PARSE. With-out optimization, prompt-aware rank selec-tion introduces substantial runtime over-head from scattered expert accesses and repeated SVD factorization kernels, reach-ing 13.2s prefill latency and 119ms decode latency at batch size 64 under compression ratio 0.2. Memory aggregation improves efficiency by placing selected rank experts into contiguous memory regions, reducing batch-64 prefill latency from 13.2s to 8.4s under com-pression ratio 0.2. Kernel fusion further minimizes redundant kernel launches across factorized projections. Combined together, they further reduce prefill latency to 6.9s and decode latency to 85.0ms, consistently achieving the lowest latency across all compression ratios and batch sizes. Table 4: Impact of router training data on LLaMA-7B with SAES-SVD at compression ratio 0.2.                    
+
+> PPL (↓)Avg. Accuracy (↑)
+> Train. Dataset WikiText-2 PTB C4 Zero-shot Tasks
+> WikiText-2 7.05 14.09 13.21 0.50 PTB 7.12 14.97 13.87 0.48
+> C4 7.01 13.96 12.84 0.51
+
+Impact of Router Training Data. Table 4 evaluates how the router training corpus affects prompt-aware rank selection. Training the router on C4 achieves the best overall performance, with the lowest perplexity on WikiText-2, PTB, and C4, and the highest average zero-shot accu-racy of 0.51. In contrast, training on WikiText-2 slightly degrades PTB and C4 perplexity, while training on PTB causes a larger drop, increasing perplexity from 13.96 to 14.97 on PTB and from 12.84 to 13.87 on C4, with average accuracy falling from 0.51 to 0.48. This shows that the router can inherit the domain bias of its training corpus, even though the SVD factors are fixed. A diverse corpus such as C4 exposes the router to broader activation patterns, allowing it to learn rank selection rules that transfer more reliably across downstream tasks. 
+
+6 Conclusion 
+
+We present PARSE, a prompt-aware rank selection framework for SVD-based LLM compression. Unlike static rank truncation, PARSE reformulates singular components as independent rank experts and learns prompt-aware routing to dynamically select rank components for each input. To reduce dependence on calibration information, the router is trained against dense-model outputs on a large-scale corpus, enabling robust rank selection across diverse downstream tasks. We further introduce rank retrieval and reuse strategies to eliminate routing overhead at inference, together with memory aggregation and kernel fusion for efficient deployment. Extensive experiments across multiple SVD-based baselines, model scales, and reasoning benchmarks show that PARSE consistently improves both perplexity and zero-shot accuracy while reducing inference latency. 9References 
+
+[1] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, Xiaokang Zhang, Xingkai Yu, Yu Wu, Z. F. Wu, Zhibin Gou, Zhihong Shao, Zhuoshu Li, Ziyi Gao, Aixin Liu, Bing Xue, Bingxuan Wang, Bochao Wu, Bei Feng, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chong Ruan, Damai Dai, Deli Chen, Dongjie Ji, Erhang Li, Fangyun Lin, Fucong Dai, Fuli Luo, Guangbo Hao, Guanting Chen, Guowei Li, H. Zhang, Hanwei Xu, Honghui Ding, Huazuo Gao, Hui Qu, Hui Li, Jianzhong Guo, Jiashi Li, Jingchang Chen, Jingyang Yuan, Jinhao Tu, Junjie Qiu, Junlong Li, J. L. Cai, Jiaqi Ni, Jian Liang, Jin Chen, Kai Dong, Kai Hu, Kaichao You, Kaige Gao, Kang Guan, Kexin Huang, Kuai Yu, Lean Wang, Lecong Zhang, Liang Zhao, Litong Wang, Liyue Zhang, Lei Xu, Leyi Xia, Mingchuan Zhang, Minghua Zhang, Minghui Tang, Mingxu Zhou, Meng Li, Miaojun Wang, Mingming Li, Ning Tian, Panpan Huang, Peng Zhang, Qiancheng Wang, Qinyu Chen, Qiushi Du, Ruiqi Ge, Ruisong Zhang, Ruizhe Pan, Runji Wang, R. J. Chen, R. L. Jin, Ruyi Chen, Shanghao Lu, Shangyan Zhou, Shanhuang Chen, Shengfeng Ye, Shiyu Wang, Shuiping Yu, Shunfeng Zhou, Shuting Pan, S. S. Li, Shuang Zhou, Shaoqing Wu, Tao Yun, Tian Pei, Tianyu Sun, T. Wang, Wangding Zeng, Wen Liu, Wenfeng Liang, Wenjun Gao, Wenqin Yu, Wentao Zhang, W. L. Xiao, Wei An, Xiaodong Liu, Xiaohan Wang, Xiaokang Chen, Xiaotao Nie, Xin Cheng, Xin Liu, Xin Xie, Xingchao Liu, Xinyu Yang, Xinyuan Li, Xuecheng Su, Xuheng Lin, X. Q. Li, Xiangyue Jin, Xiaojin Shen, Xiaosha Chen, Xiaowen Sun, Xiaoxiang Wang, Xinnan Song, Xinyi Zhou, Xianzu Wang, Xinxia Shan, Y. K. Li, Y. Q. Wang, Y. X. Wei, Yang Zhang, Yanhong Xu, Yao Li, Yao Zhao, Yaofeng Sun, Yaohui Wang, Yi Yu, Yichao Zhang, Yifan Shi, Yiliang Xiong, Ying He, Yishi Piao, Yisong Wang, Yixuan Tan, Yiyang Ma, Yiyuan Liu, Yongqiang Guo, Yuan Ou, Yuduan Wang, Yue Gong, Yuheng Zou, Yujia He, Yunfan Xiong, Yuxiang Luo, Yuxiang You, Yuxuan Liu, Yuyang Zhou, Y. X. Zhu, Yanping Huang, Yaohui Li, Yi Zheng, Yuchen Zhu, Yunxian Ma, Ying Tang, Yukun Zha, Yuting Yan, Z. Z. Ren, Zehui Ren, Zhangli Sha, Zhe Fu, Zhean Xu, Zhenda Xie, Zhengyan Zhang, Zhewen Hao, Zhicheng Ma, Zhigang Yan, Zhiyu Wu, Zihui Gu, Zijia Zhu, Zijun Liu, Zilin Li, Ziwei Xie, Ziyang Song, Zizheng Pan, Zhen Huang, Zhipeng Xu, Zhongyu Zhang, and Zhen Zhang. Deepseek-r1 incentivizes reasoning in llms through reinforcement learning. Nature , 645(8081):633–638, 2025. [2] Jingcheng Hu, Yinmin Zhang, Qi Han, Daxin Jiang, Xiangyu Zhang, and Heung-Yeung Shum. Open-reasoner-zero: An open source approach to scaling up reinforcement learning on the base model, 2025. [3] Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B. Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei. Scaling laws for neural language models, 2020. [4] Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen Krueger, Tom Henighan, Rewon Child, Aditya Ramesh, Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christopher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin, Scott Gray, Benjamin Chess, Jack Clark, Christopher Berner, Sam McCandlish, Alec Radford, Ilya Sutskever, and Dario Amodei. Language models are few-shot learners, 2020. [5] Aakanksha Chowdhery, Sharan Narang, Jacob Devlin, Maarten Bosma, Gaurav Mishra, Adam Roberts, Paul Barham, Hyung Won Chung, Charles Sutton, Sebastian Gehrmann, Parker Schuh, Kensen Shi, Sasha Tsvyashchenko, Joshua Maynez, Abhishek Rao, Parker Barnes, Yi Tay, Noam Shazeer, Vinodkumar Prabhakaran, Emily Reif, Nan Du, Ben Hutchinson, Reiner Pope, James Bradbury, Jacob Austin, Michael Isard, Guy Gur-Ari, Pengcheng Yin, Toju Duke, Anselm Levskaya, Sanjay Ghemawat, Sunipa Dev, Henryk Michalewski, Xavier Garcia, Vedant Misra, Kevin Robinson, Liam Fedus, Denny Zhou, Daphne Ippolito, David Luan, Hyeontaek Lim, Barret Zoph, Alexander Spiridonov, Ryan Sepassi, David Dohan, Shivani Agrawal, Mark Omernick, Andrew M. Dai, Thanumalayan Sankaranarayana Pillai, Marie Pellat, Aitor Lewkowycz, Erica Moreira, Rewon Child, Oleksandr Polozov, Katherine Lee, Zongwei Zhou, Xuezhi Wang, Brennan Saeta, Mark Diaz, Orhan Firat, Michele Catasta, Jason Wei, Kathy Meier-Hellstern, Douglas Eck, Jeff Dean, Slav Petrov, and Noah Fiedel. Palm: Scaling language modeling with pathways, 2022. 10 [6] Hugo Touvron, Thibaut Lavril, Gautier Izacard, Xavier Martinet, Marie-Anne Lachaux, Timo-thée Lacroix, Baptiste Rozière, Naman Goyal, Eric Hambro, Faisal Azhar, et al. Llama: Open and efficient foundation language models. arXiv preprint arXiv:2302.13971 , 2023. [7] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. Qwen3 technical report, 2025. [8] Ying Sheng, Lianmin Zheng, Binhang Yuan, Zhuohan Li, Max Ryabinin, Daniel Y. Fu, Zhiqiang Xie, Beidi Chen, Clark Barrett, Joseph E. Gonzalez, Percy Liang, Christopher Ré, Ion Stoica, and Ce Zhang. Flexgen: High-throughput generative inference of large language models with a single gpu, 2023. [9] Xuan Ding, Rui Sun, Yunjian Zhang, Xiu Yan, Yueqi Zhou, Kaihao Huang, Suzhong Fu, Chuan-long Xie, and Yao Zhu. Dipsvd: Dual-importance protected svd for efficient llm compression. 
+
+arXiv preprint arXiv:2506.20353 , 2025. [10] Zixuan Zhou, Xuefei Ning, Ke Hong, Tianyu Fu, Jiaming Xu, Shiyao Li, Yuming Lou, Luning Wang, Zhihang Yuan, Xiuhong Li, Shengen Yan, Guohao Dai, Xiao-Ping Zhang, Yuhan Dong, and Yu Wang. A survey on efficient inference for large language models, 2024. [11] Wenxiao Wang, Wei Chen, Yicong Luo, Yongliu Long, Zhengkai Lin, Liye Zhang, Binbin Lin, Deng Cai, and Xiaofei He. Model compression and efficient inference for large language models: A survey, 2024. [12] Lejla Begic Fazlic, Berkay Cetkin, Achim Guldner, Matthias Dziubany, Julian Heinen, Stefan Naumann, and Guido Dartmann. Enhancing energy efficiency in ai: A multi-faceted analysis across time series, semantic ai and deep learning domains. In Environmental Informatics , pages 237–256. Springer, 2024. [13] David Patterson, Joseph Gonzalez, Urs Hölzle, Quoc Le, Chen Liang, Lluis-Miquel Munguia, Daniel Rothchild, David R So, Maud Texier, and Jeff Dean. The carbon footprint of machine learning training will plateau, then shrink. Computer , 55(7):18–28, 2022. [14] Qinsi Wang, Jinghan Ke, Masayoshi Tomizuka, Yiran Chen, Kurt Keutzer, and Chenfeng Xu. Dobi-svd: Differentiable svd for llm compression and some new perspectives. arXiv preprint arXiv:2502.02723 , 2025. [15] Jingcun Wang, Yu-Guang Chen, Ing-Chao Lin, Bing Li, and Grace Li Zhang. Basis shar-ing: Cross-layer parameter sharing for large language model compression. arXiv preprint arXiv:2410.03765 , 2024. [16] Elias Frantar, Saleh Ashkboos, Torsten Hoefler, and Dan Alistarh. Gptq: Accurate post-training quantization for generative pre-trained transformers. arXiv preprint arXiv:2210.17323 , 2022. [17] Ji Lin, Jiaming Tang, Haotian Tang, Shang Yang, Wei-Ming Chen, Wei-Chen Wang, Guangxuan Xiao, Xingyu Dang, Chuang Gan, and Song Han. Awq: Activation-aware weight quantization for on-device llm compression and acceleration. Proceedings of machine learning and systems ,6:87–100, 2024. [18] Wei Huang, Yangdong Liu, Haotong Qin, Ying Li, Shiming Zhang, Xianglong Liu, Michele Magno, and Xiaojuan Qi. Billm: Pushing the limit of post-training quantization for llms. arXiv preprint arXiv:2402.04291 , 2024. [19] Xinyin Ma, Gongfan Fang, and Xinchao Wang. Llm-pruner: On the structural pruning of large language models. Advances in neural information processing systems , 36:21702–21720, 2023. 11 [20] Elias Frantar and Dan Alistarh. Sparsegpt: Massive language models can be accurately pruned in one-shot. In International conference on machine learning , pages 10323–10337. PMLR, 2023. [21] Mingjie Sun, Zhuang Liu, Anna Bair, and J Zico Kolter. A simple and effective pruning approach for large language models. arXiv preprint arXiv:2306.11695 , 2023. [22] Yuxian Gu, Li Dong, Furu Wei, and Minlie Huang. Minillm: Knowledge distillation of large language models. In The twelfth international conference on learning representations , 2024. [23] Chuanpeng Yang, Yao Zhu, Wang Lu, Yidong Wang, Qian Chen, Chenlong Gao, Bingjie Yan, and Yiqiang Chen. Survey on knowledge distillation for large language models: methods, evaluation, and application. ACM Transactions on Intelligent Systems and Technology , 16(6):1– 27, 2025. [24] Tim Dettmers, Artidoro Pagnoni, Ari Holtzman, and Luke Zettlemoyer. Qlora: Efficient finetuning of quantized llms. Advances in neural information processing systems , 36:10088– 10115, 2023. [25] Carsten Bergmann, Lisa M Guay-Woodford, Peter C Harris, Shigeo Horie, Dorien JM Peters, and Vicente E Torres. Polycystic kidney disease. Nature reviews Disease primers , 4(1):50, 2018. [26] Daoyuan Chen, Yaliang Li, Minghui Qiu, Zhen Wang, Bofang Li, Bolin Ding, Hongbo Deng, Jun Huang, Wei Lin, and Jingren Zhou. Adabert: Task-adaptive bert compression with differentiable neural architecture search. arXiv preprint arXiv:2001.04246 , 2020. [27] Zhihang Yuan, Yuzhang Shang, Yue Song, Dawei Yang, Qiang Wu, Yan Yan, and Guangyu Sun. Asvd: Activation-aware singular value decomposition for compressing large language models. 
+
+arXiv preprint arXiv:2312.05821 , 2023. [28] Xin Wang, Yu Zheng, Zhongwei Wan, and Mi Zhang. Svd-llm: Truncation-aware singular value decomposition for large language model compression. arXiv preprint arXiv:2403.07378 , 2024. [29] Zhiteng Li, Mingyuan Xia, Jingyuan Zhang, Zheng Hui, Haotong Qin, Linghe Kong, Yulun Zhang, and Xiaokang Yang. Adasvd: Adaptive singular value decomposition for large language models. arXiv preprint arXiv:2502.01403 , 2025. [30] Carl Eckart and Gale Young. The approximation of one matrix by another of lower rank. 
+
+Psychometrika , 1(3):211–218, 1936. [31] Carl D Meyer. Matrix analysis and applied linear algebra . SIAM, 2023. [32] Xing Hu, Dawei Yang, Yuan Cheng, Zhixuan Chen, and Zukang Xu. Saes-svd: Self-adaptive suppression of accumulated and local errors for svd-based llm compression. arXiv preprint arXiv:2602.03051 , 2026. [33] Xin Wang, Samiul Alam, Zhongwei Wan, Hui Shen, and Mi Zhang. Svd-llm v2: Optimizing singular value truncation for large language model compression. In Proceedings of the 2025 Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , pages 4287–4296, 2025. [34] Namhoon Lee, Thalaiyasingam Ajanthan, and Philip HS Torr. Snip: Single-shot network pruning based on connection sensitivity. arXiv preprint arXiv:1810.02340 , 2018. [35] William Fedus, Barret Zoph, and Noam Shazeer. Switch transformers: Scaling to trillion parameter models with simple and efficient sparsity. Journal of Machine Learning Research ,23(120):1–39, 2022. [36] Zhendong Mi, Bian Sun, Grace Li Zhang, and Shaoyi Huang. Layer-wise dynamic rank for compressing large language models. arXiv preprint arXiv:2509.25622 , 2025. 12 [37] Joshua Ainslie, James Lee-Thorp, Michiel De Jong, Yury Zemlyanskiy, Federico Lebrón, and Sumit Sanghai. Gqa: Training generalized multi-query transformer models from multi-head checkpoints. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , pages 4895–4901, 2023. [38] Binyuan Hui, Jian Yang, Zeyu Cui, Jiaxi Yang, Dayiheng Liu, Lei Zhang, Tianyu Liu, Jia-jun Zhang, Bowen Yu, Keming Lu, et al. Qwen2. 5-coder technical report. arXiv preprint arXiv:2409.12186 , 2024. [39] Stephen Merity, Caiming Xiong, James Bradbury, and Richard Socher. Pointer sentinel mixture models, 2016. [40] Mitch Marcus, Beatrice Santorini, and Mary Ann Marcinkiewicz. Building a large annotated corpus of english: The penn treebank. Computational linguistics , 19(2):313–330, 1993. [41] Colin Raffel, Noam Shazeer, Adam Roberts, Katherine Lee, Sharan Narang, Michael Matena, Yanqi Zhou, Wei Li, and Peter J Liu. Exploring the limits of transfer learning with a unified text-to-text transformer. Journal of machine learning research , 21(140):1–67, 2020. [42] Todor Mihaylov, Peter Clark, Tushar Khot, and Ashish Sabharwal. Can a suit of armor conduct electricity? a new dataset for open book question answering. In Proceedings of the 2018 conference on empirical methods in natural language processing , pages 2381–2391, 2018. [43] Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord. Think you have solved question answering? try arc, the ai2 reasoning challenge. arXiv preprint arXiv:1803.05457 , 2018. [44] Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhagavatula, and Yejin Choi. Winogrande: An adversarial winograd schema challenge at scale. Communications of the ACM , 64(9):99–106, 2021. [45] Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi. Hellaswag: Can a machine really finish your sentence? In Proceedings of the 57th annual meeting of the association for computational linguistics , pages 4791–4800, 2019. [46] Yonatan Bisk, Rowan Zellers, Jianfeng Gao, Yejin Choi, et al. Piqa: Reasoning about phys-ical commonsense in natural language. In Proceedings of the AAAI conference on artificial intelligence , volume 34, pages 7432–7439, 2020. [47] Aida Amini, Saadia Gabriel, Shanchuan Lin, Rik Koncel-Kedziorski, Yejin Choi, and Hannaneh Hajishirzi. Mathqa: Towards interpretable math word problem solving with operation-based formalisms. In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long and Short Papers) , pages 2357–2367, 2019. [48] Leo Gao, Jonathan Tow, Baber Abbasi, Stella Biderman, Sid Black, Anthony DiPofi, Charles Foster, Laurence Golding, Jeffrey Hsu, Alain Le Noac’h, Haonan Li, Kyle McDonell, Niklas Muennighoff, Chris Ociepa, Jason Phang, Laria Reynolds, Hailey Schoelkopf, Aviya Skowron, Lintang Sutawika, Eric Tang, Anish Thite, Ben Wang, Kevin Wang, and Andy Zou. The language model evaluation harness, 07 2024. [49] Yen-Chang Hsu, Ting Hua, Sungen Chang, Qian Lou, Yilin Shen, and Hongxia Jin. Language model compression with weighted low-rank factorization. arXiv preprint arXiv:2207.00112 ,2022. [50] Xunyu Zhu, Jian Li, Yong Liu, Can Ma, and Weiping Wang. A survey on model compression for large language models. Transactions of the Association for Computational Linguistics ,12:1556–1577, 2024. [51] Canwen Xu and Julian McAuley. A survey on model compression and acceleration for pretrained language models. In Proceedings of the AAAI Conference on Artificial Intelligence , volume 37, pages 10566–10575, 2023. 13 [52] Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. 
+
+arXiv preprint arXiv:1503.02531 , 2015. [53] Yuxian Gu, Li Dong, Furu Wei, and Minlie Huang. Minillm: Knowledge distillation of large language models. arXiv preprint arXiv:2306.08543 , 2023. [54] Xiaohan Xu, Ming Li, Chongyang Tao, Tao Shen, Reynold Cheng, Jinyang Li, Can Xu, Dacheng Tao, and Tianyi Zhou. A survey on knowledge distillation of large language models. arXiv preprint arXiv:2402.13116 , 2024. [55] Geonhwa Jeong, Po-An Tsai, Abhimanyu R Bambhaniya, Stephen W Keckler, and Tushar Kr-ishna. Enabling unstructured sparse acceleration on structured sparse accelerators. Proceedings of Machine Learning and Systems , 7, 2025. [56] Shail Dave, Riyadh Baghdadi, Tony Nowatzki, Sasikanth Avancha, Aviral Shrivastava, and Baoxin Li. Hardware acceleration of sparse and irregular tensor computations of ml models: A survey and insights. Proceedings of the IEEE , 109(10):1706–1752, 2021. [57] Saleh Ashkboos, Maximilian L Croci, Marcelo Gennari do Nascimento, Torsten Hoefler, and James Hensman. Slicegpt: Compress large language models by deleting rows and columns. 
+
+arXiv preprint arXiv:2401.15024 , 2024. [58] Jialong Guo, Xinghao Chen, Yehui Tang, and Yunhe Wang. Slimllm: Accurate structured pruning for large language models. arXiv preprint arXiv:2505.22689 , 2025. [59] Guangxuan Xiao, Ji Lin, Mickael Seznec, Hao Wu, Julien Demouth, and Song Han. Smoothquant: Accurate and efficient post-training quantization for large language models. In International conference on machine learning , pages 38087–38099. PMLR, 2023. [60] Zhewei Yao, Reza Yazdani Aminabadi, Minjia Zhang, Xiaoxia Wu, Conglong Li, and Yuxiong He. Zeroquant: Efficient and affordable post-training quantization for large-scale transformers. 
+
+Advances in neural information processing systems , 35:27168–27183, 2022. [61] Zhen Li, Yupeng Su, Runming Yang, Congkai Xie, Zheng Wang, Zhongwei Xie, Ngai Wong, and Hongxia Yang. Quantization meets reasoning: Exploring llm low-bit quantization degradation for mathematical reasoning. arXiv preprint arXiv:2501.03035 , 2025. [62] Dmitry Lepikhin, HyoukJoong Lee, Yuanzhong Xu, Dehao Chen, Orhan Firat, Yanping Huang, Maxim Krikun, Noam Shazeer, and Zhifeng Chen. Gshard: Scaling giant models with condi-tional computation and automatic sharding. arXiv preprint arXiv:2006.16668 , 2020. [63] Weilin Cai, Juyong Jiang, Fan Wang, Jing Tang, Sunghun Kim, and Jiayi Huang. A survey on mixture of experts. Authorea Preprints , 2024. [64] Albert Q Jiang, Alexandre Sablayrolles, Antoine Roux, Arthur Mensch, Blanche Savary, Chris Bamford, Devendra Singh Chaplot, Diego de las Casas, Emma Bou Hanna, Florian Bressand, et al. Mixtral of experts. arXiv preprint arXiv:2401.04088 , 2024. [65] Aixin Liu, Bei Feng, Bing Xue, Bingxuan Wang, Bochao Wu, Chengda Lu, Chenggang Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan, et al. Deepseek-v3 technical report. arXiv preprint arXiv:2412.19437 , 2024. [66] Zhengyan Zhang, Yankai Lin, Zhiyuan Liu, Peng Li, Maosong Sun, and Jie Zhou. Moefication: Transformer feed-forward layers are mixtures of experts. In Findings of the Association for Computational Linguistics: ACL 2022 , pages 877–890, 2022. 14 A Related Works 
+
+Large Language Model Compression. Large language model compression has been widely studied to reduce memory and inference cost while preserving performance [ 50 , 51 ]. Knowledge distillation [ 52 , 53 ] compresses models by transferring knowledge from a large teacher to a compact student, but it requires an additional training stage and exhibits limited generalization capability [ 54 ]. Pruning avoids this training cost by directly modifying the weight structure of a pretrained model. Unstructured pruning [ 20 , 21 ] achieves high sparsity but yields irregular weight patterns that limit practical acceleration on standard hardware [ 55 , 56 ]. Structured pruning [ 19 , 57 ] addresses this by removing entire channels or attention heads to ensure deployment efficiency, yet it faces a harder performance-efficiency trade-off [ 58 ]. Quantization [ 16 , 17 , 59 , 60 ] eases this trade-off by com-pressing the numerical precision of weights rather than their structure, but its effectiveness depends on hardware support and degrades under aggressive low-bit settings [ 61 ]. Low-rank approxima-tion [ 27 , 28 ] sidesteps these hardware dependencies by preserving regular dense linear operations, while also avoiding large-scale fine-tuning as a post-training compression strategy [ 50 ], yet existing methods produce static compressed models that do not adapt to different inputs. 
+
+SVD-based Compression for LLMs. SVD-based compression has emerged as an important direction for reducing the parameter count and inference cost of LLMs. Standard SVD minimizes truncation error in weight space, while inference quality depends on activation reconstruction rather than weights [ 28 ]. To bridge this gap, FWSVD [ 49 ] uses Fisher information to weight the importance of individual parameters, ASVD [ 27 ] absorbs activation outliers into weight matrices via activation statistics before decomposition, and SVD-LLM [ 28 ] applies data whitening to align singular values more directly with activation reconstruction loss. Beyond optimizing the decomposition process, several works focus on refining the truncation. Along this direction, AdaSVD [ 29 ] alternately updates singular matrices to compensate for truncation error, DipSVD [ 9] jointly considers local and global importance to better identify components to retain, and Dobi-SVD [ 14 ] makes the truncation process differentiable to enable more principled rank selection. While the above methods overlook inter-layer heterogeneity, another line of work takes a cross-layer perspective. Basis Sharing [ 15 ] exploits cross-layer redundancy by representing weight matrices as linear combinations of shared basis vectors with layer-specific coefficients. D-Rank [ 36 ] measures per-layer information density via effective rank and allocates rank budgets under a static global compression ratio. SAES-SVD [ 32 ] further addresses the accumulated error that propagates across layers by jointly suppressing both per-layer reconstruction error and cross-layer error during compression. Although these works perform rank truncation for model compression, the truncation is typically determined during calibration, resulting in a static rank selection. This static rank is then uniformly applied to all prompts during inference, without accounting for variability across different input prompts. Motivated by this bottleneck, as well as by the router selection mechanism of Mixture-of-Experts (MoE) models [ 62 , 35 , 63 ], we propose to dynamically select ranks via a router based on the input prompt to achieve better performance for different inputs, while maintaining the same compression ratio as baseline methods. This routing paradigm has been widely adopted in modern LLM architectures [ 64 , 65 ] and has even been retrofitted into dense models without pretraining from scratch [66]. 
+
+B Limitations 
+
+PARSE is evaluated on open-source decoder-only LLMs and standard language modeling and zero-shot reasoning benchmarks; its behavior on multimodal models, encoder-decoder models, and instruction-tuned production systems remains to be further studied. The current implementation trains routers for SVD-compressed weights and relies on prompt-level rank patterns, so the benefit may depend on the stability of rank selection across prompts and decoding steps. In addition, although rank retrieval and reuse reduce online router overhead, constructing and storing the rank-pattern cache introduces extra offline preprocessing and memory cost. Finally, our latency measurements are conducted on NVIDIA RTX A6000 GPUs, and the absolute speedups may vary across hardware backends and kernel implementations. 15 C More Ablation Studies 
+
+Table 5: Impact of different router designs on LLaMA-7B by SAES-SVD at compression ratio 0.2.                              
+
+> PPL (↓)Avg. Accuracy (↑)
+> Router Architecture Params (↓)WikiText-2 PTB C4 Zero-shot Tasks
+> MLP (2-layer, ReLU) 8423.21M 7.03 13.99 12.83 0.50 MLP (2-layer, GELU) 8423.21M 7.01 14.08 12.84 0.50 Attention-block 30721.41M 7.11 14.35 13.11 0.47
+> Single Linear Layer 4664.07M 7.01 13.96 12.84 0.51
+
+Impact of Router Archi-tecture. Table 5 compares different router architec-tures on SAES-SVD with compression ratio 0.2. The single linear router achieves the best overall trade-off, us-ing 4.66B router parameters while obtaining the lowest PTB perplexity of 13.96 and the highest average zero-shot accuracy of 0.51. Increasing router capacity does not lead to consistent gains: two-layer MLP routers nearly double the parameter count to 8.42B but provide no improvement in average accuracy, and the attention-block router further increases the parameter count to 30.72B while degrading perplexity on all three datasets and reducing average accuracy to 0.47. These results show that prompt-aware rank selection does not require a high-capacity router. A single linear projection is sufficient to separate useful rank components from the input activation, while larger routers introduce unnecessary parameters and become harder to optimize under the same post-training budget. Table 6: Ablation on vanilla SVD without orthogonal base-lines on LLaMA-7B at compression ratio 0.2.                  
+
+> Method WikiText-2 ↓PTB ↓C4 ↓Avg. Acc. ↑
+> Vanilla SVD 20222.35 20749.99 19014.54 0.30 Vanilla SVD + PARSE 301.27 512.42 350.26 0.33
+
+Effectiveness without Orthogonal SVD Enhancements. Table 6 isolates the effect of PARSE by applying it di-rectly to vanilla SVD, without whiten-ing, error compensation, basis sharing, or any decomposition-level enhancement. Vanilla SVD collapses under aggressive compression, reaching perplexities above 1.9 × 10 4 on all three language modeling benchmarks. However, after incorporating PARSE, the perplexity is dramatically improved. For example, on the WikiText-2 dataset, vanilla SVD combined with PARSE achieves a perplexity of only 301.27, reducing the perplexity of vanilla SVD by more than 19,000. This demonstrates that PARSE itself can achieve strong compression performance without relying on sophisticated SVD compression baselines, while also highlighting the necessity of dynamically selecting prompt-aware ranks during inference. Table 7: Impact of SVD calibration data on LLaMA-7B with SAES-SVD at compression ratio 0.2.                        
+
+> PPL (↓)Avg. Accuracy (↑)
+> Calib. Dataset WikiText-2 PTB C4 Zero-shot Tasks
+> WikiText-2 6.98 14.07 13.04 0.51 PTB 7.03 14.09 13.11 0.50 C4 7.01 13.96 12.84 0.51
+> MathQA 7.05 14.10 13.13 0.50
+
+Robustness to SVD Calibration Data. Table 7 evaluates whether PARSE remains sensitive to the calibration dataset used by the underlying SVD decomposition. We vary the SVD cali-bration data among WikiText-2, PTB, C4, and MathQA, while keeping the router training cor-pus fixed to C4. We include PTB and MathQA as stress-test calibration sources because they produce the largest calibration-induced degradation in Observation 2. PARSE maintains stable performance across all calibration choices: WikiText-2 perplexity stays within 6.98–7.05, PTB within 13.96–14.10, C4 within 12.84–13.13, and average zero-shot accuracy within 0.50–0.51. This contrasts with static SVD truncation, where the calibration set directly determines which rank components are retained and therefore causes cross-domain degradation. By training the router against dense outputs on a diverse corpus, PARSE reduces the dependence on the calibration information encoded in the SVD factors and selects rank components according to the input prompt instead. 26 41 56   
+
+> Window index
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> PPL
+> without PARSE
+> Dense
+> Compressed
+> 26 41 56
+> Window index
+> with PARSE
+
+Figure 9: Per-window perplexity on WikiText-2 for the dense and compressed LLaMA-7B by SVD-LLM without PARSE (left) and with PARSE (right). 
+
+Prompt PPL Stability Analy-sis. Figure 9 extends the per-prompt PPL analysis from Sec-tion 3 by comparing the com-pressed model with and with-out PARSE. Without PARSE, the compressed model exhibits pro-nounced perplexity spikes at cer-tain windows that far exceed the dense model, consistent with Fig-ure 1. With PARSE, these spikes are substantially reduced and the compressed model tracks the dense model much more closely across 16 windows, confirming that prompt-aware rank selection mitigates the localized degradation caused by static rank truncation. 
+
+D Existing Assets and Licenses 
+
+We use publicly available models, datasets, and evaluation tools only for research evaluation. Table 8 summarizes the external assets used in this work and the corresponding license or access terms reported by the original providers. We cite the original papers or repositories in the main text and follow the license, access, and acceptable-use terms specified by each asset provider. Table 8: External assets used in this work. We use these assets only for research evaluation and follow the license or access terms specified by the original providers. 
+
+Asset Usage in this paper License / access terms 
+
+LLaMA family [6] Target LLMs for SVD compres-sion and evaluation Meta LLaMA license and acceptable-use terms Qwen2.5 [38] Target LLM for SVD compres-sion and evaluation Apache License 2.0 WikiText-2 [39] Language modeling evaluation Creative Commons Attribution-ShareAlike Penn Treebank (PTB) [40] Language modeling evaluation Linguistic Data Consortium license / access terms C4 [41] Router training and language modeling evaluation ODC-BY; also subject to Common Crawl terms of use OpenBookQA [42] Zero-shot reasoning evaluation Apache License 2.0 AI2 ARC [43] Zero-shot reasoning evaluation Creative Commons Attribution-ShareAlike WinoGrande [44] Zero-shot reasoning evaluation CC-BY for the dataset; Apache License 2.0 for the codebase HellaSwag [45] Zero-shot reasoning evaluation MIT License PIQA [46] Zero-shot reasoning evaluation License metadata not specified by the dataset card; used for research evaluation with citation MathQA [47] Zero-shot reasoning evaluation Apache License 2.0 LM-Evaluation-Harness [48] Zero-shot evaluation framework MIT License 
+
+17

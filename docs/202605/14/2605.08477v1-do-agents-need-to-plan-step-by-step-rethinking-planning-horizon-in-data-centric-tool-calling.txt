@@ -1,0 +1,949 @@
+Title: Do Agents Need to Plan Step-by-Step? Rethinking Planning Horizon in Data-Centric Tool Calling
+
+URL Source: https://arxiv.org/pdf/2605.08477v1
+
+Published Time: Tue, 12 May 2026 00:19:22 GMT
+
+Number of Pages: 29
+
+Markdown Content:
+# Do Agents Need to Plan Step-by-Step? Rethinking Planning Horizon in Data-Centric Tool Calling 
+
+# Naoki Otani 
+
+naoki@megagon.ai Megagon Labs Mountain View, California, USA 
+
+# Nikita Bhutani 
+
+nikita@megagon.ai Megagon Labs Mountain View, California, USA 
+
+# Hannah Kim 
+
+hannah@megagon.ai Megagon Labs Mountain View, California, USA 
+
+# Dan Zhang 
+
+dan_z@megagon.ai Megagon Labs Mountain View, California, USA 
+
+# Estevam Hruschka 
+
+estevam@megagon.ai Megagon Labs Mountain View, California, USA 
+
+## Abstract 
+
+Explicit planning is a critical capability for LLM-based agents solv-ing complex data-centric tasks, which require precise tool call-ing over external data sources. Existing strategies fall into two paradigms based on planning horizon: (1) full-horizon (FH), which generates a complete plan before execution, and (2) single-step horizon (SH), which interleaves each action (tool call) with incre-mental reasoning and observation. While step-by-step execution is a common default under the assumption that eager execution monitoring is necessary for adaptability, we revisit this assump-tion for well-defined data-centric tasks. Our controlled empirical study isolates planning horizon as the key architectural feature and systematically analyzes the effects of topological complexity and tool robustness on both paradigms. Our experiments across Knowledge Base Question Answering and Multi-hop QA show that FH planning with lazy replanning achieves accuracy parity with SH across varying depths, breadths, and robustness levels, while using 
+
+2–3× fewer tokens. These findings suggest that for well-defined data-centric tasks, eager step-wise monitoring is often unnecessary, and full-horizon planning with on-demand replanning can offer a more efficient default. 
+
+## CCS Concepts 
+
+• Information systems → Question answering ; • Computing methodologies → Natural language generation .
+
+## Keywords 
+
+Large language model agents, tool-calling, data-centric tasks 
+
+ACM Reference Format: 
+
+Naoki Otani, Nikita Bhutani, Hannah Kim, Dan Zhang, and Estevam Hr-uschka. 2026. Do Agents Need to Plan Step-by-Step? Rethinking Planning Horizon in Data-Centric Tool Calling. In ACM Conference on AI and Agentic Systems (CAIS ’26), May 26–29, 2026, San Jose, CA, USA. ACM, New York, NY, USA, 29 pages. https://doi.org/10.1145/3786335.3813129  
+
+> This work is licensed under a Creative Commons Attribution 4.0 International License.
+> CAIS ’26, San Jose, CA, USA
+> ©2026 Copyright held by the owner/author(s). ACM ISBN 979-8-4007-2415-2/2026/05 https://doi.org/10.1145/3786335.3813129
+
+## 1 Introduction 
+
+Large Language Model (LLM) agents are increasingly deployed to solve data-centric tasks in which answers must be constructed through tool calls over external sources such as databases, knowl-edge graphs, or documents (Figure 1a). In these settings, success depends on coordinating tool calls that match the latent logic (e.g., joins or multi-hop reasoning) and vocabulary constraints im-posed by the data source (e.g., data schema, entity mentions). As these tasks grow in complexity, explicit planning of low-level tool calls has become a central component of modern agentic architec-tures [11, 38, 39]. Existing planning techniques can be categorized into two major paradigms by planning horizon , the number of steps planned before tool execution (Figure 1b). Single-step horizon (SH) planning interleaves reasoning and execution, calling one tool at a time based on prior observations. Full-horizon (FH) planning instead generates a complete plan upfront before execution. Recent frontier models and systems increasingly support upfront high-level task decomposition, and more advanced FH planning techniques have also been developed [ 18 , 40 ]. However, tight “think-act-observe” loops [ 44 ] remain a common default for low-level tool execution. 1
+
+This eager monitoring is often presumed essential for robustly handling the opacity and potential noise of external tools and data sources [8, 16, 46]. Recent work by Liu et al . [21] has begun to question whether interleaved planning is universally optimal. They compare differ-ent planning strategies on general reasoning tasks without tool interaction and find that SH planning is not consistently superior. However, their study leaves open a critical question: does this con-clusion extend to data-centric settings, where success depends on structured tool calls rather than purely internal reasoning? We perform a controlled empirical study and address this gap by shifting the focus from abstract reasoning to data-centric, tool-calling tasks , in which planning decisions directly affect execution success, computational cost, and robustness. We further go beyond dataset-level comparisons by analyzing planning behavior at the instance level, enabling a more precise characterization of task dif-ficulty. Specifically, we introduce an instance-level framework that disentangles two orthogonal dimensions: topological complexity    
+
+> 1In this paper, we focus on this low-level execution layer rather than higher-level decomposition.
+> arXiv:2605.08477v1 [cs.CL] 8 May 2026 CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al.
+
+(a) In data-centric tasks, LLM agents must coordinate tool calls to synthesize the answer from external data sources. This complex tool calling necessitates explicit planning (below). 
+
+(b) Single-step horizon (SH) alternates planning and execution at each step ( eager monitoring). Full-horizon (FH) plans upfront and (optionally) replans only on demand ( lazy monitoring). KQA Pro  
+
+> GrailQA
+> WebQSP
+> GraphQ
+> Multiobj HotpotQA
+> 0.81
+> 0.73
+> 0.73
+> 0.54
+> 0.60
+> 0.80
+> 0.72
+> 0.75
+> 0.53
+> 0.57
+> Accuracy ( ↑ )
+> 119,629
+> 29,309
+> 22,518
+> 32,859
+> 31,960
+> 44,064
+> 14,865
+> 7,287
+> 20,980
+> 23,116
+> Avg. Token Usage Per Example ( ↓ ) SH FH
+
+(c) When GPT-4.1-mini is used as a backbone LLM, SH and FH achieve comparable accuracy across datasets (left), but SH consumes much more input+output tokens (right). See §4 for details. 
+
+Figure 1: Planning horizon in data-centric tool calling. SH plans and executes step-by-step. FH plans ahead and replans only when needed, which can reduce token consumption. 
+
+(the depth and breadth of the execution graph) and tool robust-ness (the tolerance to imprecise inputs). Together, these dimensions capture two fundamental challenges in tool-mediated data-centric tasks: satisfying logical dependencies among intermediate steps and aligning generated arguments with external schema or vocabulary constraints. We hypothesize that for well-defined data-centric tasks, an FH planner equipped with lazy monitoring (executing a complete plan and replanning only upon failure) can match the performance of an SH planner without the massive overhead of continuous feedback integration. We focus on Knowledge Base Question Answering (KBQA) and Multi-hop QA (HotpotQA) because they represent the two core challenges of data-centric agents. KBQA serves as a controlled environment for testing logic-alignment, requiring agents to coordinate atomic tool operations that mirror database queries. HotpotQA represents the challenges in unstructured set-tings, where agents must navigate retrieval noise and coordinate reasoning-based sub-agents. This setup allows us to analyze plan-ning behavior across both rigid, structured schemas and fuzzier, unstructured data sources. Our results show no statistical evidence that SH planning pro-vides a performance advantage over FH planning across varying structural or robustness configurations in well-defined data-centric tasks. Given this performance parity, the 2–3× efficiency advan-tage of FH planning (Figure 1c) makes it a stronger option than previously thought. Our findings also suggest that the perceived brittleness of FH planning in prior work may result from the absence of proper recovery mechanisms rather than an inherent limitation of full-horizon planning. While SH planning may remain advan-tageous in exploratory or highly dynamic tool-calling tasks, our results refine prevailing assumptions about SH by demonstrating that eager monitoring is not universally necessary. In structured and stable environments, less frequent monitoring can substantially improve efficiency without sacrificing accuracy. Our contributions are the following: 
+
+• We isolate planning horizon as a core architectural variable in LLM agents (§2) and provide a controlled comparison of its effects in data-centric tasks. 
+
+• We introduce an instance-level framework that character-izes difficulty via execution graph topology and tool robust-ness (§3). In particular, we identify depth and breadth as overlooked axes of execution-graph complexity that affect planning performance beyond sequential length. 
+
+• We show that FH planning with lazy replanning achieves accuracy parity with SH planning while using fewer tokens on well-defined data-centric tasks (§4). This result provides a foundation for future work on adaptive and hybrid planners. 
+
+## 2 Planning Horizon : The Key Architectural Feature 
+
+The landscape of agentic frameworks is expansive [ 12 , 19 , 35 ]. Yet, most approaches can be understood through a single underlying design choice: planning horizon , defined as the number of steps an agent plans before execution. Planning horizon determines how much simulation an agent performs prior to interacting with tools and therefore governs when feedback from the environment is incorporated into planning. We conceptualize the agent as a policy 𝜋 interacting with a tool execution environment E. Let A denote the set of available tools (actions) and O the space of possible observations (tool outputs). Given a user query 𝑞 , the agent produces a plan P = (𝑎 1, . . . , 𝑎 𝑇 )
+
+consisting of actions 𝑎 𝑖 ∈ A(𝑖 = 1, . . . ,𝑇 ), where 𝑇 denotes the plan length and 𝑎 𝑇 is the final planned action. Here, a plan refers specifically to a sequence of tool calls at the execution level. Ex-ecuting an action 𝑎 𝑖 yields an observation 𝑜 𝑖 ∈ O, resulting in a trajectory that leads to the answer to 𝑞 . Within this formulation, planning strategies differ only in when the policy 𝜋 is invoked during execution. In this section, we treat planning horizon as a primary archi-tectural feature and discuss how it shapes the trade-off between Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA 
+
+adaptivity and cost. In particular, we focus on when and how agents replan in response to tool feedback. 
+
+## 2.1 Single-Step Horizon (SH) 
+
+The single-step horizon (SH) paradigm tightly interleaves planning and execution. The agent simulates only one step ahead before performing an action. In this paradigm, action generation at step 
+
+𝑡 is conditioned on the user query 𝑞 and the history of previous actions and observations: 
+
+𝑎 𝑡 ∼ 𝜋 (𝑞, 𝑎 1, 𝑜 1, ..., 𝑎 𝑡 −1, 𝑜 𝑡 −1) (1) This design entails eager feedback monitoring, since the agent 
+
+always processes observations up to the current step before deciding on the next action. SH is widely used in modern agentic applications, with some variations that can plan concurrent, independent steps at once. Its popularity stems from the tight planning–acting feedback loop, which enables robust adaptation to uncertainty and noise in exter-nal tools and environments. Such adaptivity is particularly benefi-cial in exploratory tasks that require information gathering before subsequent planning [8, 16, 46]. 
+
+## 2.2 Full-Horizon (FH) 
+
+The full-horizon (FH) paradigm generates a complete execution graph upfront. The agent performs a full simulation of the trajectory required to solve the task before it triggers any tool execution. In this paradigm, the agent generates an initial plan as a complete sequence of actions P = (𝑎 1, . . . , 𝑎 𝑇 ) conditioned only on the query: 
+
+P ∼ 𝜋 (𝑞 ) (2) Execution then proceeds via the environment E without invok-ing the policy 𝜋 at every step. Unlike SH, FH can allow lazy feedback integration, wherein observations are incorporated only when mon-itoring is triggered. For example, an execution failure at step 𝑘 can trigger monitoring, prompting the agent to replan based on the observed trajectory: 
+
+P′ ∼ 𝜋 (𝑞, 𝑎 1, 𝑜 1, ..., 𝑎 𝑘 , 𝑜 𝑘 ) (3) 
+
+## 2.3 Implications of Planning Horizon 
+
+Planning horizon creates a trade-off between adaptivity and compu-tational cost. SH eagerly monitors every tool call, which can yield robust adaptation to uncertainty and noise but incurs substantial overhead due to repeated inference. FH, by contrast, generates a multi-step plan in a single pass and is therefore more efficient, but only integrates feedback lazily .Comparing FH’s lazy feedback integration (Eq. (3) ) with SH’s single-step generation (Eq. (1) ), we see that they both condition on the same action–observation history available at that step. Thus, the practical difference is not what information is used, but when it is used: at every step (SH) versus only when triggered (FH). This insight suggests a testable hypothesis: with an appropriate monitoring trigger, FH should achieve performance comparable to SH while requiring fewer policy calls. From this perspective, the commonly assumed brittleness of FH may arise not from its planning horizon per se, but from the absence of effective error recovery mechanisms. Notably, many existing studies implement 
+
+Figure 2: An example plan DAG for the query: “Which com-pany has more employees: Google or the parent company of Instagram?”. The DAG involves two parallel paths: a single-hop lookup for Google ( 𝑎 1) and a two-hop traversal for Insta-gram’s parent company ( 𝑎 2 → 𝑎 3), which are finally compared at the aggregation node ( 𝑎 4). This structure results in a depth of 𝑑 = 3 and a breadth of 𝑏 = 4/3.
+
+FH without replanning [ 8, 46 ], which confounds evaluation of the paradigm. We therefore evaluate FH equipped with lazy monitoring. To obtain generalizable insights, we adopt a simple trigger that is commonly used in practice: replanning upon execution failure. We also abstract away implementation-specific details such as tool-calling formats and isolate planning horizon as the primary variable in our analysis. 
+
+## 3 Task Characterization 
+
+To evaluate how planning horizon shapes agent behavior, we re-quire a principled way to characterize task difficulty. Dataset-level comparison [ 21 ] can obscure meaningful variation across instances. Instances actually differ substantially in which tools and data sources are involved and how they are connected. Without explicitly mod-eling such instance-level features, comparisons between planning strategies may conflate planning effects with underlying instance properties. In data-centric tool-calling tasks, success depends on aligning logic and vocabulary : correctly composing tool calls to match the la-tent dependency structure of the task instance ( logic alignment ) and specifying tool parameters that match the schema or representation of the external data source ( vocabulary alignment ). capture these challenges using two independent dimensions: topological com-plexity and tool robustness. This separation allows us to disentan-gle structural reasoning difficulty from environmental uncertainty. These factors are often conflated in prior evaluations. 
+
+## 3.1 Topological Complexity (Logic Alignment) 
+
+Topological complexity captures the difficulty of aligning execution with the latent logical structure of a task. We represent a plan as a directed acyclic graph (DAG) 𝐺 = (𝑉 , 𝐸 ), where nodes ( 𝑉 ) are tool calls and edges ( 𝐸 ) are dependencies between them. Motivated by task scheduling studies [ 2 , 28 ], we characterize each execution graph using two metrics: 
+
+Depth ( 𝑑 ): Depth is defined as the critical path length of the DAG, i.e., the longest chain of dependent tool calls. Depth CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al. 
+
+captures the minimum number of sequential reasoning steps that must be executed in order. High depth increases expo-sure to cascading errors. 
+
+Breadth ( 𝑏 ): We define breadth as the average parallelism of the graph: 𝑏 = |𝑉 |/ 𝑑 . Higher breadth indicates the presence of multiple independent sub-plans that must eventually be merged. LLM planners typically operate over a linearized, text-form plan. This technical constraint can make it difficult to manage highly branched plans. Consider the query: “Which company has more employees: Google or the parent company of Instagram?” Figure 2 illustrates the plan DAG for this task using the KoPL tools (Appendix B.1). The query involves two parallel branches (a single entity lookup and an en-tity lookup followed by a relationship traversal). These branches are then merged at an aggregation node to perform the final com-parison. The critical path is 𝑎 2 → 𝑎 3 → 𝑎 4, yielding a depth of 
+
+𝑑 = 3. With |𝑉 | = 4 total steps, the parallel breadth is 𝑏 = 4/3. This example indicates that structural complexity arises not only from sequential length but also from the need to coordinate multiple independent sub-queries. 
+
+## 3.2 Tool Robustness (Vocabulary Alignment) 
+
+Even when a plan’s logical structure is correct, execution can fail if tool inputs do not exactly match the representation of data sources. We thus define tool robustness to measure how tolerant an environ-ment is to imperfect tool specifications. We consider two common forms of robustness: 
+
+Robustness to Schema Mismatch: In structured data envi-ronments (e.g., KBQA), tool parameters must match prede-fined schema elements such as relation names or attribute keys. For instance, a tool call that uses employees may fail if the schema only contains employee_counts . This mismatch can be mitigated when the tool supports flexible recovery mechanisms such as embedding-based soft matching (e.g., mapping employees to employee_counts given the query context). 
+
+Robustness to Retrieval Uncertainty: In unstructured en-vironments (e.g., document retrieval), failure may arise from search mismatch rather than schema mismatch. For example, the query “who owns Instagram” may not retrieve evidence that states “Instagram was acquired by Meta”, depending on the retrieval quality. Robustness can vary depending on recall of the retriever (top-1 vs top-100), semantic matching quality and evidence aggregation strategy. Although other robustness factors can also be meaningful, such as tolerance to technical failures (e.g., service downtime), we focus on the semantic and informational dimensions above because they are particularly common in data-centric QA tasks. 
+
+## 4 Experiments 
+
+We aim to assess whether step-wise monitoring is necessary for complex data-centric tool use, or whether comparable performance is achievable with FH with lazy monitoring. For this purpose, we compare SH and FH planning with lazy under controlled varia-tion in topological complexity and tool robustness. Specifically, we address three questions: (1) Does SH planning outperform FH 2              
+
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> Breadth ( b)
+> 34
+> 135
+> 31
+> 24
+> 3
+> 122 13 94 12 429
+> 38 22
+> 118 9
+> 43 16
+> 13 654
+> 13 22
+> 51 96
+> 53
+> KQA Pro
+> 103 125
+> 94
+> 4
+> 85
+> 16
+> 2
+> 24 3
+> 21 1
+> GrailQA
+> 2468
+> 125 94
+> 28
+> 31
+> 97 112
+> 37
+> 411
+> WebQSP
+> 2468
+> Depth ( d)
+> 2
+> 4
+> 6
+> 8
+> 10
+> 12
+> 14
+> Breadth ( b)
+> 6109
+> 48
+> 5
+> 5
+> 8
+> 1
+> 26 2
+> 5
+> GraphQ
+> 2468
+> Depth ( d)
+> 93
+> 100
+> 47
+> 73
+> 97
+> 42
+> 73
+> 77
+> 55
+> 67
+> 68
+> 34
+> 23
+> 32
+> 7
+> 12
+> 7
+> 15
+> 9
+> 16
+> 4
+> 17
+> 14
+> 11
+> 2
+> 4
+> 1
+> Mul. HotpotQA
+> KQA Pro
+> GrailQA
+> WebQSP
+> GraphQ
+> Mul. HotpotQA
+> 929
+> 478
+> 422
+> 215
+> 1000
+> Total Examples
+
+Figure 3: Distribution of task instances across datasets. The horizontal and vertical axes represent the critical path length (depth) and average parallelism (breadth), respectively. The bar chart summarizes total instance counts per dataset. 
+
+planning in overall accuracy? (2) Does SH planning better handle greater topological complexity (deep/wide graphs)? (3) Does SH planning exhibit greater robustness in noisy environments? 
+
+## 4.1 Experimental Setup 
+
+We evaluate performance across data-centric tasks over two types of underlying data: 
+
+KBQA (Structured): We use KQA Pro [ 3], GrailQA [ 10 ], We-bQSP [ 45 ], and GraphQ [ 30 ] as our main testbed. These tasks require precise logical composition over structured knowledge bases (Wikidata and Freebase), where answers are constructed through multi-step queries. For KQA Pro, we employ KoPL tools (27 tools). For the rest, we use the atomic query tools [ 23 ] (7 tools). A tool execution is considered as failed if it returns no valid result. 
+
+Multi-objective HotpotQA (Unstructured): Following Zhou et al . [47] , we combine examples from HotpotQA [ 43 ] to synthesize multi-objective questions with greater breadth (𝑘 ∈ { 2, 3, 4, 5}), and also include the original HotpotQA instances ( 𝑘 = 1). This setting requires accurate task de-composition and search over Wikipedia. We use the search and reasoning sub-agents from Kim et al . [14] as tools. Each sub-agent takes a short sub-question as input and returns a short answer if supporting evidence is retrieved (search) or if the reasoning is successfully performed (reasoning). Note that modern LLMs can answer many HotpotQA questions without tools. We include this dataset primarily to connect our analysis with prior work. Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA 
+
+Table 1: Example task instances with their corresponding ground-truth tool-call trajectories (execution graphs). 
+
+> (a) KQA Pro
+
+Q: Who is taller, LeBron James Jr. or his father? Solution (Simplified) 
+
+A: LeBron James Jr. 
+
+> (b) GrailQA
+
+Q: What movie with a television running time of less than 60 minutes features Taylor Lautner? Solution (Simplified) 
+
+A: m.02686wj (“He’s a Bully, Charlie Brown”)   
+
+> (c) Multi-objective HotpotQA ( 𝑘 =2)
+
+Q: 1. Eugeniusz Bodo and Chris Buck both shared what oc-cupation? 2. The creator of the record label Merciful Release was born in what year? Solution (Simplified) 
+
+A: 1. film director, 2. 1959 To enable analysis based on topological features, we derive ground-truth execution trajectories from dataset provenance. For KBQA, we use the gold solution program (KQA Pro) or logical forms (GrailQA, WebQSP, and GraphQ) to obtain the sequence of tool calls with dependency information. For HotpotQA, we use gold support-ing documents to determine the required retrieval and reasoning steps, assisted by LLM annotation (GPT-4.1-mini). We downsample all datasets to balance reasoning length and question types, yielding 929 KQA Pro instances, 1,115 Atomic KBQA instances, and 1,000 multi-objective HotpotQA instances. As discussed in Section 3.2, we model tool robustness using schema matching in KBQA and the retrieval rank cutoff (top-(k))   
+
+> [system] (FH) Use the available tools to answer the user 's question step by step, generating the entire plan. Use $i to refer to the output of step i (0-indexed). **Tools** {tool_definitions} You can access the knowledge base through the provided tools. **Examples** {demonstrations}
+> [system] (SH) Use the available tools to answer the user 's question step by step, generating one action at a time. Use $i to refer to the output of step i (0-indexed). (...same as FH)
+> [user]
+> Question: {question}
+
+Prompt 1: Planning prompts for Atomic KBQA 
+
+in multi-objective HotpotQA. For the main results (§4.2) and topo-logical complexity analysis (§4.3), we use high-robustness settings, where tools are more tolerant to imprecise input parameters. In KBQA, when a parameter specified by the planner does not exactly match the KB schema, we perform soft schema matching by (i) re-trieving candidates via cosine similarity over BGE embeddings [ 37 ]and (ii) validating candidates with GPT-4.1-mini. If no valid match is found, the tool returns the top-10 nearest candidates as feedback. In multi-objective HotpotQA, the search tool retrieves the top-10 documents to increase the chance of retrieving the necessary ev-idence. In controlled robustness experiments (§4.4), we switch to low-robustness settings by disabling soft matching in KBQA or restricting retrieval to top-1 in HotpotQA. Figure 3 shows the distribution of task instances across datasets, and Table 1 provides examples with ground-truth trajectories. More details on dataset-specific pre-processing and tool implementations can be found in Appendix B.1. 
+
+Backbone LLMs: We compare four backbone LLMs representing distinct capability classes: (1) GPT-4.1-mini and Qwen3-235B-A22B (Instruct), representing standard instruction-tuned models; and (2) GPT-5-mini and Gemini-3-Flash, representing frontier reasoning models with stronger inherent planning capabilities. 
+
+Metrics: We repeat the same configuration three times to ac-count for the randomness of LLMs. We report average accuracy (using LLM-as-judge for soft matching) and efficiency (average input/output tokens per query). See Appendix B.3 for details. 
+
+Implementation Details: As discussed in Section 2, FH and SH dif-fer primarily in planning horizon. To ensure a fair comparison, we CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al. 
+
+use minimal prompts that include task instructions, tool definitions (as a JSON string), and in-context demonstrations (see Prompt 1), while keeping all other components identical across paradigms. For each task instance, the agent is allowed to execute up to 30 tool calls, and if tool execution fails, the agent can retry up to eight times. We constrain the LLM decoding to produce a plan as a sequence of tool calls in JSON format. We do not use native tool-calling APIs, which are not applicable to FH. For in-context learning, we sam-ple 10 demonstration examples from the training set and provide the same set to both paradigms, retrieving semantically similar examples via query embedding. Details such as LLM prompts and hyper-parameters can be found in Appendix B.2. 
+
+## 4.2 Overall Accuracy and Efficiency 
+
+Table 2 presents aggregate accuracy and token consumption for both paradigms across all datasets and LLM backends. 
+
+Accuracy: SH shows no clear performance advantage over FH. In fact, FH significantly outperforms SH on Atomic KBQA datasets for Gemini-3-Flash (e.g., SH is worse by 15.4 accuracy points on GrailQA and 17.2 points on GraphQ). We provide a more detailed analysis in Section 4.5. This pattern result suggests that, for this specific reasoning model, FH planning can be more effective than SH planning. 
+
+Efficiency: FH consistently reduces input token consumption by 2–3x. The magnitude of this reduction depends on the length of tool definitions in the input prompt. For KQA Pro (27 tools with complex schemas), the savings are massive (2.7–4.7x). For HotpotQA (2 tools), the margin is smaller (1.4–1.9x) but still significant. Crucially, for reasoning models (GPT-5-mini and Gemini-3-Flash), FH also saves output tokens. While SH triggers a full Chain-of-Thought generation at every single step, FH generates the reasoning chain only once during initial plan generation and during occasional replanning. This efficiency advantage is particularly beneficial in production settings, where token usage directly translates to latency and cost. 
+
+Does SH outperform FH in overall accuracy? No. Overall, SH does not deliver a clear accuracy advantage over FH, while FH is more token-efficient. We next analyze performance under controlled variation in topological complexity and tool robustness. 
+
+## 4.3 Topological Complexity Analysis 
+
+We employ a logistic regression model to quantify the impact of planning strategy while controlling for task complexity. Because we have repeated measures (three runs per query), we fit the model with Generalized Estimating Equations (GEE) using clustering by question ID. The specification is: logit (𝑃 (𝑦 = 1)) =𝛽 0 + 𝛽 𝑑 𝑑 ∗ + 𝛽 𝑏 𝑏 ∗ + 𝛽 SH 𝑥 SH 
+
++ 𝛽 𝑑 :SH (𝑑 ∗ × 𝑥 SH ) + 𝛽 𝑏 :SH (𝑏 ∗ × 𝑥 SH ) + . . . ,
+
+where 𝑦 ∈ { 0, 1} indicates task success, 𝛽 denotes coefficients to be estimated, 𝑑 ∗ and 𝑏 ∗ are standardized depth and breadth fea-tures (§3.1), and 𝑥 SH ∈ { 0, 1} is a binary indicator for the SH strategy. We additionally include dataset-specific control variables, for exam-ple the final reasoning operation type (e.g., VerifyDate ) for KBQA, dataset identity for Atomic KBQA, and question type (bridge/com-parison) for HotpotQA. For brevity, we omit these controls from the summary tables in this section. Full model specifications and results are provided in Appendix B.3 and Appendix C.1. 
+
+Result: As shown in Table 3, the coefficients for depth ( 𝛽 𝑑 ) and breadth ( 𝛽 𝑏 ) are consistently negative and statistically significant (𝑝 < 0.01 ) across most datasets and models. This result confirms that topological complexity is a challenging factor that degrades performance regardless of the planning paradigm. Does SH handle greater topological complexity (deep/wide graphs) better than FH?. In general, no. The interaction coefficients between planning method and topological complexity ( 𝛽 𝑑 :SH and 𝛽 𝑏 :SH ) are statistically insignificant ( 𝑝 > 0.05 ) in most settings. In some cases, SH is even worse at handling increasing complexity (e.g., GPT-4.1-mini on KQA Pro). Nevertheless, these differences are small com-pared to the dominant negative impact of topological complexity (𝛽 𝑑 and 𝛽 𝑏 ) overall. 
+
+## 4.4 Tool Robustness Analysis 
+
+To evaluate how SH and FH behave under different levels of tool robustness, we inject noise into tool execution. Specifically, for KBQA we disable automatic schema matching (forcing exact iden-tifier use), and for multi-objective HotpotQA we restrict retrieval to top-1 (simulating low recall). Under both perturbations, tools are more likely to return empty results, which in turn necessitate replanning. 
+
+Result: Table 4 shows that noise leads to comparable performance degradation for FH and SH. In many cases, the drop is less than 0.05 accuracy points, and the difference between the two paradigms is small, suggesting that both SH and FH handle execution failures reasonably well. 
+
+Does SH exhibit greater robustness in noisy environments? No. Contrary to the expectation that immediate step-by-step feedback improves error recovery, SH shows no consistent advantage and is sometimes more sensitive to noise. This unexpected brittleness is most evident with Gemini-3-Flash. On GraphQ, turning off soft schema matching reduces SH accuracy by 0.178 points, in contrast to a 0.078-point drop for FH. On HotpotQA, restricting retrieval to top-1 reduces SH accuracy by 0.190 points, compared to a 0.065-point drop for FH. We analyze this behavior in more detail in the next section. 
+
+## 4.5 Failure Mode Analysis: Repetitive Tool Calls 
+
+To better understand the unexpected brittleness of SH under some conditions, we identified a key failure mode, particularly in low-robustness tool settings: SH agents can get stuck in repetitive tool-call loops more often than FH agents. When a tool call fails or returns an empty result, models such as Gemini-3-Flash often issue the same tool call again in the next step with identical arguments, despite receiving failure feedback. To quantify this behavior, we measured the fraction of task in-stances in which an agent made at least one repeated tool call, de-fined as invoking the same tool with identical arguments multiple times. Under the default high-robustness setting, Gemini-3-Flash Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA 
+
+Table 2: Comparison of FH and SH across structured (KBQA) and unstructured (multi-objective HotpotQA) tool-calling tasks. FH matches SH in accuracy across most settings while using substantially fewer input tokens than SH. The efficiency gap widens as the tool set grows (e.g. KQA Pro). 
+
+Accuracy ( ↑) Input Token ( ↓) Output Token ( ↓) Ratio (SH/FH) Dataset Model FH SH ΔSH FH SH FH SH Input Output KQA Pro GPT-4.1-mini 0.804 0.806 +0.002 43,719 119,431 346 198 2.7 0.6 GPT-5-mini 0.901 0.912 +0.011 21,144 97,239 1,725 3,577 4.6 2.1 Qwen3-235B-A22B 0.834 0.848 +0.014 18,140 67,008 417 234 3.7 0.6 Gemini-3-Flash 0.908 0.870 -0.038 16409 77867 542 339 4.7 0.6 GrailQA GPT-4.1-mini 0.725 0.726 +0.001 14,534 29,142 331 166 2.0 0.5 GPT-5-mini 0.804 0.782 -0.023 11,224 25,665 2,424 3,606 2.3 1.5 Qwen3-235B-A22B 0.722 0.740 +0.017 16,143 25,849 541 240 1.6 0.4 Gemini-3-Flash 0.845 0.691 -0.154 14,493 51,923 804 550 3.6 0.7 WebQSP GPT-4.1-mini 0.751 0.729 -0.022 7,092 22,391 195 127 3.2 0.7 GPT-5-mini 0.771 0.759 -0.012 5,887 21,781 1,004 2,071 3.7 2.1 Qwen3-235B-A22B 0.780 0.784 +0.004 6,098 18,809 301 181 3.1 0.6 Gemini-3-Flash 0.815 0.799 -0.016 5,732 20,657 427 283 3.6 0.7 GraphQ GPT-4.1-mini 0.535 0.540 +0.005 20,535 32,665 445 193 1.6 0.4 GPT-5-mini 0.704 0.702 -0.002 13,725 27,189 3,138 4,537 2.0 1.4 Qwen3-235B-A22B 0.620 0.594 -0.026 20,643 27,551 627 258 1.3 0.4 Gemini-3-Flash 0.749 0.577 -0.172 16,021 55,958 840 585 3.5 0.7 Mul. HotpotQA GPT-4.1-mini 0.572 0.604 +0.032 22,017 31,737 1,099 223 1.4 0.2 GPT-5-mini 0.605 0.593 -0.012 29,062 51,442 4,526 10,086 1.8 2.2 Qwen3-235B-A22B 0.517 0.615 +0.098 23,911 33,917 1,390 305 1.4 0.2 Gemini-3-Flash 0.545 0.519 -0.026 29,348 57,118 1,844 622 1.9 0.3 
+
+Table 3: Summary of GEE coefficients ( ∗ ∗ 𝑝 < 0.01 , ∗𝑝 < 0.05 ). Atomic KBQA results include GrailQA, WebQSP, and GraphQ. 
+
+Interaction Dataset Model Depth ( 𝛽 𝑑 ) Breadth ( 𝛽 𝑏 ) Is SH? ( 𝛽 SH ) 𝛽 𝑑 :SH 𝛽 𝑏 :SH 
+
+KQA Pro GPT-4.1-mini −0.646 ∗∗ −0.423 ∗∗ +0.081 −0.238 ∗∗ −0.283 ∗∗ 
+
+GPT-5-mini −0.496 ∗∗ −0.464 ∗ +0.132 +0.047 +0.091 
+
+Qwen3-235B-A22B −0.685 ∗∗ −0.426 ∗∗ +0.178 ∗ +0.011 +0.301 ∗∗ 
+
+Gemini-3-Flash −0.396 ∗ −0.465 ∗ −0.413 ∗∗ −0.111 +0.067 
+
+Atomic KBQA GPT-4.1-mini −0.247 ∗∗ −0.159 ∗ −0.017 −0.075 −0.076 
+
+GPT-5-mini −0.261 ∗∗ −0.226 ∗∗ −0.084 ∗ +0.023 +0.017 
+
+Qwen3-235B-A22B −0.243 ∗∗ −0.314 ∗∗ +0.019 −0.012 +0.036 
+
+Gemini-3-Flash −0.261 ∗∗ −0.139 −0.589 ∗∗ −0.005 −0.196 ∗∗ 
+
+Mul. HotpotQA GPT-4.1-mini −0.256 ∗∗ −0.576 ∗∗ +0.152 ∗∗ −0.002 −0.051 
+
+GPT-5-mini −0.275 ∗∗ −0.470 ∗∗ −0.057 +0.034 +0.033 
+
+Qwen3-235B-A22B −0.158 ∗∗ −0.426 ∗∗ +0.458 ∗∗ −0.070 −0.124 ∗
+
+Gemini-3-Flash −0.179 ∗∗ −0.334 ∗∗ −0.103 −0.142 ∗ −0.245 ∗∗ 
+
+in SH mode repeated tool calls in 30–45% of instances on GrailQA and multi-objective HotpotQA (Table 5), whereas FH reduced this rate to 1.9% (GrailQA) and 5.9% (multi-objective HotpotQA). The gap widened further in low-robustness settings: on multi-objective HotpotQA with top-1 retrieval, SH made repetitive calls in 66.9% of instances, in contrast to 13.9% for FH (see Table 6 for a case study). We observed the same pattern, though less pronounced, with other LLM backends as well. We conjecture that FH with lazy replanning is less prone to such local traps for two reasons. First, replanning is triggered only upon CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al. 
+
+Table 4: Performance change (absolute accuracy difference) under low robustness settings. Difference larger than 0.05 is denoted in bold. 
+
+ΔAccuracy Dataset Model FH SH KQA Pro GPT-4.1-mini 0.000 -0.014 GPT-5-mini 0.012 0.003 Qwen3-235B-A22B -0.010 -0.003 Gemini-3-Flash 0.004 -0.007 GrailQA GPT-4.1-mini -0.011 -0.015 GPT-5-mini -0.035 -0.019 Qwen3-235B-A22B -0.073 -0.061 
+
+Gemini-3-Flash -0.039 -0.102 
+
+WebQSP GPT-4.1-mini 0.006 -0.010 GPT-5-mini 0.011 -0.013 Qwen3-235B-A22B 0.002 -0.003 Gemini-3-Flash 0.000 -0.002 GraphQ GPT-4.1-mini -0.062 -0.056 
+
+GPT-5-mini -0.048 -0.062 
+
+Qwen3-235B-A22B -0.098 -0.082 
+
+Gemini-3-Flash -0.078 -0.178 
+
+Mul. HotpotQA GPT-4.1-mini -0.107 -0.101 
+
+GPT-5-mini -0.067 0.014 Qwen3-235B-A22B -0.045 -0.077 
+
+Gemini-3-Flash -0.065 -0.190 
+
+execution failure rather than at every step, which may reduce the chance of myopic retries. Second, when replanning is triggered, the model must generate a complete remaining plan toward the end goal, which may guide it to revise the overall strategy instead of repeating the same local action. 
+
+## 5 Related Work 
+
+We position our work within three strands of research: (1) com-parative analyses of planning paradigms, (2) adaptive or hybrid planning strategies, and (3) agentic approaches for reasoning in data-centric tasks. 
+
+## 5.1 Comparative Studies of Planning Paradigms 
+
+Recent survey papers provide meta-analyses of the broad landscape of LLM-based task planning techniques [ 12 , 19 , 35 ]. Closest to our analytic goals is the work of Liu et al . [21] , who depart from conceptual analysis to provide an empirical analysis of LLM task decomposition ( ≈planning) across multiple domains. They show that the choice between Decomposition-First (analogous to FH) and Interleaved (analogous to SH) strategies is highly task-dependent, especially when computational efficiency is taken into account. This finding is particularly relevant given that step-by-step execution with eager monitoring remains a common default in low-level tool use under environmental uncertainty [8, 16, 46]. Our work builds on Liu et al . ’s insights but differs in three key aspects. First, we isolate planning horizon as the key architectural feature and analyze its impact on both accuracy and cost at the level 
+
+Table 5: Fraction of task instances in which the agent made at least one repeated tool call (same tool call with identical arguments). SH exhibits substantially higher repetition rates than FH in several settings. Rates ≥ 10% are shown in bold. 
+
+Dataset Model FH SH KQA Pro GPT-4.1-mini 1.3% 2.1% GPT-5-mini 0.7% 3.2% Qwen3-235B-A22B 2.8% 1.6% Gemini-3-Flash 0.1% 10.0% 
+
+GrailQA GPT-4.1-mini 0.7% 1.1% GPT-5-mini 0.3% 3.0% Qwen3-235B-A22B 2.6% 2.2% Gemini-3-Flash 1.9% 29.3% 
+
+WebQSP GPT-4.1-mini 0.2% 0.4% GPT-5-mini 0.2% 1.0% Qwen3-235B-A22B 0.6% 0.6% Gemini-3-Flash 0.6% 5.5% GraphQ GPT-4.1-mini 0.8% 1.4% GPT-5-mini 0.3% 3.1% Qwen3-235B-A22B 1.6% 1.1% Gemini-3-Flash 0.0% 35.8% 
+
+Mul. HotpotQA GPT-4.1-mini 0.6% 0.6% GPT-5-mini 6.3% 39.5% 
+
+Qwen3-235B-A22B 1.5% 0.4% Gemini-3-Flash 5.9% 45.5% 
+
+of tool execution. Second, while Liu et al. primarily evaluate pure LLM reasoning, we focus on data-centric tool calling , which exhibits unique challenges (logic and vocabulary alignment). Third, we move beyond dataset-level comparisons by introducing an instance-level characterization of task difficulty to better understand when and why SH is (or is not) advantageous. 
+
+## 5.2 Adaptive Planning Strategies 
+
+As discussed in Section 2, existing planning techniques can be categorized into FH and SH, each with distinct characteristics. FH planning was common in early LLM planning work, motivated by multi-step reasoning paradigms such as Chain-of-Thought [ 36 ]and explicit plan-then-execute pipelines [ 22 , 26 , 33 ]. Although SH is now often viewed as the more robust default following strong results in prior work [ 13 , 44 ], FH continues to motivate active research, including techniques that verify or optimize a full plan before execution [ 17 , 18 ], as well as approaches that prioritize lower computational cost [40]. To combine their strengths, recent work has explored strategies that integrate upfront global planning with iterative local planning. One prominent direction is adaptive workflows, where agents dy-namically consolidate low-level actions into a single step [ 34 ] or begin with a global plan and switch to step-wise planning when execution fails or task complexity demands it [ 5, 25 ]. Another di-rection is component optimization, where the roles of global plan-ner and local executor are optimized separately using specialized fine-tuning [ 7] or exemplar retrieval [ 15 ]. Practical systems (e.g., Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA 
+
+Table 6: Gemini-3-Flash under low-robustness retrieval (top-1) on multi-objective HotpotQA ( 𝑘 = 2). This table focuses on one sub-question: “Which director, John Schlesinger or Barbara Albert, was also a writer and film producer?” Italic text shows the model’s internal reasoning. “Error” denotes execution failures. The feedback text returned to the agent is omitted for brevity. See Appendix C.2 for full trajectories.          
+
+> (a) SH trajectory: After failures, the agent eventually repeated an identical search call (shown in red).
+> I’m currently engaged in evaluating both John Schlesinger and Barbara Albert, determining if each functioned as a writer and producer. After gathering the facts, a comparison will readily reveal the answer. Parallel to this, ...
+> > search(Was John Schlesinger a writer and film producer?)
+> →Error
+> I’m starting by investigating the first question. I’ve initiated Step 0: searching for John Schlesinger’s roles. ...
+> > search(What were the occupations of director John Schlesinger?)
+> →Error
+> I’m now formulating my search queries. I’ll begin by querying about the occupations of John Schlesinger and Barbara Albert. ...
+> > search(What were the occupations of John Schlesinger?)
+> →Error
+> I’ve begun looking into the roles of John Schlesinger and Barbara Albert. Initial searches for their occupations are underway. I’ll need ...
+> > search(What were the occupations of John Schlesinger?) [repeat]
+> (b) FH trajectory: Upon failures, the agent replans the re-maining steps. It shifted focus to an alternative sub-goal, and intentionally refined the search query (bold).
+> I’ve initiated searches to determine if John Schlesinger and Barbara Albert were both writers and producers, as planned. Once I have those details, a comparison will be conducted to pinpoint the correct individ-ual. I’m also ...
+> > [$0 = search(Was John Schlesinger a writer and film producer?), $1 = search(Was Barbara Albert a writer and film producer?), ...]
+> →Error in $1
+> I’ve restarted my search for John Schlesinger’s occupations, focusing on ... Also, I’m planning to look into Barbara Albert’s roles. ...
+> > [$1 = search(What were the occupations of director John Schlesinger?), $2 = search(What were the occupations of director Barbara Albert?), ...]
+> →Error in $1
+> I’m now focusing on Barbara Albert’s occupations, and then refining how I search for John Schlesinger’s roles. ...
+> > [$2 = search(What are the occupations of Barbara Albert (direc-tor)?), $3 = search(Was John Schlesinger a writer and film producer in addition to being a director?), ...]
+> →Error in $3
+> I’m focusing on John Schlesinger’s occupations, trying to confirm if he was also a writer or producer. I’ll use a more specific search term this time around. ...
+> > [$4 = search(What were the professional roles of the English film director John Schlesinger?), ...]
+
+LLM-powered coding agents) also increasingly support mixed plan-ning behaviors such as upfront task decomposition and batched tool execution [1, 6]. Yet, the design of these integrated systems remains largely heuris-tic, with limited systematic understanding of exactly which cues should trigger strategy switching. Our work does not introduce a new systems paradigm. Rather, we provide a controlled empir-ical comparison of planning horizon in data-centric tool calling to clarify when FH-style behavior can be a cost-effective option. This insight motivates future work on principled routing and strat-egy selection grounded in measurable task properties rather than trial-and-error adaptation. 
+
+## 5.3 Agentic Approaches to Data-centric Tasks 
+
+Traditionally, data-centric tasks like KBQA and Text-to-SQL were solved by specialized semantic parsers. Recently, significant at-tention has shifted toward agentic data analytics [ 4 , 31 ]. In these frameworks, LLMs interact with environments to access and ma-nipulate data for complex tasks. Frameworks like Middleware [ 11 ]and Interactive-T2S [ 39 ] enable LLM agents to gain schema aware-ness through interaction, addressing the hallucination problems inherent in static query generation. Tight step-wise feedback can be essential when tasks require exploratory schema discovery or when the environment is highly uncertain. However, for data-centric tasks with relatively stable tool and data semantics, our analysis suggests that SH is not always the most cost-effective default. In production environments, latency and token budgets are often primary constraints. Our findings therefore offer a practical perspective on designing efficient data-centric agents. 
+
+## 6 Conclusion 
+
+We evaluate whether LLM agents solving data-centric tool-calling tasks require step-wise planning with eager monitoring in the set-tings we study. We isolate planning horizon as the key architec-tural choice, comparing single-step horizon (SH) planning with full-horizon (FH) planning under lazy monitoring. To make this comparison controlled and fine-grained, we characterize task dif-ficulty along topological complexity (execution-graph depth and breadth) and tool robustness (tolerance to imperfect inputs), and we evaluate across KBQA and multi-hop QA with multiple LLMs. Despite the common assumption favoring SH, we find no con-sistent accuracy advantage for SH over FH, nor evidence that SH is more robust to increased topological complexity or noisy tool behavior. Overall, these results suggest that, in the well-defined 
+
+data-centric tool-use settings studied here, FH with lazy replanning can match SH while using substantially fewer tokens, while SH may remain preferable in more exploratory or highly uncertain environments. These findings open several directions for future work. An im-portant next step is to evaluate and extend these methods in more complicated and real-world scenarios, including domain-specific or proprietary data. Our results also motivate developing hybrid methods that build on the complementary strengths of FH and SH. 
+
+## Acknowledgments 
+
+We thank the anonymous reviewers and our colleagues at Megagon Labs for their valuable feedback and discussions. CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al. 
+
+## References 
+
+[1] Anthropic. 2025. Programmatic tool calling - Claude API Docs. https://platform. claude.com/docs/en/agents-and-tools/tool-use/programmatic-tool-calling [2] Maria Calzarossa and Giuseppe Serazzi. 1993. Workload characterization: a survey. Proc. IEEE 81, 8 (1993), 1136–1150. doi:10.1109/5.236191 [3] Shulin Cao, Jiaxin Shi, Liangming Pan, Lunyiu Nie, Yutong Xiang, Lei Hou, Juanzi Li, Bin He, and Hanwang Zhang. 2022. KQA Pro: A Dataset with Explicit Compositional Programs for Complex Question Answering over Knowledge Base. In Proceedings of the 60th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . Association for Computational Linguistics, Dublin, Ireland, 6101–6119. doi:10.18653/v1/2022.acl-long.422 [4] Ke Chen, Peiran Wang, Yaoning Yu, Xianyang Zhan, and Haohan Wang. 2025. Large Language Model-based Data Science Agent: A Survey. arXiv:2508.02744 [cs.AI] https://arxiv.org/abs/2508.02744 [5] Jae-Woo Choi, Hyungmin Kim, Hyobin Ong, Minsu Jang, Dohyung Kim, Jaehong Kim, and Youngwoo Yoon. 2025. ReAcTree: Hierarchical LLM Agent Trees with Control Flow for Long-Horizon Task Planning. doi:10.48550/arXiv.2511.02424 [6] Cloudflare. 2025. Codemode · Cloudflare Agents docs. https://developers. cloudflare.com/agents/api-reference/codemode/ [7] Lutfi Eren Erdogan, Nicholas Lee, Sehoon Kim, Suhong Moon, Hiroki Furuta, Gopala Anumanchipalli, Kurt Keutzer, and Amir Gholami. 2025. Plan-and-Act: Improving Planning of Agents for Long-Horizon Tasks. In Proceedings of the 42nd International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 267) . PMLR, Vancouver, Canada, 15419–15462. https://proceedings. mlr.press/v267/erdogan25a.html [8] Gonzalo Gonzalez-Pumariega, Leong Su Yean, Neha Sunkara, and Sanjiban Choudhury. 2025. Robotouille: An Asynchronous Planning Benchmark for LLM Agents. In The Thirteenth International Conference on Learning Representations .Singapore. https://openreview.net/forum?id=OhUoTMxFIH [9] Google. 2025. Gemini 3 Flash Model Card. https://storage.googleapis.com/ deepmind-media/Model-Cards/Gemini-3-Flash-Model-Card.pdf [10] Yu Gu, Sue Kase, Michelle Vanni, Brian Sadler, Percy Liang, Xifeng Yan, and Yu Su. 2021. Beyond I.I.D.: Three Levels of Generalization for Question Answering on Knowledge Bases. In Proceedings of the Web Conference 2021 (WWW ’21) .Association for Computing Machinery, New York, NY, USA, 3477–3488. doi:10. 1145/3442381.3449992 [11] Yu Gu, Yiheng Shu, Hao Yu, Xiao Liu, Yuxiao Dong, Jie Tang, Jayanth Srini-vasa, Hugo Latapie, and Yu Su. 2024. Middleware for LLMs: Tools Are In-strumental for Language Agents in Complex Environments. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing .Association for Computational Linguistics, Miami, Florida, USA, 7646–7663. doi:10.18653/v1/2024.emnlp-main.436 [12] Xu Huang, Weiwen Liu, Xiaolong Chen, Xingmei Wang, Hao Wang, Defu Lian, Yasheng Wang, Ruiming Tang, and Enhong Chen. 2024. Understanding the planning of LLM agents: A survey. arXiv:2402.02716 [cs.AI] https://arxiv.org/ abs/2402.02716 [13] Tatsuro Inaba, Hirokazu Kiyomaru, Fei Cheng, and Sadao Kurohashi. 2023. MultiTool-CoT: GPT-3 Can Use Multiple External Tools with Chain of Thought Prompting. In Proceedings of the 61st Annual Meeting of the Association for Com-putational Linguistics (Volume 2: Short Papers) . Association for Computational Linguistics, Toronto, Canada, 1522–1532. doi:10.18653/v1/2023.acl-short.130 [14] Joongwon Kim, Bhargavi Paranjape, Tushar Khot, and Hannaneh Hajishirzi. 2024. Husky: A Unified, Open-Source Language Agent for Multi-Step Reasoning. doi:10.48550/arXiv.2406.06469 [15] Minsoo Kim, Victor Bursztyn, Eunyee Koh, Shunan Guo, and Seung-won Hwang. 2024. RaDA: Retrieval-augmented Web Agent Planning with LLMs. In Findings of the Association for Computational Linguistics: ACL 2024 . Association for Com-putational Linguistics, Bangkok, Thailand, 13511–13525. doi:10.18653/v1/2024. findings-acl.802 [16] Sehoon Kim, Suhong Moon, Ryan Tabrizi, Nicholas Lee, Michael W. Mahoney, Kurt Keutzer, and Amir Gholami. 2024. An LLM Compiler for Parallel Function Calling. In Proceedings of the 41st International Conference on Machine Learning (Proceedings of Machine Learning Research, Vol. 235) . PMLR, Vienna, Austria, 24370–24391. https://proceedings.mlr.press/v235/kim24y.html [17] Christine P. Lee, David Porfirio, Xinyu Jessica Wang, Kevin Chenkai Zhao, and Bilge Mutlu. 2025. VeriPlan: Integrating Formal Verification and LLMs into End-User Planning. In Proceedings of the 2025 CHI Conference on Human Factors in Computing Systems (CHI ’25) . Association for Computing Machinery, New York, NY, USA, Article 247, 19 pages. doi:10.1145/3706598.3714113 [18] Ao Li, Yuexiang Xie, Songze Li, Fugee Tsung, Bolin Ding, and Yaliang Li. 2025. Agent-Oriented Planning in Multi-Agent Systems. In The Thirteenth International Conference on Learning Representations . Singapore. https://openreview.net/ forum?id=EqcLAU6gyU [19] Xinzhe Li. 2025. A Review of Prominent Paradigms for LLM-Based Agents: Tool Use, Planning (Including RAG), and Feedback Learning. In Proceedings of the 31st International Conference on Computational Linguistics . Association for Computational Linguistics, Abu Dhabi, UAE, 9760–9779. https://aclanthology. org/2025.coling-main.652/ [20] Jimmy Lin, Xueguang Ma, Sheng-Chieh Lin, Jheng-Hong Yang, Ronak Pradeep, and Rodrigo Nogueira. 2021. Pyserini: A Python Toolkit for Reproducible Infor-mation Retrieval Research with Sparse and Dense Representations. In Proceedings of the 44th International ACM SIGIR Conference on Research and Development in Information Retrieval (Virtual Event, Canada) (SIGIR ’21) . Association for Com-puting Machinery, New York, NY, USA, 2356–2362. doi:10.1145/3404835.3463238 [21] Shuodi Liu, Yingzhuo Liu, Zi Wang, Yusheng Wang, Huijia Wu, Liuyu Xiang, and Zhaofeng He. 2025. Select-Then-Decompose: From Empirical Analysis to Adaptive Selection Strategy for Task Decomposition in Large Language Models. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing . Association for Computational Linguistics, Suzhou, China, 5454–5477. doi:10.18653/v1/2025.emnlp-main.278 [22] Pan Lu, Baolin Peng, Hao Cheng, Michel Galley, Kai-Wei Chang, Ying Nian Wu, Song-Chun Zhu, and Jianfeng Gao. 2023. Chameleon: Plug-and-Play Compositional Reasoning with Large Language Mod-els. Advances in Neural Information Processing Systems 36 (Dec. 2023), 43447–43478. https://proceedings.neurips.cc/paper_files/paper/2023/hash/ 871ed095b734818cfba48db6aeb25a62-Abstract-Conference.html [23] Haoran Luo, Haihong E, Yikai Guo, Qika Lin, Xiaobao Wu, Xinyu Mu, Wenhao Liu, Meina Song, Yifan Zhu, and Anh Tuan Luu. 2025. KBQA-o1: Agentic Knowledge Base Question Answering with Monte Carlo Tree Search. In Proceedings of the 42nd International Conference on Machine Learning . PMLR, Vancouver, Canada, 41177–41199. https://proceedings.mlr.press/v267/luo25d.html [24] OpenAI. 2025. Update to GPT-5 System Card: GPT-5.2. https://cdn.openai.com/ pdf/3a4153c8-c748-4b71-8e31-aecbde944f8d/oai_5_2_system-card.pdf [25] Archiki Prasad, Alexander Koller, Mareike Hartmann, Peter Clark, Ashish Sabhar-wal, Mohit Bansal, and Tushar Khot. 2024. ADaPT: As-Needed Decomposition and Planning with Language Models. In Findings of the Association for Com-putational Linguistics: NAACL 2024 . Association for Computational Linguistics, Mexico City, Mexico, 4226–4252. doi:10.18653/v1/2024.findings-naacl.264 [26] Timo Schick, Jane Dwivedi-Yu, Roberto Dessi, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. 2023. Toolformer: Language Models Can Teach Themselves to Use Tools. Advances in Neural Information Processing Systems 36 (Dec. 2023), 68539–68551. https://papers.nips.cc/paper_files/paper/2023/hash/ d842425e4bf79ba039352da0f658a906-Abstract-Conference.html [27] Skipper Seabold and Josef Perktold. 2010. statsmodels: Econometric and statistical modeling with python. In 9th Python in Science Conference . Austin, Texas, USA. [28] Kenneth C. Sevcik. 1989. Characterizations of parallelism in applications and their use in scheduling. In Proceedings of the 1989 ACM SIGMETRICS International Conference on Measurement and Modeling of Computer Systems (Oakland, Califor-nia, USA) (SIGMETRICS ’89) . Association for Computing Machinery, New York, NY, USA, 171–180. doi:10.1145/75108.75391 [29] Aaditya Singh, Adam Fry, Adam Perelman, Adam Tart, Adi Ganesh, Ahmed El-Kishky, Aidan McLaughlin, Aiden Low, AJ Ostrow, Akhila Ananthram, Akshay Nathan, Alan Luo, Alec Helyar, Aleksander Madry, Aleksandr Efremov, Aleksan-dra Spyra, Alex Baker-Whitcomb, Alex Beutel, Alex Karpenko, Alex Makelov, Alex Neitz, Alex Wei, Alexandra Barr, Alexandre Kirchmeyer, Alexey Ivanov, Alexi Christakis, Alistair Gillespie, Allison Tam, Ally Bennett, Alvin Wan, Alyssa Huang, Amy McDonald Sandjideh, Amy Yang, Ananya Kumar, Andre Saraiva, Andrea Vallone, Andrei Gheorghe, Andres Garcia Garcia, Andrew Braunstein, Andrew Liu, Andrew Schmidt, Andrey Mereskin, Andrey Mishchenko, Andy Applebaum, Andy Rogerson, Ann Rajan, Annie Wei, Anoop Kotha, Anubha Sri-vastava, Anushree Agrawal, Arun Vijayvergiya, Ashley Tyra, Ashvin Nair, Avi Nayak, Ben Eggers, Bessie Ji, Beth Hoover, Bill Chen, Blair Chen, Boaz Barak, Borys Minaiev, Botao Hao, Bowen Baker, Brad Lightcap, Brandon McKinzie, Bran-don Wang, Brendan Quinn, Brian Fioca, Brian Hsu, Brian Yang, Brian Yu, Brian Zhang, Brittany Brenner, Callie Riggins Zetino, Cameron Raymond, Camillo Lugaresi, Carolina Paz, Cary Hudson, Cedric Whitney, Chak Li, Charles Chen, Charlotte Cole, Chelsea Voss, Chen Ding, Chen Shen, Chengdu Huang, Chris Colby, Chris Hallacy, Chris Koch, Chris Lu, Christina Kaplan, Christina Kim, CJ Minott-Henriques, Cliff Frey, Cody Yu, Coley Czarnecki, Colin Reid, Colin Wei, Cory Decareaux, Cristina Scheau, Cyril Zhang, Cyrus Forbes, Da Tang, Dakota Goldberg, Dan Roberts, Dana Palmie, Daniel Kappler, Daniel Levine, Daniel Wright, Dave Leo, David Lin, David Robinson, Declan Grabb, Derek Chen, Derek Lim, Derek Salama, Dibya Bhattacharjee, Dimitris Tsipras, Dinghua Li, Dingli Yu, DJ Strouse, Drew Williams, Dylan Hunn, Ed Bayes, Edwin Arbus, Ekin Akyurek, Elaine Ya Le, Elana Widmann, Eli Yani, Elizabeth Proehl, Enis Sert, Enoch Cheung, Eri Schwartz, Eric Han, Eric Jiang, Eric Mitchell, Eric Sigler, Eric Wallace, Erik Ritter, Erin Kavanaugh, Evan Mays, Evgenii Nikishin, Fangyuan Li, Felipe Pet-roski Such, Filipe de Avila Belbute Peres, Filippo Raso, Florent Bekerman, Foivos Tsimpourlas, Fotis Chantzis, Francis Song, Francis Zhang, Gaby Raila, Garrett Mc-Grath, Gary Briggs, Gary Yang, Giambattista Parascandolo, Gildas Chabot, Grace Kim, Grace Zhao, Gregory Valiant, Guillaume Leclerc, Hadi Salman, Hanson Wang, Hao Sheng, Haoming Jiang, Haoyu Wang, Haozhun Jin, Harshit Sikchi, Heather Schmidt, Henry Aspegren, Honglin Chen, Huida Qiu, Hunter Lightman, Ian Covert, Ian Kivlichan, Ian Silber, Ian Sohl, Ibrahim Hammoud, Ignasi Clavera, Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA 
+
+Ikai Lan, Ilge Akkaya, Ilya Kostrikov, Irina Kofman, Isak Etinger, Ishaan Singal, Jackie Hehir, Jacob Huh, Jacqueline Pan, Jake Wilczynski, Jakub Pachocki, James Lee, James Quinn, Jamie Kiros, Janvi Kalra, Jasmyn Samaroo, Jason Wang, Jason Wolfe, Jay Chen, Jay Wang, Jean Harb, Jeffrey Han, Jeffrey Wang, Jennifer Zhao, Jeremy Chen, Jerene Yang, Jerry Tworek, Jesse Chand, Jessica Landon, Jessica Liang, Ji Lin, Jiancheng Liu, Jianfeng Wang, Jie Tang, Jihan Yin, Joanne Jang, Joel Morris, Joey Flynn, Johannes Ferstad, Johannes Heidecke, John Fishbein, John Hallman, Jonah Grant, Jonathan Chien, Jonathan Gordon, Jongsoo Park, Jordan Liss, Jos Kraaijeveld, Joseph Guay, Joseph Mo, Josh Lawson, Josh McGrath, Joshua Vendrow, Joy Jiao, Julian Lee, Julie Steele, Julie Wang, Junhua Mao, Kai Chen, Kai Hayashi, Kai Xiao, Kamyar Salahi, Kan Wu, Karan Sekhri, Karan Sharma, Karan Singhal, Karen Li, Kenny Nguyen, Keren Gu-Lemberg, Kevin King, Kevin Liu, Kevin Stone, Kevin Yu, Kristen Ying, Kristian Georgiev, Kristie Lim, Kushal Tirumala, Kyle Miller, Lama Ahmad, Larry Lv, Laura Clare, Laurance Fauconnet, Lauren Itow, Lauren Yang, Laurentia Romaniuk, Leah Anise, Lee Byron, Leher Pathak, Leon Maksin, Leyan Lo, Leyton Ho, Li Jing, Liang Wu, Liang Xiong, Lien Mamitsuka, Lin Yang, Lindsay McCallum, Lindsey Held, Liz Bourgeois, Logan Engstrom, Lorenz Kuhn, Louis Feuvrier, Lu Zhang, Lucas Switzer, Lukas Kon-draciuk, Lukasz Kaiser, Manas Joglekar, Mandeep Singh, Mandip Shah, Manuka Stratta, Marcus Williams, Mark Chen, Mark Sun, Marselus Cayton, Martin Li, Marvin Zhang, Marwan Aljubeh, Matt Nichols, Matthew Haines, Max Schwarzer, Mayank Gupta, Meghan Shah, Melody Huang, Meng Dong, Mengqing Wang, Mia Glaese, Micah Carroll, Michael Lampe, Michael Malek, Michael Sharman, Michael Zhang, Michele Wang, Michelle Pokrass, Mihai Florian, Mikhail Pavlov, Miles Wang, Ming Chen, Mingxuan Wang, Minnia Feng, Mo Bavarian, Molly Lin, Moose Abdool, Mostafa Rohaninejad, Nacho Soto, Natalie Staudacher, Natan LaFontaine, Nathan Marwell, Nelson Liu, Nick Preston, Nick Turley, Nicklas Ans-man, Nicole Blades, Nikil Pancha, Nikita Mikhaylin, Niko Felix, Nikunj Handa, Nishant Rai, Nitish Keskar, Noam Brown, Ofir Nachum, Oleg Boiko, Oleg Murk, Olivia Watkins, Oona Gleeson, Pamela Mishkin, Patryk Lesiewicz, Paul Baltescu, Pavel Belov, Peter Zhokhov, Philip Pronin, Phillip Guo, Phoebe Thacker, Qi Liu, Qiming Yuan, Qinghua Liu, Rachel Dias, Rachel Puckett, Rahul Arora, Ravi Teja Mullapudi, Raz Gaon, Reah Miyara, Rennie Song, Rishabh Aggarwal, RJ Marsan, Robel Yemiru, Robert Xiong, Rohan Kshirsagar, Rohan Nuttall, Roman Tsiupa, Ronen Eldan, Rose Wang, Roshan James, Roy Ziv, Rui Shu, Ruslan Nigmatullin, Saachi Jain, Saam Talaie, Sam Altman, Sam Arnesen, Sam Toizer, Sam Toyer, Samuel Miserendino, Sandhini Agarwal, Sarah Yoo, Savannah Heon, Scott Ether-smith, Sean Grove, Sean Taylor, Sebastien Bubeck, Sever Banesiu, Shaokyi Amdo, Shengjia Zhao, Sherwin Wu, Shibani Santurkar, Shiyu Zhao, Shraman Ray Chaud-huri, Shreyas Krishnaswamy, Shuaiqi, Xia, Shuyang Cheng, Shyamal Anadkat, Simón Posada Fishman, Simon Tobin, Siyuan Fu, Somay Jain, Song Mei, Sonya Egoian, Spencer Kim, Spug Golden, SQ Mah, Steph Lin, Stephen Imm, Steve Sharpe, Steve Yadlowsky, Sulman Choudhry, Sungwon Eum, Suvansh Sanjeev, Tabarak Khan, Tal Stramer, Tao Wang, Tao Xin, Tarun Gogineni, Taya Christian-son, Ted Sanders, Tejal Patwardhan, Thomas Degry, Thomas Shadwell, Tianfu Fu, Tianshi Gao, Timur Garipov, Tina Sriskandarajah, Toki Sherbakov, Tomer Kaftan, Tomo Hiratsuka, Tongzhou Wang, Tony Song, Tony Zhao, Troy Peterson, Val Kharitonov, Victoria Chernova, Vineet Kosaraju, Vishal Kuo, Vitchyr Pong, Vivek Verma, Vlad Petrov, Wanning Jiang, Weixing Zhang, Wenda Zhou, Wen-lei Xie, Wenting Zhan, Wes McCabe, Will DePue, Will Ellsworth, Wulfie Bain, Wyatt Thompson, Xiangning Chen, Xiangyu Qi, Xin Xiang, Xinwei Shi, Yann Dubois, Yaodong Yu, Yara Khakbaz, Yifan Wu, Yilei Qian, Yin Tat Lee, Yinbo Chen, Yizhen Zhang, Yizhong Xiong, Yonglong Tian, Young Cha, Yu Bai, Yu Yang, Yuan Yuan, Yuanzhi Li, Yufeng Zhang, Yuguang Yang, Yujia Jin, Yun Jiang, Yunyun Wang, Yushi Wang, Yutian Liu, Zach Stubenvoll, Zehao Dou, Zheng Wu, and Zhigang Wang. 2025. OpenAI GPT-5 System Card. arXiv:2601.03267 [cs.CL] https://arxiv.org/abs/2601.03267 [30] Yu Su, Huan Sun, Brian Sadler, Mudhakar Srivatsa, Izzeddin Gür, Zenghui Yan, and Xifeng Yan. 2016. On Generating Characteristic-rich Question Sets for QA Evaluation. In Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing . Association for Computational Linguistics, Austin, Texas, 562–572. doi:10.18653/v1/D16-1054 [31] Irene Testini, Lorenzo Pacchiardi, and Jose Hernandez-Orallo. 2025. Measuring Data Science Automation: A Survey of Evaluation Tools for AI Assistants and Agents. Transactions on Machine Learning Research (2025). https://openreview. net/forum?id=MB0TCLfLn1 [32] Denny Vrandečić and Markus Krötzsch. 2014. Wikidata: A Free Collaborative Knowledgebase. Commun. ACM 57, 10 (Sept. 2014), 78–85. doi:10.1145/2629489 [33] Lei Wang, Wanyu Xu, Yihuai Lan, Zhiqiang Hu, Yunshi Lan, Roy Ka-Wei Lee, and Ee-Peng Lim. 2023. Plan-and-Solve Prompting: Improving Zero-Shot Chain-of-Thought Reasoning by Large Language Models. In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . Association for Computational Linguistics, Toronto, Canada, 2609–2634. doi:10.18653/v1/2023.acl-long.147 [34] Xingyao Wang, Yangyi Chen, Lifan Yuan, Yizhe Zhang, Yunzhu Li, Hao Peng, and Heng Ji. 2024. Executable Code Actions Elicit Better LLM Agents. In Proceedings of the 41st International Conference on Machine Learning . PMLR, Vienna, Austria, 50208–50232. https://proceedings.mlr.press/v235/wang24h.html [35] Hui Wei, Zihao Zhang, Shenghua He, Tian Xia, Shijia Pan, and Fei Liu. 2025. PlanGenLLMs: A Modern Survey of LLM Planning Capabilities. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . Association for Computational Linguistics, Vienna, Austria, 19497–19521. doi:10.18653/v1/2025.acl-long.958 [36] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, brian ichter, Fei Xia, Ed Chi, Quoc V Le, and Denny Zhou. 2022. Chain-of-Thought Prompting Elicits Reasoning in Large Language Models. In Advances in Neural Information Processing Systems , Vol. 35. Curran Associates, Inc., New Orleans, Louisiana, USA, 24824–24837. https://proceedings.neurips.cc/paper_files/paper/2022/file/ 9d5609613524ecf4f15af0f7b31abca4-Paper-Conference.pdf [37] Shitao Xiao, Zheng Liu, Peitian Zhang, Niklas Muennighoff, Defu Lian, and Jian-Yun Nie. 2024. C-Pack: Packed Resources For General Chinese Embed-dings. In Proceedings of the 47th International ACM SIGIR Conference on Re-search and Development in Information Retrieval (Washington DC, USA) (SI-GIR ’24) . Association for Computing Machinery, New York, NY, USA, 641–649. doi:10.1145/3626772.3657878 [38] Amy Xin, Jinxin Liu, Zijun Yao, Zhicheng Lee, Shulin Cao, Lei Hou, and Juanzi Li. 2025. AtomR: Atomic Operator-Empowered Large Language Models for Heterogeneous Knowledge Reasoning. In Proceedings of the 31st ACM SIGKDD Conference on Knowledge Discovery and Data Mining V.2 (Toronto ON, Canada) 
+
+(KDD ’25) . Association for Computing Machinery, New York, NY, USA, 3344–3355. doi:10.1145/3711896.3736849 [39] Guanming Xiong, Junwei Bao, Hongfei Jiang, Yang Song, and Wen Zhao. 2025. Multi-Turn Interactions for Text-to-SQL with Large Language Models. In Pro-ceedings of the 34th ACM International Conference on Information and Knowledge Management (Seoul, Republic of Korea) (CIKM ’25) . Association for Computing Machinery, New York, NY, USA, 3560–3570. doi:10.1145/3746252.3761052 [40] Binfeng Xu, Zhiyuan Peng, Bowen Lei, Subhabrata Mukherjee, Yuchen Liu, and Dongkuan Xu. 2023. ReWOO: Decoupling Reasoning from Observations for Efficient Augmented Language Models. arXiv:2305.18323 [cs.CL] https://arxiv. org/abs/2305.18323 [41] Omry Yadan. 2019. Hydra - A framework for elegantly configuring complex applications. Github. https://github.com/facebookresearch/hydra [42] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, Chujie Zheng, Dayiheng Liu, Fan Zhou, Fei Huang, Feng Hu, Hao Ge, Haoran Wei, Huan Lin, Jialong Tang, Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang, Jiaxi Yang, Jing Zhou, Jingren Zhou, Junyang Lin, Kai Dang, Keqin Bao, Kexin Yang, Le Yu, Lianghao Deng, Mei Li, Mingfeng Xue, Mingze Li, Pei Zhang, Peng Wang, Qin Zhu, Rui Men, Ruize Gao, Shixuan Liu, Shuang Luo, Tianhao Li, Tianyi Tang, Wenbiao Yin, Xingzhang Ren, Xinyu Wang, Xinyu Zhang, Xuancheng Ren, Yang Fan, Yang Su, Yichang Zhang, Yinger Zhang, Yu Wan, Yuqiong Liu, Zekun Wang, Zeyu Cui, Zhenru Zhang, Zhipeng Zhou, and Zihan Qiu. 2025. Qwen3 Technical Report. arXiv:2505.09388 [cs.CL] https://arxiv.org/abs/2505.09388 [43] Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William Cohen, Ruslan Salakhutdinov, and Christopher D. Manning. 2018. HotpotQA: A Dataset for Diverse, Explainable Multi-hop Question Answering. In Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing . Association for Computational Linguistics, Brussels, Belgium, 2369–2380. doi:10.18653/v1/D18-1259 [44] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R Narasimhan, and Yuan Cao. 2023. ReAct: Synergizing Reasoning and Acting in Language Models. In The Eleventh International Conference on Learning Representations .Kigali, Rwanda. https://openreview.net/forum?id=WE_vluYUL-X [45] Wen-tau Yih, Matthew Richardson, Chris Meek, Ming-Wei Chang, and Jina Suh. 2016. The Value of Semantic Parse Labeling for Knowledge Base Question Answering. In Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers) . Association for Computational Linguistics, Berlin, Germany, 201–206. doi:10.18653/v1/P16-2033 [46] Zhenyu Zhang, Tianyi Chen, Weiran Xu, Alex Pentland, and Jiaxin Pei. 2025. ReCAP: Recursive Context-Aware Reasoning and Planning for Large Language Model Agents. In The Thirty-ninth Annual Conference on Neural Information Processing Systems . San Diego, California, USA. https://openreview.net/forum? id=r2ykUnzuGt [47] Zijian Zhou, Ao Qu, Zhaoxuan Wu, Sunghwan Kim, Alok Prakash, Daniela Rus, Jinhua Zhao, Bryan Kian Hsiang Low, and Paul Pu Liang. 2025. MEM1: Learning to Synergize Memory and Reasoning for Efficient Long-Horizon Agents. arXiv:2506.15841 [cs.CL] https://arxiv.org/abs/2506.15841 CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al. 
+
+## A Artifact Appendix 
+
+Our GitHub repository (https://github.com/megagonlabs/cais26-planning-horizon), includes source code, configuration files, scripts, and analysis notebooks. Datasets and raw experiment outputs are not bundled. In this section, we provide a brief introduction to our codebase. 
+
+## A.1 Key Results and Reproduction Summary 
+
+The main claim of the paper is that, for well-defined data-centric tasks, a full-horizon (FH) planner with lazy monitoring can match a single-step horizon (SH) planner while avoiding much of the overhead from constant feedback integration. The table below summarizes how the main findings are supported by our software. (1) FH matches SH accuracy across datasets and backbone models while FH uses fewer tokens than SH. (Table 2 in Section 4.2) 
+
+• Run scripts/batch/batch_exp_*_hydra.sh wrappers, then scripts/batch/batch_postprocess_main_results.sh for com-paring accuracy and token usage between SH and FH across datasets and models. 
+
+• Details: docs/walkthrough.md , README.md 
+
+(2) Topological complexity hurts SH and FH in similar ways. (Table 3 in Section 4.3) 
+
+• Run notebooks/sec4p3_topological-complexity-analysis.ipynb to analyze the results from (1). 
+
+• Details: docs/walkthrough.md 
+
+(3) SH shows no consistent robustness advantage in noisy tool settings. (Table 4 in Section 4.4) 
+
+• Run notebooks/sec4p4_tool-robustness.ipynb to analyze the results from (1). 
+
+• Details: docs/walkthrough.md 
+
+(4) SH repeats tool calls more often after failures. (Section 4.5) 
+
+• Run notebooks/sec4p5_repetitive-tool-calls.ipynb to analyze the results from (1). 
+
+• Details: docs/walkthrough.md 
+
+See Appendix A.4 for more details. 
+
+## A.2 Requirements 
+
+Requirements vary by experiment type. See README.md for details. 
+
+• Software: Python 3.11+ and uv are required. Most dependencies can be installed with uv . API keys for the selected LLM providers (e.g., OpenAI) must be set in the repository-root .env file. Atomic KBQA also needs Virtuoso. 
+
+• Hardware: The experiment pipeline needs a GPU. Hardware needs depend on the experiment track. RAM and disk must fit the selected knowledge base or Wikipedia-based corpus. Multi-objective HotpotQA uses large Pyserini indexes and may need more RAM during retrieval. Freebase-backed Atomic KBQA runs recommend 100 GB+ RAM. 
+
+• Network: Internet access is needed for LLM APIs and for first-time index downloads. 
+
+## A.3 Setup Guide 
+
+Read docs/setup/code.md and docs/setup/data.md first. Then use the dataset READMEs under data/ for track-specific setup. If you want the lightest path first, start with KQA Pro, then move to the larger tracks. 
+
+## A.4 Execution Entry Points 
+
+This section briefly describes the entry points to reproduce the key experimental results. docs/walkthrough.md is the main guide. 
+
+A.4.1 Main Experiment Workflow (§4.2). For Tables 2 and 4, run scripts/batch/batch_exp_*_hydra.sh wrappers for the main experi-ments. The results can be evaluated and aggregated by batch_postprocess_main_results.sh . This workflow supports the findings on accuracy parity and token reduction. The output files are used in the subsequent post-hoc analyses. 
+
+A.4.2 Topological Complexity Analysis (§4.3). notebooks/sec4p3_topological-complexity-analysis.ipynb supports the finding that greater execution-graph depth and breadth hurt both planners in similar ways, without a clear SH-specific advantage. It produces the logistic-regression coefficients used for Table 3. 
+
+A.4.3 Tool Robustness Analysis (§4.4). notebooks/sec4p4_tool-robustness.ipynb supports the finding that both SH and FH planners degrade by similar amounts when tool robustness is reduced, with no consistent SH advantage. It produces the accuracy-delta tables used in Section 3.2. 
+
+A.4.4 Repetitive Tool Call Analysis (§4.5). notebooks/sec4p5_repetitive-tool-calls.ipynb supports the finding that SH repeats tool calls much more often than FH after failures. It produces the repetition-rate values mentioned in Section 4.5. 
+
+A.4.5 Lightest Runnable Example for Sanity-Check. scripts/example_run_kqa_pro.py is the smallest end-to-end run in the repository. It takes a user query as a commandline argument and shows how SH/FH agents answer it using KoPL. Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA                              
+
+> Category KoPL Tools Description Lookup FindAll, Find Look up and return an entity set Filtering FilterConcept ,FilterStr ,FilterNum ,FilterYear ,
+> FilterDate ,QFilterStr ,QFilterNum ,QFilterYear ,
+> QFilterDate
+> Filter the input entity set by a specified condition Traversal Relate Traverse to connected an entity set via a specified relation Logic And ,Or Take the intersection or union of two input entity sets Aggregation Count ,SelectAmong ,SelectBetween Count an entity set or select an entity by a specified attribute Verification VerifyStr ,VerifyNum ,VerifyYear ,VeryfyDate Verify if the specified attribute of the input entity set meets a criteria Projection QueryName ,QueryRelation ,QueryAttr ,
+> QueryAttrUnderCondition ,QueryAttrQualifier ,
+> QueryRelationQualifier
+> Access a specified value of the input entity set
+
+Table 7: KoPL tools defined by Cao et al. [3]. 
+
+## A.5 Cautions 
+
+A few practical issues are worth knowing before you run the code. 
+
+• Nondeterminism: LLM API runs are not fully deterministic. Reproduced numbers should be close to the paper, but exact score-by-score matches are not expected. 
+
+• Heavy setup: Atomic KBQA needs a local Virtuoso and Freebase setup. Multi-objective HotpotQA downloads large Pyserini indexes on first use. These datasets need more setup time and more memory. 
+
+• Execution time: For the representative OpenAI settings reported in README.md , one trial is on the order of about 2 to 64 hours of total runtime, depending on track, planner, and model. Wall-clock time can be lower with parallel execution. 
+
+## A.6 Recommendations 
+
+The paths below are the easiest ways to approach the artifact. 
+
+• Start small: Start with KQA Pro if you want the lightest runnable path. Use the smaller-run options in the batch scripts for sanity-check. 
+
+• Use parallel execution when possible: If multiple GPUs are available, use the parallel settings. (See the walkthrough document.) 
+
+## B Implementation Details 
+
+This section describes the details of tasks (B.1), planners (B.2), and evaluation (B.3). 
+
+## B.1 Task Details 
+
+Our study uses KQA Pro, Atomic KBQA datasets (GrailQA, WebQSP, and GraphQ), and the multi-objective version of HotpotQA. They undergo distinct preprocessing and are handled by different tool sets. We describe these details below. 
+
+B.1.1 KQA Pro. KQA Pro [ 3] is a dataset for QA over a sampled subset of Wikidata [ 32 ]. It features approximately 120k examples paired with ground-truth reasoning programs in KoPL (Knowledge-oriented Programming Language). 
+
+Tools: The agent has access to 27 tools based on KoPL functions (Table 7). 2 We derived the ground-truth execution graph of KoPL tools based on the program annotations in the original data. When parameters (concept, attribute, or relation) specified by the planner are not found in the KB schema, we perform soft matching based on embedding similarity and an LLM. We first retrieve 10 similar values based on 
+
+bge-base-en-v1.5 embedding similarity, followed by evaluation with gpt-4.1-mini-2025-04-18 (see Prompt 2 for prompts). If no valid candidate is found, the tool returns the top-10 similar candidates as feedback. For the controlled experiments regarding tool robustness (§4.4), we disable this soft matching and only return the top-1 candidate to simulate tools with low robustness. 
+
+Preprocessing: We sampled approximately 1,000 examples each from the training and development splits of KQA Pro, resulting in new training and test sets with balanced step lengths. (1) Validation: We filtered examples to ensure the provided KoPL program executes without error and matches the ground-truth answer. (2) Plan DAG Annotation: KoPL programs are represented as trees. For our analysis, we converted them into DAGs by merging identical steps. (3) Sampling: We balanced the test set across 5 complexity bins based on the number of DAG nodes (1-3, 4-5, 6-7, 8-9, 10+). (4) In-context Demonstration: For each task instance, we retrieved 10 similar examples from held-out data as in-context demonstrations using bge-base-en-v1.5 embeddings of the question text.  
+
+> 2https://github.com/THU-KEG/KoPL CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al.
+
+[system] (FH) Use the available tools to answer the user 's question step by step, generating the entire plan. Use $i to refer to the output of step i (0-indexed). **Tools** {tool_definitions} You can access the knowledge base through the provided tools. **Examples** {demonstrations} 
+
+[system] (SH) Use the available tools to answer the user 's question step by step, generating one action at a time. Use $i to refer to the output of step i (0-indexed). (...same as FH) 
+
+[user] 
+
+Question: {question} 
+
+Prompt 2: Schema grounding for KQA Pro 
+
+Atomic Query Tools S-expression Description 
+
+Extract_entity(input) START Resolve an input (entity mention, entity class, or literal) to Freebase entity IDs or a typed literal. 
+
+Find_relation(relation, direction, target) JOIN Find entities that point to the given target entities via the speci-fied Freebase relation (?x -relation-> target) 
+
+Merge(input1, input2) AND Compute set intersection of two entity sets 
+
+Order(mode, input, property) ARGMIN /ARGMAX Find entities with maximum or minimum property value (mode = {argmin, argmax}) 
+
+Compare(operator, property, literal) LT /LE /GT /GE Find entities whose property compares to a literal (operator = {<, <=, >, >=}) 
+
+Time_constraint(input, relation, literal) TC Filter an input entity set by equality of a temporal property to a year, or ’NOW’. 
+
+Count(input) COUNT Count the number of input entities 
+
+Table 8: Atomic query tools defined by Luo et al . [23] with modifications, and their correspondence to functions in S-expression [10]. 
+
+B.1.2 Atomic KBQA (GrailQA, WebQSP, GraphQ). GrailQA [ 10 ], WebQSP [ 45 ], and GraphQ [ 30 ] contain QA instances over the full Freebase knowledge base. 3 Each dataset contains annotations of logical forms called S-expressions [ 10 ], which can be deterministically converted into executable SPARQL queries. We refer to these datasets collectively as Atomic KBQA datasets because we employ Atomic Query Tools (below) for them. 
+
+Tools: We implemented seven Atomic Query Tools [23 ]4 with slight modifications (Table 8). These tools wrap functions in S-expressions. Chains of function calls can be converted into S-expressions, and subsequently to SPARQL queries. We derived the ground-truth execution graph based on the S-expression annotations. Similar to KoPL tools, we perform soft schema grounding using embeddings and an LLM when the parameters specified by the planner are not found. 
+
+Preprocessing: We sampled roughly 1,000 examples from the three datasets for creating training and test sets with balanced step lengths. (1) Deduplication: These datasets often contain multiple variations derived from the same logical form template. We grouped examples by unique S-expression to avoid bias toward common templates.  
+
+> 3We used the resources available at https://github.com/dki-lab/Freebase-Setup for running the Freebase server locally.
+> 4https://github.com/LHRLAB/KBQA-o1 Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA
+
+(2) Validation: We ran SPARQL queries generated from the ground-truth S-expressions and filtered out those that returned answers differing from the ground truth. (3) Plan DAG Annotation: We parsed linear function lists into DAGs based on variable usage. (4) Sampling: We balanced the dataset across 4 complexity bins (1-3, 4-5, 6-7, 8+). (5) Demonstration Retrieval: We retrieved 10 similar examples for each query using question embeddings, similar to the KQA Pro procedure. 
+
+B.1.3 Multi-Objective HotpotQA. HotpotQA [ 43 ] is widely used in existing work on LLM agents. To analyze the effect of structural complexity, we followed Zhou et al . [47] and synthesized multi-objective tasks by combining 𝑘 independent HotpotQA questions ( 𝑘 = 2, . . . , 5) in addition to the original HotpotQA instances ( 𝑘 = 1). 
+
+Tools: We implemented LLM sub-agents [14] as tools. We used gpt-4.1-mini-2025-04-18 as a backbone. (1) search(question) : Answers a single-hop question based on evidence retrieved from English Wikipedia 5 using the pre-built Pyserini index with bge-base-en-v1.5 [ 20 ]. By default, we retrieve the top-10 relevant paragraphs for the search query. In the controlled experiments (§4.4), we limit this to the top-1 result to simulate a less robust search tool. (2) commonsense(question) : Performs logic/comparison using the internal knowledge of the LLM. 
+
+Preprocessing: We sampled examples from the training and development sets of HotpotQA and synthesized new training and test splits with multi-objective questions ( 𝑘 = 1, · · · , 5). (1) Validation: As the original HotpotQA questions were generated based on pre-selected pairs of Wikipedia paragraphs, some questions, particularly bridge questions, are not suitable for tool calling settings. 6. To control reasoning structures, we used 
+
+gpt-5-mini-2025-08-07 to select bridge question that involve single entities as pivot answers. See Prompt 3. (2) Sampling: We sampled 200 examples uniformly across combinations of bridge/comparison types for each 𝑘 , resulting in 1,000 QA pairs for each of the training and test splits. (3) Plan DAG Annotation: We used gpt-5.2-2025-12-11 with medium reasoning effort to generate ground-truth DAGs based on the gold supporting paragraphs for each sub-question. The annotation was straightforward for most questions (bridge questions generate search → search , and comparison questions generate two independent search steps followed by a comparison step with 
+
+commonsense ), but some bridge questions involved additional reasoning steps. We also generated question texts of tool calls to be used in in-context demonstrations. Prompt 4 shows the instructions to convert comparison questions. We used similar instructions for bridge questions. (4) Demonstration Retrieval: We retrieved 10 demonstration examples with the same 𝑘 for each query using question embeddings. 
+
+## B.2 Planner Details 
+
+For both FH and SH planners, we use minimal prompts containing task instructions, tool definitions (JSON string) 7, and demonstration examples (Prompts 1 and 7). We include 10 in-context demonstrations retrieved via BAAI/bge-base-en-v1.5 embeddings. FH generates the full list of steps. If execution fails, the agent receives the error and replans up to 8 times (Prompt 8). SH generates one step, receives the observation, and generates the next step. Both FH and SH agents are allowed to issue up to 30 tool calls. We use structured output functionality to constrain LLM generation to valid JSON structures representing a sequence of tool calls. Specifically, we use the anyOf keyword in the JSON Schema 8 to limit the vocabulary of action names and their parameter names. When the planner generates invalid parameter values (e.g., references to non-existent steps), we prompt it to retry with a simple error message: “Your response is in an invalid format. Please read the instructions carefully and try again,” allowing up to 8 retries. We use the following backbone models via public APIs (OpenAI API for GPT, Fireworks API for Qwen, and Vertex AI API for Gemini). 
+
+• gpt-4.1-mini-2024-07-18 (Temperature 0) 
+
+• gpt-5-mini-2025-08-07 (Temperature 1, Medium reasoning effort) 
+
+• qwen3-235b-a22b-thinking-2507 (Temperature 0) 
+
+• gemini-3-flash-preview (Temperature 0, Medium reasoning effort) We set the context limit to be sufficiently large (10k) and use default values for other parameters. 
+
+## B.3 Evaluation Details 
+
+To account for lexical variation in answers and handle verbose expressions (e.g., “The answer is XX”), we use LLM-as-a-judge to evaluate the correctness of the final answer. The evaluator prompts were tuned semi-automatically on a held-out set of 100 examples per dataset to ensure high agreement with human judgment. See Prompts 9 and 10.  
+
+> 5We used the 2017-10-01 dump of the first paragraphs released by Yang et al. [43].
+> 6For example, some bridge questions involve set questions with very large number of intermediate answers (e.g., all players in a specific team)
+> 7We tested other formats like TypeScript and Markdown but found no significant difference. The JSON format generally performed well.
+> 8https://json-schema.org/ CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al.
+
+[system] 
+
+You are validating whether a HotpotQA bridge question follows a valid linear reasoning structure. Judge only from the wording of the question; do not use outside knowledge or supporting facts. Decompose the question into steps, state if any step yields multiple candidates (a set), and then output a single JSON object. Core definitions - Linear chain (valid): A strictly sequential chain of 2+ steps where each step yields exactly one intermediate entity/property that directly feeds the next step. Direct property lookup or a single yes/no verification on that single entity is fine. - Branching/set filtering (invalid): Any step produces multiple candidates that must be checked/filtered individually (set operations), or the question asks for intersections/commonalities/comparisons across multiple entities. Conservative uniqueness policy (do not assume): - Do not infer uniqueness from plausibility or typical world facts. If the wording does not make uniqueness explicit, treat the step as set-producing -> invalid. - Roles that vary over time (e.g., "the president of [org]", "the coach of [team]") are non-unique unless the question specifies a time/tenure (e.g., a year/season/ordinal/current). - Combining multiple descriptors (e.g., "Austrian forest caretaker, naturalist, pseudoscientist") does not guarantee uniqueness; still treat as potentially multiple unless uniquely pinned. Valid patterns (usually unique by wording) - Specific titled work -> role/property (e.g., "the director of [titled work]", "the vocalist on '[song] '"). - Definite, singular roles tied to a specific proper noun with an explicit time/ordinal (e.g., "the head coach of [team] in [year]", "the 42nd president of [country]"). - Definitional superlatives that denote a single item by definition (e.g., "the capital of [country]", "the largest city in [county]"). Invalid patterns (must label invalid) - Set-producing first step (guests, stars, cast members, contestants, authors, films featuring X, etc.) followed by filtering. - Parallel/compound questions seeking two independent facts or commonalities (e.g., "What do X and Y have in common?", "Which star of A was also in B?"). - Ambiguous cardinality or vague qualifiers (e.g., "former", "long-time") without time bounds; treat as set-producing. - Any step where uniqueness across time is not fixed by the wording. Output requirements - Return only a single JSON object with keys: - "reasoning": 2-4 concise sentences that enumerate the steps (e.g., "Step 1... Step 2...") and explicitly state where (if anywhere) branching occurs. - "is_valid": true if linear (single-path), false if branching/set/parallel or if only a single-hop lookup. - Do not answer the original question. Do not include extra keys, disclaimers, or formatting. Always think step by step based solely on the question text, err on the side of treating ambiguous steps as branching, indicate whether branching occurs and where, and then provide the final JSON. 
+
+[user] 
+
+Question: {question} Is the reasoning structure of this question valid according to the criteria provided? Decompose the question into stepwise reasoning (label Step 1, Step 2, etc.), indicate if and where branching (set operations or multiple candidate entities) is required, and return only the required JSON object. 
+
+Prompt 3: Validation of HotpotQA questions 
+
+For the GEE analysis, we use the implementation in statsmodels. 9 To handle repeated trials, we use the question ID for clustered analysis. The formula for the regression is as follows, where 𝑑 ∗ and 𝑏 ∗ are the normalized depth and breadth of the plan, 𝑥 SH is a binary variable indicating whether the planner is SH.  
+
+> 9https://www.statsmodels.org/ Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA
+
+Table 9: A list of pretrained language models used in this study. 
+
+Name Parameters Hosted by License 
+
+gpt-4.1-mini-2025-04-14 n/a OpenAI OpenAI Terms of Service gpt-5-mini-2025-08-07 [29] n/a OpenAI OpenAI Terms of Service gpt-5.2-2025-12-11 [24] n/a OpenAI OpenAI Terms of Service qwen3-235b-a22b-instruct-2507 [42] 235B Fireworks AI Apache 2.0 gemini-3-flash-preview [9] n/a Google Cloud Google Cloud Terms of Service 
+
+Table 10: A list of datasets used in this study. 
+
+Name URL License 
+
+KQA Pro [3] huggingface.co/datasets/drt/kqa_pro MIT GrailQA [10] dki-lab.github.io/GrailQA CC BY-SA 4.0 WebQSP [45] www.microsoft.com/en-us/download/details.aspx?id=52763 unspecified GraphQ [30] github.com/dki-lab/GrailQA/tree/main/data CC BY-SA 4.0 HotpotQA [43] hotpotqa.github.io CC BY-SA 4.0 En Wikipedia Oct 2017 Dump hotpotqa.github.io/wiki-readme.html CC BY-SA 4.0 Freebase github.com/dki-lab/Freebase-Setup CC BY 2.5 
+
+Table 11: A list of software used in this study. 
+
+Name URL License 
+
+KoPL [3] github.com/THU-KEG/KoPL MIT KBQA-o1 [23] github.com/LHRLAB/KBQA-o1 MIT Freebase-Setup github.com/dki-lab/Freebase-Setup CC0 1.0 openai-python github.com/openai/openai-python Apache 2.0 Sentence Transformers sbert.net Apache 2.0 BGE Embedding Model huggingface.co/BAAI/bge-base-en-v1.5 MIT License statsmodels [27] www.statsmodels.org Modified BSD-3-Clause hydra [41] hydra.cc MIT 
+
+Atomic KBQA: 
+
+logit (𝑃 (𝑦 = 1)) = 𝛽 0 + 𝛽 𝑑 𝑑 ∗ + 𝛽 𝑏 𝑏 ∗ + 𝛽 SH 𝑥 SH + 𝛽 𝑑 :SH (𝑑 ∗ × 𝑥 SH ) + 𝛽 𝑏 :SH (𝑏 ∗ × 𝑥 SH ) + ∑︁ Dataset 𝑖 +∑︁ LastStep 𝑗 
+
+| {z }
+
+> Fixed Effects
+
+(4) where C(dataset) is a dummy variable for the dataset (GrailQA, WebQSP, GraphQ), LastStep is a dummy variable for the type of the last step in the plan. 
+
+KQA Pro: 
+
+logit (𝑃 (𝑦 = 1)) = 𝛽 0 + 𝛽 𝑑 𝑑 ∗ + 𝛽 𝑏 𝑏 ∗ + 𝛽 SH 𝑥 SH + 𝛽 𝑑 :SH (𝑑 ∗ × 𝑥 SH ) + 𝛽 𝑏 :SH (𝑏 ∗ × 𝑥 SH ) + ∑︁ LastStep 𝑖 
+
+| {z }
+
+> Fixed Effects
+
+(5) where LastStep is a dummy variable for the type of the last step in the plan. 
+
+Multi-objective HotpotQA: 
+
+logit (𝑃 (𝑦 = 1)) = 𝛽 0 + 𝛽 𝑑 𝑑 ∗ + 𝛽 𝑏 𝑏 ∗ + 𝛽 SH 𝑥 SH + 𝛽 𝑑 :SH (𝑑 ∗ × 𝑥 SH ) + 𝛽 𝑏 :SH (𝑏 ∗ × 𝑥 SH ) + 𝛽 has_bridge 𝑥 has_bridge + 𝛽 has_comparison 𝑥 has_comparison 
+
+| {z }
+
+> Fixed Effects
+
+(6) where 𝑥 has_bridge and 𝑥 has_comparison are binary variables indicating whether the question contains a bridge or comparison sub-question, respectively. 
+
+## B.4 External Resources 
+
+Tables 9, 10 and 11 list the key external resources on which this study relies. Our use of these resources complies with their respective terms of use. CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al. 
+
+Table 12: GEE coefficients for KQA Pro experiments (1/2) Model Feature Coefficient 𝑝 Std Err 
+
+GPT-4.1-mini 𝛽 0 3.466 0.000 0.684 
+
+𝛽 𝑑 -0.406 0.000 0.080 
+
+𝛽 𝑏 -0.723 0.002 0.232 
+
+𝛽 SH 1.542 0.001 0.464 
+
+𝛽 𝑑 :SH -0.150 0.005 0.053 
+
+𝛽 𝑏 :SH -0.484 0.002 0.156 LastStep[T.QueryAttr] 1.661 0.006 0.600 LastStep[T.QueryAttrQualifier] 0.503 0.186 0.380 LastStep[T.QueryName] 1.252 0.000 0.189 LastStep[T.QueryRelation] 1.841 0.000 0.370 LastStep[T.QueryRelationQualifier] 0.777 0.018 0.327 LastStep[T.SelectAmong] 0.455 0.375 0.512 LastStep[T.SelectBetween] 2.323 0.000 0.416 LastStep[T.VerifyDate] 23.898 0.000 0.731 LastStep[T.VerifyNum] 0.188 0.785 0.690 LastStep[T.VerifyStr] 0.806 0.014 0.329 LastStep[T.VerifyYear] 1.152 0.015 0.475 GPT-5-mini 𝛽 0 4.202 0.000 0.959 
+
+𝛽 𝑑 -0.312 0.003 0.105 
+
+𝛽 𝑏 -0.792 0.014 0.322 
+
+𝛽 SH -0.275 0.501 0.408 
+
+𝛽 𝑑 :SH 0.030 0.584 0.054 
+
+𝛽 𝑏 :SH 0.156 0.327 0.159 LastStep[T.QueryAttr] 1.207 0.057 0.633 LastStep[T.QueryAttrQualifier] 0.105 0.822 0.466 LastStep[T.QueryName] 1.274 0.000 0.286 LastStep[T.QueryRelation] 2.832 0.001 0.865 LastStep[T.QueryRelationQualifier] 0.513 0.231 0.428 LastStep[T.SelectAmong] -0.045 0.944 0.635 LastStep[T.SelectBetween] 2.357 0.001 0.708 LastStep[T.VerifyDate] 0.677 0.405 0.813 LastStep[T.VerifyNum] -0.927 0.174 0.682 LastStep[T.VerifyStr] 0.392 0.383 0.449 LastStep[T.VerifyYear] 0.791 0.228 0.656 
+
+## C Additional Experimental Results C.1 Detailed GEE Coefficients 
+
+Tables 12, 13, 14, and 15 show all the GEE coefficients. 
+
+## C.2 Case Study on Repetitive Tool Calls 
+
+Tables 16 and 17 show the full trajectories corresponding to the case study examples in Table 6 (§4.5). Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA 
+
+Table 13: GEE coefficients for KQA Pro experiments (2/2) Model Feature Coefficient 𝑝 Std Err 
+
+Qwen3-235B-A22B 𝛽 0 3.807 0.000 0.729 
+
+𝛽 𝑑 -0.431 0.000 0.085 
+
+𝛽 𝑏 -0.728 0.004 0.251 
+
+𝛽 SH -0.852 0.040 0.415 
+
+𝛽 𝑑 :SH 0.007 0.888 0.051 
+
+𝛽 𝑏 :SH 0.514 0.001 0.161 LastStep[T.QueryAttr] 1.272 0.021 0.550 LastStep[T.QueryAttrQualifier] 0.390 0.310 0.384 LastStep[T.QueryName] 1.081 0.000 0.201 LastStep[T.QueryRelation] 2.302 0.000 0.568 LastStep[T.QueryRelationQualifier] 0.683 0.054 0.354 LastStep[T.SelectAmong] 1.415 0.030 0.654 LastStep[T.SelectBetween] 2.459 0.000 0.583 LastStep[T.VerifyDate] 23.890 0.000 0.736 LastStep[T.VerifyNum] -0.377 0.556 0.639 LastStep[T.VerifyStr] 0.879 0.032 0.409 LastStep[T.VerifyYear] 3.237 0.000 0.729 Gemini-3-Flash 𝛽 0 3.577 0.000 0.987 
+
+𝛽 𝑑 -0.249 0.030 0.115 
+
+𝛽 𝑏 -0.795 0.019 0.338 
+
+𝛽 SH -0.399 0.507 0.602 
+
+𝛽 𝑑 :SH -0.070 0.345 0.074 
+
+𝛽 𝑏 :SH 0.115 0.571 0.203 LastStep[T.QueryAttr] 2.709 0.010 1.051 LastStep[T.QueryAttrQualifier] 0.805 0.046 0.403 LastStep[T.QueryName] 2.430 0.000 0.335 LastStep[T.QueryRelation] 3.694 0.000 0.955 LastStep[T.QueryRelationQualifier] 1.216 0.007 0.451 LastStep[T.SelectAmong] 1.948 0.065 1.054 LastStep[T.SelectBetween] 2.689 0.000 0.592 LastStep[T.VerifyDate] 23.526 0.000 0.745 LastStep[T.VerifyNum] -0.242 0.737 0.721 LastStep[T.VerifyStr] 1.600 0.003 0.542 LastStep[T.VerifyYear] 2.410 0.001 0.738 CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al. 
+
+[system] 
+
+You 're tasked with decomposing multi-hop "comparison" questions into exactly two parallel `search ` steps followed by a single 
+
+`reasoning ` step-never fewer. For every comparison question that requires choosing between Entity A and Entity B based on an attribute, follow this strict pattern: - **Node 0:** Retrieve Entity A 's attribute with `search `.- **Node 1:** Retrieve Entity B 's attribute with `search `.- **Node 2:** Use `reasoning ` to compare $0 vs $1 and output the required entity/value. A comparison question **must** include one reasoning step that explicitly compares the two retrieved values. Annotate every example accordingly. ## Context - **Goal:** Annotate multi-hop QA examples with ground-truth reasoning plans as a Directed Acyclic Graph (DAG). Your outputs must illustrate the required multi-step pattern. - **Tools Available:** - `search(query) `: Retrieves facts (returns a string). - `reasoning(instruction) `: Applies simple logic (comparison, filtering, conditionals) on strings. - **Annotator Role:** The answer and supporting facts are provided for your annotation. The QA system you annotate for cannot see them; avoid any leakage or hinting in your node inputs. ## Required "Comparison" Pattern - For all "comparison" questions: - The DAG must contain exactly: - Two `search ` nodes with no dependencies (parallel retrieval). - One `reasoning ` node that depends on both searches. - The two `search ` queries must be parallel in phrasing (same attribute asked for both entities) so outputs are directly comparable. - The final decision must be made in the `reasoning ` node, not via a third `search `.## Process 1. **Rephrase:** Restate the input question in clear, natural English, keeping all constraints. 2. **Construct DAG:** Break down the question into a minimal, strictly ordered DAG using the above rules and the tools provided. ## Node Construction Rules - **Self-Contained:** Each node 's `input ` is a clear, standalone sentence (replace `$i ` with the literal value). - **Natural Embedding:** `$i ` appears as though the entity or value is being asked about, not referenced. Never meta-phrase. - **Literal Use:** Treat `$i ` as a value to inquire about-not a doc/source. - **Conciseness:** Each node contains exactly **one** input sentence. - **No Redundant Search:** Never search for information already stated in the question; instead, use it in a reasoning node if involved. ## Reasoning Node Requirements (Comparison) - Must be exactly one sentence. - Must explicitly name both entities and reference both retrieved values ($0 and $1). - Must state what to return (e.g., "output PersonA"). - Use a direct comparative construction; avoid awkward roles for $i (e.g., do not write "If $0 shows..."). - Template: "[EntityA] has [attribute] $0, and [EntityB] has [attribute] $1; based on the question 's criterion, output the correct entity." ## Output Format Return a single flat JSON object, no Markdown, no comments: - `rephrased_question ` (string) - `dag `: List of nodes: - `function `: "search" or "reasoning" - `dependencies `: List of integers (node indices) - `input `: String (standalone, with `$i ` references as needed) 
+
+Prompt 4: DAG annotation of HotpotQA questions (Comparison:1/2) Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA 
+
+[system] (cont 'd) # Example {examples} # Notes - Do not collapse comparison questions into one search. - Do not add extra search steps after the two parallel searches. - Always retrieve the same attribute for both entities with parallel phrasing. - Always end with exactly one reasoning node that makes the selection and states what to output. - Never reference the answer or supporting facts in any node input fields. 
+
+[user] 
+
+Generate the reasoning DAG for this question. Question: {question} Answer: {answer} Supporting Facts: {supporting_facts} **Notes** - Do not collapse comparison questions into one search. - Do not add extra search steps after the two parallel searches. - Always retrieve the same attribute for both entities with parallel phrasing. - Always end with exactly one reasoning node that makes the selection and states what to output. - Never reference the answer or supporting facts in any node input fields. 
+
+Prompt 5: DAG annotation of HotpotQA questions (Comparison:2/2) CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al. 
+
+[system] (FH) Use the available tools to answer the user 's question step by step, generating the entire plan. Use $i to refer to the output of step i (0-indexed). **Tools** {tool_definitions} You can access the knowledge base through the provided tools. **Glossary of KB concepts:** - Entity: The most basic item in KB. - Concept: The abstraction of a set of entities, e.g., basketball player. - Relation: The link between entities or concepts. Entities are linked to concepts via the relation instance of. Concepts are organized into a tree structure via relation subclass of. - Attribute: The literal information of an entity. An attribute has a key and a value, which is one of four types: string, number, date, and year. The number value can have an extra unit, e.g., 206 centimetre. - Relational knowledge: The triple with form (entity, relation, entity), e.g., (LeBron James Jr., father, LeBron James). - Literal knowledge: The triple with form (entity, attribute key, attribute value), e.g., (LeBron James, height, 206 centimetre). - Qualifier knowledge: The triple whose head is a relational or literal triple, e.g., ((LeBron James, drafted by, Cleveland Cavaliers), point in time, 2003). A qualifier also has a key and a value. **Examples** {demonstrations} 
+
+[system] (SH) Use the available tools to answer the user 's question step by step, generating one action at a time. Use $i to refer to the output of step i (0-indexed). (...same as FH) 
+
+[user] 
+
+Question: {question} 
+
+Prompt 6: Planning prompts for KQA Pro. The glossary was defined by Cao et al. [3]. Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA 
+
+[system] (FH) Use the available tools to answer the user 's question step by step, generating the entire plan. Use $i to refer to the output of step i (0-indexed). **Tools** {tool_definitions} Use the available tools to answer the user 's question step by step **Examples** {demonstrations} 
+
+[system] (SH) Use the available tools to answer the user 's question step by step, generating one action at a time. Use $i to refer to the output of step i (0-indexed). (...same as FH) 
+
+[user] 
+
+Question: {question} 
+
+Prompt 7: Planning prompts for multi-objective HotpotQA 
+
+[user] 
+
+Execution Result: {execution_result} The last step returned an error or no results. Produce an append-only continuation: add new steps starting at index {start_index} that continue from the executed steps above. Do not repeat, modify, or reissue any executed step, and only reference existing outputs. If empty results are expected and valid for the question, produce the continuation steps from the original plan starting at step {start_index}. Otherwise, add corrective steps starting at {start_index} (e.g., adjust tool parameters, or try alternative tools) and proceed toward the answer. 
+
+Prompt 8: Replanning prompt (FH). This user message is appended to the message list. {execution_result} is replaced with a list of executed actions and their results. CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al. 
+
+[system] (KBQA) You are a strict, impartial grader of answer correctness. **Goal:** Compare System Output to Correct Answer only. Do not use outside knowledge; treat Correct Answer as ground truth. **Output:** Reply with exactly one label (no quotes, no punctuation, no extra text): - correct - partially_correct - incorrect - refusal/unsure **Scoring rules:** 1) Non-answer -> refusal/unsure: - System Output refuses, asks for clarification, says "unknown"/"no information", or otherwise does not contain an answer value. 2) Exact match -> correct: - System Output conveys the same answer value(s) as in Correct Answer, and no additional answer values. - Treat lists as sets: ignore order, casing, surrounding filler, and duplicate repetitions of the same correct value(s). - Ignore purely explanatory filler (e.g., "the answer is ..."). 3) Partial overlap -> partially_correct: - At least one expected answer value appears in the System Output, but it is missing any other required values and/or includes extra answer values not in the Correct Answer. 4) Mismatch -> incorrect: - None of the expected answer values appear in the System Output, or any provided value contradicts the Correct Answer. **Definitions and matching guidance:** - Answer value: an entity (ID or name), number, date, or other atomic item. Treat comma/semicolon/newline/bulleted lists and clear conjunctions as multiple values. - Entity matching: "m.xxxxx (Name)"/"Qxxxxx (Name)" matches if either the ID or the Name appears in System Output (case-insensitive). - Numeric/date matching: require exact equality unless Correct Answer explicitly lists multiple acceptable values. Rounded/truncated numbers are incorrect when Correct Answer provides a more precise value. - Type/Hierarchy: Do not give credit for broader/narrower/related categories, roles, or specializations (e.g., hypernym/hyponym). Only the exact expected value counts. - Strict comparison: Do not use the question text or outside knowledge to infer equivalence. Compare the System Output strictly to the Correct Answer text. - Extra information: - Extra explanatory text may be ignored. - Extra answer values (additional entities/values) make the result partially_correct. 
+
+[user] 
+
+Question: {question} Correct Answer: {correct_answer} System Output: {system_output} 
+
+Prompt 9: Evaluation prompt for KBQA tasks Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA 
+
+[system] 
+
+You are a strict, impartial grader of answer correctness. **Goal:** Compare System Output to Correct Answer only. Do not use outside knowledge; treat Correct Answer as ground truth. **Output:** Reply with exactly one label (no quotes, no punctuation, no extra text): - correct - partially_correct - incorrect - refusal/unsure **Scoring rules:** 1) Non-answer -> refusal/unsure: - System Output refuses, asks for clarification, says "unknown"/"no information", or otherwise does not contain an answer value. 2) Exact match -> correct: - The System Output conveys exactly the same answer value(s) as the Correct Answer and no additional distinct answer values, in the same order for multi-part answers. - Ignore casing, articles, punctuation/spacing, and duplicate repetitions. - Ignore explanatory or descriptive context that does not add distinct answer values (e.g., prose around the answer, unit qualifiers, city+state after a city, manufacturer prefixes, honorifics/titles, adjectives like "World Famous"). - Accept unambiguous aliases or minor name variants for the same entity (e.g., nicknames vs full names, with/without middle names, common alternate forms) when they clearly refer to the same entity and do not introduce a different one. - Numbers/dates: treat words vs digits and digit-grouping (e.g., 1,840 vs 1840) as equivalent. If the expected value is a year, a full date containing that year is acceptable. If the expected value includes month+year, month alone is incomplete. - Approximation: If the question or Correct Answer signals approximation (about/approximately/around/over), allow consistent approximate or inequality phrasing near the value. 3) Partial overlap -> partially_correct: - At least one expected answer value appears, but any required value is missing and/or at least one value is incorrect/contradictory. - The output adds extra distinct answer values for a slot (e.g., listing multiple roles like "actor and director", multiple candidate entities with and/or/slashes/lists) beyond what the Correct Answer expects. 4) Mismatch -> incorrect: - None of the expected answer values appear in the System Output, or any provided value contradicts the Correct Answer. **Definitions and matching guidance:** - Answer value: an atomic item such as an entity (ID or name), number, date/time, or yes/no. - Entity matching: give credit only when the expected entity (name/ID or a clear alias/variant) is explicitly present in the System Output. Do not award credit for merely implying the answer without naming it. Do not give credit for broader/narrower/related categories. - Order: When multiple questions are asked, the correct answers are in that order; the System Output must align to be correct. 
+
+[user] 
+
+Question: {question} Correct Answer: {correct_answer} System Output: {system_output} 
+
+Prompt 10: Evaluation prompt for multi-objective HotpotQA CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al. 
+
+Table 14: GEE coefficients for Atomic KBQA experiments Model Feature Coefficient 𝑝 Std Err 
+
+GPT-4.1-mini Dataset[T.graphq] -0.819 0.000 0.143 
+
+𝛽 𝑑 -0.330 0.001 0.097 
+
+𝛽 𝑏 -0.269 0.017 0.113 
+
+𝛽 SH 0.474 0.059 0.250 
+
+𝛽 𝑑 :SH -0.100 0.103 0.062 
+
+𝛽 𝑏 :SH -0.130 0.114 0.082 Dataset[T.webqsp] -0.386 0.100 0.235 LastStep[T.find_relation] -0.284 0.414 0.348 LastStep[T.merge] -1.000 0.000 0.243 LastStep[T.order] -0.268 0.416 0.330 GPT-5-mini 𝛽 0 3.350 0.000 0.495 
+
+𝛽 𝑑 -0.350 0.000 0.097 
+
+𝛽 𝑏 -0.383 0.002 0.124 
+
+𝛽 SH -0.211 0.294 0.201 
+
+𝛽 𝑑 :SH 0.031 0.548 0.052 
+
+𝛽 𝑏 :SH 0.029 0.684 0.070 Dataset[T.graphq] -0.542 0.001 0.161 Dataset[T.webqsp] -0.491 0.053 0.253 LastStep[T.find_relation] -0.051 0.895 0.383 LastStep[T.merge] -0.325 0.260 0.288 LastStep[T.order] -0.481 0.172 0.352 Qwen3-235B-A22B 𝛽 0 3.459 0.000 0.473 
+
+𝛽 𝑑 -0.325 0.002 0.103 
+
+𝛽 𝑏 -0.531 0.000 0.118 
+
+𝛽 𝑏 :SH 0.060 0.416 0.074 
+
+𝛽 SH -0.080 0.724 0.227 
+
+𝛽 𝑑 :SH -0.016 0.794 0.061 Dataset[T.graphq] -0.611 0.000 0.150 Dataset[T.webqsp] -0.176 0.495 0.258 LastStep[T.find_relation] -0.162 0.650 0.358 LastStep[T.merge] -0.662 0.005 0.238 LastStep[T.order] -0.021 0.951 0.334 Gemini-3-Flash 𝛽 0 3.144 0.000 0.560 
+
+𝛽 𝑑 -0.349 0.006 0.126 
+
+𝛽 𝑏 -0.235 0.098 0.142 
+
+𝛽 SH 0.150 0.601 0.287 
+
+𝛽 𝑑 :SH -0.007 0.920 0.065 
+
+𝛽 𝑏 :SH -0.331 0.001 0.102 Dataset[T.graphq] -0.556 0.000 0.160 Dataset[T.webqsp] -0.126 0.656 0.283 LastStep[T.find_relation] 0.000 1.000 0.397 LastStep[T.merge] -0.402 0.136 0.270 LastStep[T.order] 0.021 0.956 0.371 Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA 
+
+Table 15: GEE coefficients for multi-objective HotpotQA experiments Model Feature Coefficient 𝑝 Std Err 
+
+GPT-4.1-mini 𝛽 0 2.459 0.000 0.298 
+
+𝛽 𝑑 -0.781 0.000 0.182 
+
+𝛽 𝑏 -0.155 0.000 0.019 
+
+𝛽 SH 0.256 0.227 0.212 
+
+𝛽 𝑑 :SH -0.006 0.967 0.141 
+
+𝛽 𝑏 :SH -0.014 0.312 0.014 
+
+𝛽 has_bridge -0.735 0.000 0.143 
+
+𝛽 has_comparison 0.529 0.000 0.143 GPT-5-mini 𝛽 0 2.376 0.000 0.270 
+
+𝛽 𝑑 -0.839 0.000 0.168 
+
+𝛽 𝑏 -0.127 0.000 0.018 
+
+𝛽 SH -0.235 0.272 0.214 
+
+𝛽 𝑑 :SH 0.102 0.456 0.137 
+
+𝛽 𝑏 :SH 0.009 0.525 0.014 
+
+𝛽 has_bridge -0.638 0.000 0.131 
+
+𝛽 has_comparison 0.543 0.000 0.130 Qwen3-235B-A22B 𝛽 0 1.730 0.000 0.271 
+
+𝛽 𝑑 -0.480 0.004 0.169 
+
+𝛽 𝑏 -0.115 0.000 0.018 
+
+𝛽 SH 0.933 0.000 0.243 
+
+𝛽 𝑑 :SH -0.213 0.164 0.153 
+
+𝛽 𝑏 :SH -0.033 0.028 0.015 
+
+𝛽 has_bridge -0.868 0.000 0.141 
+
+𝛽 has_comparison 0.452 0.000 0.130 Gemini-3-Flash 𝛽 0 1.659 0.000 0.283 
+
+𝛽 𝑑 -0.546 0.003 0.182 
+
+𝛽 𝑏 -0.090 0.000 0.018 
+
+𝛽 SH 0.850 0.003 0.288 
+
+𝛽 𝑑 :SH -0.434 0.024 0.192 
+
+𝛽 𝑏 :SH -0.066 0.000 0.017 
+
+𝛽 has_bridge -0.609 0.000 0.138 
+
+𝛽 has_comparison 0.313 0.019 0.133 CAIS ’26, May 26–29, 2026, San Jose, CA, USA Otani et al. 
+
+Table 16: SH with Gemini-3-Flash under low-robustness retrieval (top-1) on multi-objective HotpotQA ( 𝑘 = 2). This table focuses on one sub-question: “Which director, John Schlesinger or Barbara Albert, was also a writer and film producer?” 
+
+Step 1 Reasoning I’m currently engaged in evaluating both John Schlesinger and Barbara Albert, determining if each functioned as a writer and producer. After gathering the facts, a comparison will readily reveal the answer. Parallel to this, I’m setting up searches to uncover the release companies behind Cinderella and The Emperor’s New Groove to formulate my response regarding the latter question. Tool > search(Was John Schlesinger a writer and film producer?) Output Error in search: Failed to find the answer to "Was John Schlesinger a writer and film producer?" No supporting information found in the search result: information is about Richard Schlesinger, not John Schlesinger. Retry with a different question or try a different tool. Step 2 Reasoning I’m starting by investigating the first question. I’ve initiated Step 0: searching for John Schlesinger’s roles. The plan is to establish if he wrote or produced films, as well as directed. After that, I will move on to step 1 and do the same for Barbara Albert. Tool > search(What were the occupations of director John Schlesinger?) Output Error in search: Failed to find the answer to "Was John Schlesinger a writer and film producer?" No supporting information found in the search result: information is about Richard Schlesinger, not John Schlesinger. Retry with a different question or try a different tool. Step 3 Reasoning I’m now formulating my search queries. I’ll begin by querying about the occupations of John Schlesinger and Barbara Albert. Following that, I’ll identify the release companies for "Cinderella" and "The Emperor’s New Groove." This information will then allow me to address the initial questions posed. I’m focusing on efficiency and clarity to ensure accurate results. Tool > search(What were the occupations of John Schlesinger?) Output Error in search: Failed to find the answer to "Was John Schlesinger a writer and film producer?" No supporting information found in the search result: information is about Richard Schlesinger, not John Schlesinger. Retry with a different question or try a different tool. Step 4 Reasoning I’ve begun looking into the roles of John Schlesinger and Barbara Albert. Initial searches for their occupations are underway. I’ll need to sift through the results to see if either one of them was both a writer and a film producer. The plan is to compare the findings to pinpoint the director who fulfills both criteria. I’ll then move on to the second question. Tool > search(What were the occupations of John Schlesinger?) Output Error in search: Failed to find the answer to "Was John Schlesinger a writer and film producer?" No supporting information found in the search result: information is about Richard Schlesinger, not John Schlesinger. Retry with a different question or try a different tool. Step 5 Reasoning I’m now starting to investigate John Schlesinger. My initial step is to determine if he also worked as a writer and film producer. Then, I’ll turn my attention to Barbara Albert, following the same procedure. After that, I will compare the data to formulate a response to the user’s first question. Tool > search(What were the occupations of director John Schlesinger?) Output Error in search: Failed to find the answer to "Was John Schlesinger a writer and film producer?" No supporting information found in the search result: information is about Richard Schlesinger, not John Schlesinger. Retry with a different question or try a different tool. Do Agents Need to Plan Step-by-step? CAIS ’26, May 26–29, 2026, San Jose, CA, USA 
+
+Table 17: FH with Gemini-3-Flash under low-robustness retrieval (top-1) on multi-objective HotpotQA ( 𝑘 = 2). This table focuses on one sub-question: “Which director, John Schlesinger or Barbara Albert, was also a writer and film producer?” 
+
+Initial Reasoning I’ve initiated searches to determine if John Schlesinger and Barbara Albert were both writers and producers, as planned. Once I have those details, a comparison will be conducted to pinpoint the correct individual. I’m also preparing to find the release companies for "Cinderella" and "The Emperor’s New Groove" to compare them. Plan > [$0 = search(Was John Schlesinger a writer and film producer?), $1 = search(Was Barbara Albert a writer and film producer?), $2 = reasoning(John Schlesinger is described as $0, and Barbara Albert is described as $1; based on which one was also a writer and film producer, output the correct person.), ...] Output Error in search $0: Failed to find the answer to "Was John Schlesinger a writer and film producer?" No supporting information found in the search result: information is about Richard Schlesinger, not John Schlesinger. Retry with a different question or try a different tool. Replanning 1 Reasoning I’ve restarted my search for John Schlesinger’s occupations, focusing on director, writer, and producer roles, since my initial attempt didn’t yield the right information. Also, I’m planning to look into Barbara Albert’s roles. My next step will be to compare the findings to pinpoint the director who was also a writer and film producer. Plan > [$1 = search(What were the occupations of director John Schlesinger?), $2 = search(What were the occupations of director Barbara Albert?), ...] Output Error in search $1: Failed to find the answer to "Was John Schlesinger a writer and film producer?" No supporting information found in the search result: information is about Richard Schlesinger, not John Schlesinger. Retry with a different question or try a different tool. Replanning 2 Reasoning I’m now focusing on Barbara Albert’s occupations, and then refining how I search for John Schlesinger’s roles. I plan to query directly whether Schlesinger worked as a writer and producer. After that, I’ll compare the findings to answer the first question. For the second question, I will pinpoint the release companies for both films, and compare the results. Plan > [$2 = search(What are the occupations of Barbara Albert (director)?), $3 = search(Was John Schlesinger a writer and film producer in addition to being a director?), ...] Output Error in search $3: Failed to find the answer to "Was John Schlesinger a writer and film producer?" No supporting information found in the search result: information is about Richard Schlesinger, not John Schlesinger. Retry with a different question or try a different tool. Replanning 3 Reasoning I’m focusing on John Schlesinger’s occupations, trying to confirm if he was also a writer or producer. I’ll use a more specific search term this time around. If that doesn’t work, I’ll leverage Barbara Albert’s information to answer the first question. After that, I’ll tackle the release companies. Plan > [$4 = search(What were the professional roles of the English film director John Schlesinger?), $5 = reasoning(Based on the occupations of Barbara Albert ($2) and John Schlesinger ($4), which one was also a writer and film producer?), ...]
