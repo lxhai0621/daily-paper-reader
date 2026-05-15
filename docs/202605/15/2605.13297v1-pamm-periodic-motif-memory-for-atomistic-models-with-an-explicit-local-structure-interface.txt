@@ -1,0 +1,805 @@
+Title: PaMM: Periodic Motif Memory for Atomistic Models with an Explicit Local-Structure Interface
+
+URL Source: https://arxiv.org/pdf/2605.13297v1
+
+Published Time: Thu, 14 May 2026 01:02:43 GMT
+
+Number of Pages: 18
+
+Markdown Content:
+# PaMM: Periodic Motif Memory for Atomistic Models with an Explicit Local-Structure Interface 
+
+Ryan Dong 
+
+Independent Research 
+
+zwdong618@gmail.com 
+
+## Abstract 
+
+Periodic crystals repeatedly instantiate similar local coordination motifs across translated cells and chemically related structures, but current equivariant atomistic models usually encode these patterns only implicitly in dense edge features. We introduce PaMM, a periodic motif memory that augments the UMA eSCN-MD edge encoder with explicit pair and triplet lookup features. Pair motifs are keyed by (Zj , Z i, b r ) and triplet motifs by (Zj , Z i, Z k, b θ ), hashed into fixed-size tables and fused with the baseline edge representation through lightweight gate-only and affine-equipped variants. We evaluate PaMM in a matched UMA-S OMAT setting and focus on a narrow question: whether explicit motif memory helps at a fixed intermediate training budget. At the 10k-step checkpoint, both PaMM variants improve over the plain baseline; gate-only gives the best energy MAE, while the affine-equipped variant gives the best force MAE. A matched 20k follow-up keeps the same operating-point picture. Aligned controls show that the gain weakens for pair-only, triplet-only, random-bucket, and parameter-matched MLP alternatives, suggesting that the benefit is tied to structured pair/triplet organization rather than generic added capacity. A within-OMAT24 source-family evaluation also shows small but con-sistent gains across held-out generation families. We therefore make a focused claim: in the studied UMA-S + OMAT regime, ex-plicit pair/triplet motif memory is a useful inductive bias for periodic atomistic modeling. We do not claim broad cross-dataset transfer, a uniquely preferred fu-sion variant, or strong scientific interpretability beyond a more inspectable local-structure interface. 
+
+## 1 Introduction 
+
+Large pretrained atomistic models are starting to cover molecules, materials, catalysts, and related chemical domains within a shared backbone, with UMA as a recent example [Wood et al., 2025]. In periodic materials, however, much of the predictive signal is strongly repetitive: similar pair distances, coordination angles, and local environments recur across translated unit cells, neighboring coordination shells, and chemically related crystals. Modern equivariant backbones such as NequIP, MACE, and EquiformerV2 can in principle represent these patterns well, but they usually do so implicitly through continuous edge features and message passing [Batzner et al., 2022, Batatia et al., 2022, Liao et al., 2023]. The same local geometry must therefore be reconstructed repeatedly inside dense hidden states rather than exposed as reusable model state. This distinction matters most when one wants controlled additional capacity rather than a different backbone. Scaling width, depth, or dataset mixture changes many ingredients at once, whereas an explicit memory path can target a more specific hypothesis: recurring local chemistry may be worth storing in a bounded representation that the host network can read out when needed. In periodic 
+
+> Preprint.
+> arXiv:2605.13297v1 [cs.LG] 13 May 2026
+
+materials, a natural choice is to key the memory by low-order geometric objects that recur frequently and are already central to atomistic reasoning, namely pairwise distances and local triplet angles. We therefore introduce PaMM , a periodic motif memory attached to the UMA eSCN-MD edge encoder. PaMM retrieves a pair memory from element-pair and distance keys and a triplet memory from local angular configurations. The retrieved features are fused back into the baseline edge representation through lightweight gating, with an optional additional affine modulation path inside the message-passing stack. The downstream equivariant operator is left unchanged. In this sense, PaMM is an additive mechanism rather than an alternative backbone: it contributes explicit local-structure state without replacing the host’s continuous geometric pipeline. The empirical scope of the paper is intentionally focused. We study PaMM inside the UMA-S eSCN-MD host on OMAT and ask whether explicit motif memory helps under a matched intermediate training budget. The main text is organized around four concrete questions. First, does the memory path improve the plain host at locked 10k and 20k checkpoints? Second, are the observed gains stable enough under reseeding to support the core claim? Third, do aligned controls indicate that the effect comes from structured pair/triplet organization rather than from generic extra parameters? Fourth, how does the method behave when we vary the memory size or regroup evaluation by held-out OMAT source family? Our conclusions are narrow by design. At the locked 10k checkpoint, both PaMM variants im-prove over the plain baseline; the gate-only variant is strongest on energy, while the affine-equipped variant is strongest on force. A matched 20k follow-up preserves this picture. Additional con-trols show that the gain weakens when the memory is reduced to pair-only or triplet-only lookup, when structured keys are replaced by random buckets, or when the structured branch is replaced by a parameter-matched MLP. A bucket sweep indicates diminishing returns beyond the mid-sized regime, and a source-family evaluation within OMAT24 shows small but consistent gains across held-out generation families. We therefore position PaMM as a useful inductive bias for the stud-ied host/domain/budget regime, not as a claim of universal backbone transfer, clean optimizer-independence, or strong chemistry-level interpretability. The contributions of the paper are: 1. We introduce an explicit pair/triplet motif memory for periodic atomistic modeling, imple-mented as fixed-size hash lookup over local geometric keys rather than as another dense message-passing stage. 2. We integrate this memory into UMA eSCN-MD through two lightweight readout mecha-nisms, a gate-only variant and an affine-equipped variant, while leaving the downstream equivariant operator unchanged. 3. We provide a focused evidence package in the UMA-S + OMAT setting that covers matched 10k and 20k checkpoints, three-seed robustness at the main 10k budget, aligned controls, and held-out source-family evaluation. 4. We analyze how the method uses its added capacity through training-dynamics and bucket-count studies, which helps distinguish useful explicit memory from generic parameter growth. 
+
+## 2 Related Work 
+
+Recent atomistic ML has moved from narrow task-specific models toward broader pretrained sys-tems such as UMA, while parallel work in the Open Catalyst ecosystem has established the value of multi-domain pretraining and transfer for atomistic prediction [Wood et al., 2025, Kolluru et al., 2022, Shoghi et al., 2023, Lan et al., 2023, Chanussot et al., 2021, Tran et al., 2023]. PaMM oper-ates in this regime but changes a different axis. Instead of enlarging the backbone or changing the pretraining mixture, it adds a bounded explicit memory path for recurring local geometry. Equivariant interatomic networks such as NequIP, MACE, and EquiformerV2 improve accuracy mainly through stronger continuous geometric operators [Batzner et al., 2022, Batatia et al., 2022, Liao et al., 2023]. Higher-order structure is usually represented through angular bases, tensor prod-ucts, or richer higher-body interactions inside the message-passing stack. PaMM is complementary 2Atom Graph Edge Feature Atom-pair Feature Atom-triplet Feature Concatenated as Memory Affine Modulation PaMM eSCN-MD Blocks N ×             
+
+> Force Head Energy Head brZiZjZk1 ZiZjbθ
+> Distance Binning (Eq. 1) Angle Binning (Eq. 5) Key Construction Mapping Lookup Concat (Eq. 2) ZibrZjhash h
+> 𝑘 𝑖𝑗
+> (ℎ)
+> mod M pair
+> 𝑏𝑢𝑘𝑒𝑡 𝑖𝑗
+> (ℎ)
+> Epai r(Eq. 3) (Eq. 4) ZibθZjZk(Eq. 6) hash h
+> 𝑘 𝑖𝑗𝑘
+> (ℎ)
+> mod M tri
+> 𝑏𝑢𝑘𝑒𝑡 𝑖𝑗𝑘
+> (ℎ)
+> Etri (Eq. 7) (Eq. 8) eSCN-MD Blocks
+
+Figure 1: PaMM augments UMA eSCN-MD with an explicit motif interface. Pair motifs are keyed by atom types and discretized distances, while triplet motifs are keyed by local angular config-urations. The retrieved pair/triplet memories are concatenated with the baseline edge representation and then consumed by lightweight fusion modules. In the affine-equipped variant, the same memory also drives a per-layer modulation path inside the eSCN-MD stack. rather than competitive with this line of work. It leaves the downstream equivariant operator intact and instead augments the scalar edge representation seen by that operator. This difference in placement is central. In existing atomistic backbones, pairwise and angular regu-larities influence prediction indirectly through learned continuous features. PaMM instead treats a subset of these regularities as explicit reusable state, accessed through fixed-capacity lookup tables. The goal is not to discretize the whole geometric computation, but to expose recurring low-order motifs in a form that can be reused across many edges while the host backbone continues to handle directional and equivariant processing. The closest intuition comes from recent work on scalable conditional memory in language modeling, where repeated patterns are handled by targeted lookup rather than by uniform dense computation [Cheng et al., 2026]. Our setting is substantially different: periodic geometry is local, structured, and constrained by atomic neighborhoods rather than by token sequences. The novelty here is therefore not generic hashing inside an atomistic model. It is the decision to represent recurring pair and triplet coordination motifs as explicit model state attached to the edge encoder of a modern pretrained atomistic backbone. 
+
+## 3 Method 
+
+We modify the UMA eSCN-MD edge encoder and keep the downstream equivariant message-passing stack unchanged. Let a periodic structure induce a directed neighborhood graph whose edges (j → i) connect neighbor atoms within the host cutoff. In the plain UMA encoder, each directed edge is represented by scalar features derived from the pair distance and the source/target atom types. PaMM augments this scalar edge description with two additional retrieved features: a pair memory and a triplet memory. The central design choice is to expose recurring local motifs through explicit lookup while leaving the host’s geometric operator intact. 33.1 Motif Lookup Construction 
+
+The two lookup paths are designed to capture complementary local information. The pair memory tracks recurring element-pair and distance patterns at the level of a single edge. The triplet memory adds coarse angular context around the center atom, allowing the encoder to distinguish edges that share a similar pairwise geometry but belong to different local coordination environments. For edge (j → i) with atomic numbers (Zj , Z i) and distance rij , we quantize the distance into a bin 
+
+br (i, j ) = 
+
+ rij 
+
+rmax 
+
+Br
+
+
+
+. (1) For hash function index h ∈ { 1, . . . , H }, we form a pair key 
+
+k(h) 
+
+> ij
+
+= Zj (p + h)2 + Zi(p + h) + br (i, j ), (2) map it into a bucket bucket (h) 
+
+> ij
+
+= k(h) 
+
+> ij
+
+mod Mpair , and retrieve 
+
+epair  
+
+> ij
+
+= 1
+
+H
+
+> H
+
+X
+
+> h=1
+
+E(h)pair 
+
+
+
+bucket (h)
+
+> ij
+
+
+
+. (3) This lookup deliberately compresses geometry into a reusable low-order signature. Exact directional information is not discarded from the full model, because the downstream eSCN-MD stack still receives the host’s continuous geometric inputs; PaMM only adds a bounded summary of recurring pair structure. To encode angular context, we enumerate triplets (j, i, k ) around the center atom i, quantize the angle θjik into bθ (j, i, k ), and hash 
+
+k(h) 
+
+> jik
+
+= Zj (p + h)3 + Zi(p + h)2 + Zk(p + h) + bθ (j, i, k ). (4) The triplet lookup is 
+
+etri  
+
+> ij
+
+= 1
+
+|T ij |
+
+X
+
+> (j,i,k )∈T ij
+
+1
+
+H
+
+> H
+
+X
+
+> h=1
+
+E(h)tri 
+
+
+
+k(h) 
+
+> jik
+
+mod Mtri 
+
+
+
+, (5) where Tij is the set of triplets that contribute to edge (j → i). The triplet aggregation is edge-conditioned but center-local: every contributing triplet shares the same central atom i and edge endpoint j, so the resulting memory summarizes the angular environment relevant to that directed interaction. The two memories are concatenated with the baseline edge feature: 
+
+xedge  
+
+> ij
+
+= [ ϕr (rij ); ϕs(Zj ); ϕt(Zi); epair  
+
+> ij
+
+; etri  
+
+> ij
+
+]. (6) This construction exposes recurring pair and local-angle motifs as explicit, bounded-capacity model state. The bucket counts Mpair and Mtri are therefore direct memory-capacity knobs: increasing them reduces collisions and increases representational resolution, while keeping the lookup path compact and localized. 
+
+3.2 Memory Readout 
+
+We study two ways of consuming the same memory. The gate-only variant applies a bounded scalar gate to the augmented edge feature. The affine-equipped variant keeps the same edge-level path and additionally injects memory-conditioned channel-wise affine modulation inside each eSCN-MD layer. In both cases, the downstream equivariant operator is unchanged; PaMM only changes how local structure is represented before or alongside that operator. 
+
+Edge-gated readout. Let xedge  
+
+> ij
+
+denote the augmented edge feature from the pair/triplet lookup. The gate-only variant computes 
+
+gij = clip 
+
+
+
+1 + λ SiLU  α⟨Wq xedge  
+
+> ij
+
+, W kxedge  
+
+> ij
+
+⟩, g min , g max 
+
+
+
+, (7) and rescales the edge feature as ˜xedge ij = xedge  
+
+> ij
+
+⊙ gij . (8) This is an edge-local scalar modulation rather than a multi-edge attention mechanism. The readout remains strictly local: each edge is reweighted only by its own retrieved motif state. 4Table 1: Added cost of PaMM relative to the host edge encoder. Here E is the number of directed edges, T is the number of enumerated triplets, d is the memory width, H is the number of hash functions, and L is the number of message-passing layers.           
+
+> Component Added cost Pair memory parameters O(HM pair d); lookup work linear in E
+> Triplet memory parameters O(HM tri d); enumeration and aggregation linear in T
+> Gated readout edge-local projections and scalar modulation, linear in active edges Affine modulation per-layer memory MLP plus channel-wise affine update, linear in
+> L,E, and edge width
+
+Layer-wise affine modulation. Let mij = [ epair  
+
+> ij
+
+; etri  
+
+> ij
+
+]. For each message-passing layer ℓ, the affine-equipped variant predicts a memory-conditioned scale and bias 
+
+(∆ g(ℓ) 
+
+> ij
+
+, ∆b(ℓ) 
+
+> ij
+
+) = MLP ℓ(mij ), (9) and updates the layer-specific edge state through 
+
+e(ℓ) 
+
+> ij
+
+← e(ℓ) 
+
+> ij
+
+⊙  1 + αaff tanh(∆ g(ℓ) 
+
+> ij
+
+) + βaff ∆b(ℓ) 
+
+> ij
+
+. (10) The gate-only and affine-equipped variants therefore share the same explicit motif memory; they differ only in whether that memory is used as an edge-level gate alone or also as an internal per-layer modulation signal. 
+
+3.3 Design Choices and Cost 
+
+PaMM is intended to be an additive mechanism rather than a second interaction stack. The pair lookup targets the most repeated local regularity, namely element-pair and distance patterns. The triplet lookup adds a coarse notion of local coordination without introducing higher-order tensor operations into the host backbone. The two readout variants then test whether this explicit state is most useful as a single pre-message-passing gate or as a signal that should also modulate deeper edge channels. The resulting overhead remains local. PaMM does not add another message-passing stack and does not introduce all-to-all interactions across atoms. Instead, it adds lookup and modulation costs that scale with the same edge and triplet objects already present in the host neighborhood construction. Because the added state is an index-addressed lookup table rather than a dense equivariant activation block, it is also deployment-flexible: at the paper default it occupies only tens of MB and can in principle be kept off the critical GPU-resident path if VRAM is the bottleneck. In the implemented recipe, the lookup and gate submodules are also placed in a reduced learning-rate optimizer group, because this was the stable setting available in code. Accordingly, the paper evaluates the complete PaMM recipe rather than claiming a perfectly isolated architecture-only intervention. 
+
+## 4 Experiments 
+
+4.1 Setup 
+
+We evaluate PaMM as a modification to the UMA-S-1p1 eSCN-MD host. All main-text experiments use the same OMAT local split of dataset=uma , the same training entrypoint, and matched opti-mization settings. Unless otherwise noted, PaMM uses separate pair and triplet tables, two hash functions, discretized distance and angle bins, and the reduced lookup/gate learning-rate group de-scribed in Section 3. We report energy and force mean absolute error (MAE), with lower values indicating better performance. The main paper is built around matched-budget comparisons rather than around a best-of-many-run search. We focus first on a locked 10k-step checkpoint, where the central question is whether explicit motif memory helps before full convergence. We then add a matched 20k follow-up to test whether the same mechanism remains competitive at a slightly longer horizon. The remainder of the main section asks whether the effect survives reseeding, whether it depends on structured motif organization, whether it is visible across held-out OMAT source families, and how it changes as the memory capacity is varied. 5Table 2: OMAT results at matched 10k and 20k budgets. Lower is better for all MAEs. 
+
+10k checkpoint 20k checkpoint Variant Val E Val F Test E Test F Val E Val F Test E Test F Plain baseline 0.3516 0.0939 0.4772 0.0980 0.2667 0.0830 0.3866 0.0869 Gate-only PaMM 0.3269 0.0926 0.4470 0.0964 0.2638 0.0829 0.3808 0.0867 Affine-equipped PaMM 0.3312 0.0924 0.4612 0.0961 0.2696 0.0828 0.3757 0.0865 
+
+Table 3: Three-seed robustness summary at the 10k checkpoint. We report mean ± std over three seeds for the same host and protocol as the main comparison. Lower is better for all MAEs.                 
+
+> Variant Val E Val F Test E Test F Plain baseline 0.3229 ±0.0012 0.0951 ±0.0004 0.4467 ±0.0094 0.0984 ±0.0005 Gate-only PaMM 0.3193 ±0.0026 0.0951 ±0.0001 0.4440 ±0.0037 0.0984 ±0.0001 Affine-equipped PaMM 0.3243 ±0.0018 0.0953 ±0.0004 0.4474 ±0.0069 0.0984 ±0.0004
+
+Variant semantics. The plain baseline disables PaMM entirely. The gate-only PaMM variant keeps structured pair/triplet lookup and applies only the scalar edge gate from Section 3. The 
+
+affine-equipped PaMM variant keeps the same structured lookup and edge-level path but addition-ally injects the memory-conditioned affine modulation inside each eSCN-MD layer. For the aligned controls, pair-only and triplet-only remove one motif source, no-gate keeps structured lookup while bypassing the scalar gate, random-bucket preserves lookup-style capacity but destroys meaningful geometric keys, and the MLP control replaces structured lookup by a parameter-matched generic learned branch. 
+
+4.2 Matched-Budget Results 
+
+At the 10k checkpoint, both PaMM variants improve over the plain baseline. Gate-only gives the best validation and test energy MAE, while the affine-equipped variant gives the best validation and test force MAE. This is the main result of the paper: explicit pair/triplet memory helps in the studied matched-budget regime. The 20k follow-up keeps the same broader picture but sharpens the interpretation. Structured mem-ory remains competitive, yet the preferred operating point depends on how the memory is used. Gate-only remains best on validation energy, while the affine-equipped variant is strongest on force and test energy. We therefore do not frame the paper as selecting a single universally best fusion rule; the central claim is about the explicit memory path itself. 
+
+Training dynamics. Figure 2 shows that the improvement is not confined to a single reporting checkpoint. The gate-only variant pulls ahead on energy early and remains favorable around the locked 10k budget, while the affine-equipped variant more consistently favors force. This matters because PaMM is intended as a controlled additional mechanism rather than as a late-training res-cue effect. The figure therefore supports the interpretation that explicit motif memory changes the optimization trajectory in a useful way during the main training horizon studied in this paper. 
+
+4.3 Seed Stability at 10k 
+
+Table 3 shows that the energy-oriented gate-only advantage is preserved on average across three runs, while the force differences remain extremely small. We therefore use the single exported 10k checkpoints in Table 2 as the clean operating-point comparison, but read them together with this robustness summary: the gains are real enough to survive reseeding, yet not large enough to justify an overly broad claim about uniformly dominant performance. In other words, the method appears directionally stable for the paper’s main claim, but the absolute margin is still modest and metric-dependent. 60                
+
+> 2
+> 4
+> 6
+> 8
+> Validation Energy MAE
+> 10k
+> 0
+> 2
+> 4
+> 6
+> 8
+> Test Energy MAE
+> 10k
+> 05000 10000 15000 20000
+> Training Step
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Validation Force MAE
+> 10k
+> 05000 10000 15000 20000
+> Training Step
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Test Force MAE
+> 10k
+> 7000 8500 10000
+> 0.325
+> 0.350
+> 0.375
+> 0.400
+> 7000 8500 10000
+> 0.45
+> 0.50
+> 7000 8500 10000
+> 0.095
+> 0.100
+> 7000 8500 10000
+> 0.095
+> 0.100
+> 0.105
+
+PaMM Improves Early-to-Mid Budget Training   
+
+> Baseline Gate-only Mainline affine
+
+Figure 2: Anytime validation and test curves under the matched protocol. Both PaMM variants improve on the plain UMA-S baseline before full convergence. Gate-only is strongest on energy near the locked budget, while the affine-equipped variant is strongest on force. Table 4: Aligned control experiments at the 10k checkpoint. Lower is better for all MAEs. 
+
+Variant Val E Val F Test E Test F No-gate 0.3317 0.0939 0.4601 0.0978 
+
+Pair-only 0.3407 0.0952 0.4673 0.0990 Triplet-only 0.3400 0.0952 0.4627 0.0988 Random-bucket 0.3402 0.0953 0.4623 0.0990 MLP control 0.3595 0.0979 0.5089 0.1020 
+
+4.4 Aligned Controls 
+
+Table 4 shows that the gain is structure-sensitive. Removing the gate does not erase the benefit of the full pair+triplet memory, so lookup itself matters. Pair-only and triplet-only variants are both weaker than the full memory path, suggesting that the two motif types are complementary. Random buckets weaken performance relative to structured keys, and a parameter-matched MLP control is worse still. Together these controls argue against the explanation that PaMM wins merely by adding generic capacity. They also clarify the role of the two readout choices in Section 3: the useful signal is already present in the structured lookup itself, while the gate and affine branches mainly determine how strongly and where that signal is injected into the host. 
+
+4.5 Source-Family Evaluation 
+
+To test whether the gain is limited to a single pooled split, we also regroup OMAT24 evaluation by held-out source family. The evaluated PaMM checkpoint is slightly better than the plain baseline on both energy and force in all five families and on the overall aggregate. This is still a within-OMAT24 check rather than cross-dataset transfer, but it shows that the improvement is not confined to one pooled validation slice. The result is consistent with the motivating intuition of PaMM: recurring 7Table 5: Held-out OMAT24 source-family evaluation at the 10k checkpoint. Lower is better.                             
+
+> Family Base E Base F PaMM E PaMM F AIMD-1000 0.0211 0.0596 0.0198 0.0588
+> AIMD-3000 0.0168 0.1042 0.0163 0.1033
+> Rattled 0.0242 0.1138 0.0226 0.1109
+> Rattled-subsampled 0.0224 0.1249 0.0220 0.1224
+> Rattled-relax 0.0422 0.1614 0.0420 0.1612
+> Overall 0.0235 0.1096 0.0226 0.1078
+
+Table 6: Bucket-count sweep for PaMM at the matched 10k-step budget. Pair and triplet tables use the same bucket count. Lower is better for all MAEs.                     
+
+> Buckets Val E Val F Test E Test F 2048 0.04435 0.10507 0.06121 0.10851 4096 0.04373 0.10515 0.06009 0.10844 8192 0.04301 0.10464 0.05905 0.10833
+> 16384 0.04315 0.10487 0.05818 0.10849
+
+local motifs appear across multiple data-generation families, so an explicit motif interface should help beyond one particular validation shard. 
+
+4.6 Memory Capacity Sweep 
+
+The bucket sweep in Table 6 helps interpret PaMM as a bounded-capacity memory rather than as a free-form feature branch. Increasing the number of pair/triplet buckets from 2k to the 8k regime improves both validation and test metrics, while the move from 8k to 16k yields only marginal additional energy benefit and no consistent force improvement. This diminishing-return pattern is what one would expect if collisions matter at very small memory sizes but the useful recurring motifs are already covered once the table reaches a moderate capacity. The sweep therefore supports the claim that PaMM’s added state is doing organized work, not merely absorbing more parameters without structure. 
+
+Scope. The current evidence supports a narrow story: PaMM is a useful local-structure inductive bias in UMA-S on OMAT, especially at the matched 10k budget, and its benefit is tied to structured pair/triplet organization. The appendix contains the broader but less acceptance-critical evidence package: mechanism-oriented plots, compute and reproducibility notes, a mixed Alexandria-PBE comparability check, a tracked medium-host placeholder, a planned MPtrj placeholder, and a harder leave-one-family-out pilot. We include those boundary checks to mark the present empirical limits of the method rather than to broaden the central claim beyond the matched OMAT comparison above. 
+
+## 5 Conclusion 
+
+PaMM augments the UMA eSCN-MD edge encoder with explicit pair and triplet motif memory while leaving the downstream equivariant backbone unchanged. In the studied UMA-S + OMAT setting, this explicit memory improves the plain baseline at a matched 10k budget and remains com-petitive at 20k, with gate-only and affine-equipped variants favoring different metrics. The main-text analyses further show that the effect is visible throughout the relevant training horizon, remains di-rectionally stable under reseeding, weakens under aligned structure-destroying controls, and exhibits diminishing returns as the memory capacity grows. Taken together, these results support a focused claim: explicit motif memory is a useful local-structure inductive bias for this host/domain/budget regime. 
+
+Limitations. The evidence is strongest in the UMA-S + OMAT setting with matched 10k/20k bud-gets, and the implemented recipe couples structured memory with the reduced lookup/gate learning-8rate group used in code. Appendix boundary checks are mixed: the sampled Alexandria-PBE com-parison is close but slightly unfavorable to PaMM, the leave-one-family-out rattled pilot is only mildly positive, and the tracked medium-host and planned MPtrj comparisons were not yet finalized at paper freeze. We therefore do not claim broad cross-dataset transfer or host-scaling gains. We also do not claim strong chemistry-level interpretability beyond a more inspectable local-structure inter-face. These questions, together with higher-order motif memory and fuller resource benchmarking, remain open. 9References 
+
+Ilyes Batatia, Dávid Péter Kovács, Gregor N. C. Simm, Christoph Ortner, and Gábor Csányi. Mace: Higher order equivariant message passing neural networks for fast and accurate force fields, 2022. Simon Batzner, Albert Musaelian, Lixin Sun, Mario Geiger, Jonathan P. Mailoa, Mordechai Korn-bluth, Nicola Molinari, Tess E. Smidt, and Boris Kozinsky. E(3)-equivariant graph neural net-works for data-efficient and accurate interatomic potentials. Nature Communications , 13(1):2453, 2022. Lowik Chanussot, Abhishek Das, Siddharth Goyal, Thibaut Lavril, Muhammed Shuaibi, Morgane Riviere, Kevin Tran, Javier Heras-Domingo, Caleb Ho, Weihua Hu, Aini Palizhati, Anuroop Sri-ram, Brandon Wood, Junwoong Yoon, Devi Parikh, C. Lawrence Zitnick, and Zachary Ulissi. Open catalyst 2020 (OC20) dataset and community challenges. ACS Catalysis , 11(10):6059– 6072, 2021. doi: 10.1021/acscatal.0c04525. Xin Cheng, Wangding Zeng, Damai Dai, Qinyu Chen, Bingxuan Wang, Zhenda Xie, Kezhao Huang, Xingkai Yu, Zhewen Hao, Yukun Li, Han Zhang, Huishuai Zhang, Dongyan Zhao, and Wenfeng Liang. Conditional memory via scalable lookup: A new axis of sparsity for large language models, 2026. Adeesh Kolluru, Nima Shoghi, Muhammed Shuaibi, Siddharth Goyal, Abhishek Das, C Lawrence Zitnick, and Zachary Ulissi. Transfer learning using attentions across atomic systems with graph neural networks (taag). The Journal of Chemical Physics , 156(18), 2022. Janice Lan, Aini Palizhati, Muhammed Shuaibi, Brandon M Wood, Brook Wander, Abhishek Das, Matt Uyttendaele, C Lawrence Zitnick, and Zachary W Ulissi. Adsorbml: a leap in efficiency for adsorption energy calculations using generalizable machine learning potentials. npj Computa-tional Materials , 9(1):172, 2023. Yi-Lun Liao, Brandon Wood, Abhishek Das, and Tess Smidt. Equiformerv2: Improved equivariant transformer for scaling to higher-degree representations, 2023. Nima Shoghi, Adeesh Kolluru, John R Kitchin, Zachary W Ulissi, C Lawrence Zitnick, and Bran-don M Wood. From molecules to materials: Pre-training large generalizable models for atomic property prediction. arXiv preprint arXiv:2310.16802 , 2023. Richard Tran, Janice Lan, Muhammed Shuaibi, Brandon M. Wood, Siddharth Goyal, Abhishek Das, Javier Heras-Domingo, Adeesh Kolluru, Ammar Rizvi, Nima Shoghi, Anuroop Sriram, Félix Therrien, Jehad Abed, Oleksandr Voznyy, Edward H. Sargent, Zachary Ulissi, and C. Lawrence Zitnick. The open catalyst 2022 (oc22) dataset and challenges for oxide electrocatalysts. ACS Catalysis , 13(5):3066–3084, 2023. doi: 10.1021/acscatal.2c05426. Brandon M. Wood, Misko Dzamba, Xiang Fu, Meng Gao, Muhammed Shuaibi, Luis Barroso-Luque, Kareem Abdelmaqsoud, Vahe Gharakhanyan, John R. Kitchin, Daniel S. Levine, Kyle Michel, Anuroop Sriram, Taco Cohen, Abhishek Das, Ammar Rizvi, Sushree Jagriti Sahoo, Zachary W. Ulissi, and C. Lawrence Zitnick. Uma: A family of universal models for atoms, 2025. 10 A Appendix 
+
+A.1 Reproducibility, Compute Resources, Limitations, and Broader Impact Reproducibility details. All reported main-text experiments use the UMA-S-1p1 eSCN-MD host, the same local OMAT split of dataset=uma , the same training entrypoint, and matched optimiza-tion settings. Unless otherwise noted, PaMM uses separate pair and triplet tables, two hash func-tions, discretized distance and angle bins, and a reduced learning-rate group for the lookup and gate submodules. The main-text tables report locked 10k and 20k checkpoints exported from the same training workflow; the control rows use the same host and checkpoint protocol with only the stated mechanism change. 
+
+Compute resources. Paper-critical training runs used the local h100_local CUDA profile with two ranks on one node, 24 CPU cores per task, no dataloader workers, bf16 training, and a max-atom cap of 3000 per rank. Representative launch logs for the baseline and PaMM runs show steady-state training throughput on the order of 1.4k– 1.9k atoms/s per rank during ordinary train intervals. Checkpoint-time ETA logs around the long baseline and PaMM runs place the remaining 10k-step half in the 7.7–7.9 hour range, so the locked 10k and 20k checkpoints correspond roughly to 7–8 hour and 15–16 hour jobs under this profile. The full project consumed more compute than the paper-critical runs because earlier tuning waves, negative controls, and discarded variants are not counted in the main tables. 
+
+Memory footprint and deployment. PaMM’s additional state is concentrated in the hash lookup tables. At the paper-default setting from the released config family ( d = 256 , H = 2 , Mpair =
+
+Mtri = 8192 ), the pair and triplet tables contain 8,388 ,608 scalars in total, corresponding to about 16 MB in bf16 or 32 MB in fp32. Because this state is accessed through sparse integer-indexed lookup rather than through dense equivariant activations, it is amenable to host-memory or managed-memory placement at deployment, which can make its marginal VRAM cost close to zero relative to the GPU-resident backbone. The present training implementation keeps the tables in the standard model module for simplicity, so the paper does not claim a separate memory-offload benchmark. 
+
+Scope and limitations. The paper’s strongest evidence is host- and regime-specific: UMA-S on OMAT under matched 10k/20k budgets. The implementation also evaluates the complete PaMM recipe available in code, so structured memory is not cleanly separated from the reduced lookup/gate learning-rate group. In addition, PaMM uses discretized geometry and fixed-size hash tables, so information loss and collisions are reduced rather than eliminated, and the present work stops at pair/triplet structure instead of higher-order motif memory. 
+
+Broader impact. PaMM is a foundational atomistic-modeling method aimed at more data-efficient and inspectable prediction for molecules and materials. A plausible positive impact is faster scientific screening in catalysis and materials discovery. Potential negative impact is limited but not zero: better atomistic surrogate models can also accelerate screening of harmful or envi-ronmentally problematic compounds. We therefore view PaMM as a research contribution that should be released with the same caution and benchmark-context framing already used for existing atomistic-model assets. 11 A.2 Detailed Fusion Equations and Implementation Notes Edge-wise gated fusion. Given the augmented edge feature xedge  
+
+> ij
+
+, the gate-only variant computes 
+
+qij = Wq xedge  
+
+> ij
+
+, (11) 
+
+kij = Wkxedge  
+
+> ij
+
+, (12) 
+
+sij = ⟨qij , k ij ⟩, (13) 
+
+ˆsij = clip( αs ij , −c, c ), (14) 
+
+aij = SiLU(ˆ sij ), (15) 
+
+gij = clip(1 + λa ij , g min , g max ), (16) 
+
+˜xedge ij = xedge  
+
+> ij
+
+⊙ gij . (17) This is an edge-local scalar gate rather than a multi-edge attention mechanism. 
+
+Affine-equipped fusion. The affine-equipped variant uses the same memory features but also in-jects them inside each message-passing layer. Let 
+
+mij = [ epair  
+
+> ij
+
+; etri  
+
+> ij
+
+]. (18) For each layer ℓ, a small MLP produces 
+
+c(ℓ) 
+
+> ij
+
+= MLP ℓ(mij ), (19) 
+
+∆g(ℓ) 
+
+> ij
+
+= W (ℓ) 
+
+> g
+
+c(ℓ) 
+
+> ij
+
+, (20) 
+
+∆b(ℓ) 
+
+> ij
+
+= W (ℓ) 
+
+> b
+
+c(ℓ) 
+
+> ij
+
+. (21) The implemented affine coefficients are 
+
+g(ℓ) 
+
+> ij
+
+= αaff tanh(∆ g(ℓ) 
+
+> ij
+
+), (22) 
+
+b(ℓ) 
+
+> ij
+
+= βaff ∆b(ℓ) 
+
+> ij
+
+, (23) and the layer-specific edge state is updated as 
+
+e(ℓ) 
+
+> ij
+
+← e(ℓ) 
+
+> ij
+
+⊙ (1 + g(ℓ) 
+
+> ij
+
+) + b(ℓ) 
+
+> ij
+
+. (24) The affine output heads are zero-initialized so that the branch starts as a small correction path. 
+
+Variant-to-flag mapping. The implementation exposes the method family through a small set of toggles: • Baseline : disable PaMM lookup entirely. • Structured PaMM : enable pair/triplet memory and scalar gating. • Pair-only / triplet-only : disable one motif source while keeping the other. • No-gate : keep structured pair/triplet lookup but bypass scalar edge gating. • Random-bucket : keep lookup-style capacity while replacing structured keys with unstruc-tured bucket assignment. • MLP control : replace structured lookup features by a parameter-matched generic MLP branch. • Affine modulation : keep the structured gated path and add per-layer channel-wise affine modulation driven by the same memory features. • Reduced lookup/gate LR : place the lookup and gate submodules into a dedicated opti-mizer group with a smaller learning-rate scale than the host backbone. 12 Table 7: Companion-wave summary for repeated 10k runs and matched 20k follow-up. For the 10k protocol, we report mean ± std over three seeds. The 20k follow-up was run once per variant under the same host and training recipe. Lower is better for all MAEs. 
+
+10k protocol 20k follow-up Variant Val E Val F Test E Test F Val E Val F Test E Test F Plain baseline 0.3229 ±0.0012 0.0951 ±0.0004 0.4467 ±0.0094 0.0984 ±0.0005 0.2667 0.0830 0.3866 0.0869 Gate-only PaMM 0.3193 ±0.0026 0.0951 ±0.0001 0.4440 ±0.0037 0.0984 ±0.0001 0.2638 0.0829 0.3808 0.0867 Affine-equipped PaMM 0.3243 ±0.0018 0.0953 ±0.0004 0.4474 ±0.0069 0.0984 ±0.0004 0.2696 0.0828 0.3757 0.0865 0                
+
+> 2
+> 4
+> 6
+> 8
+> Validation Energy MAE
+> 10k
+> 0
+> 2
+> 4
+> 6
+> 8
+> Test Energy MAE
+> 10k
+> 05000 10000 15000 20000
+> Training Step
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Validation Force MAE
+> 10k
+> 05000 10000 15000 20000
+> Training Step
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Test Force MAE
+> 10k
+> 7000 8500 10000
+> 0.325
+> 0.350
+> 0.375
+> 0.400
+> 7000 8500 10000
+> 0.45
+> 0.50
+> 7000 8500 10000
+> 0.095
+> 0.100
+> 7000 8500 10000
+> 0.095
+> 0.100
+> 0.105
+
+PaMM Improves Early-to-Mid Budget Training   
+
+> Baseline Gate-only Mainline affine
+
+Figure 3: Anytime validation and test curves under the matched protocol. Both PaMM variants improve on the plain UMA-S baseline before full convergence. Gate-only is strongest on energy near the locked budget, while the affine-equipped variant is strongest on force. 
+
+A.3 Companion-Wave Robustness Results 
+
+We also completed a companion wave designed to stress the paper’s central comparison without changing its scope. Its role is narrower than the main-text tables: it asks whether the locked 10k-step comparison remains directionally stable across repeated seeds, and how the same variants compare under one moderately longer 20k-step budget. The repeated 10k comparison preserves the energy-oriented gate-only advantage on average, but the force differences remain extremely small. The 20k follow-up keeps the same main interpretation as the paper: the memory mechanism remains competitive, while the fusion choice mainly shifts the operating point rather than revealing a uniformly dominant late-budget winner. 13 0.020 0.025 0.030 0.035 0.040 0.045      
+
+> Energy MAE / atom
+> Rattled-relax
+> Rattled-subsampled
+> Rattled
+> AIMD-3000
+> AIMD-1000
+> 0.4%
+> 1.9%
+> 6.5%
+> 3.3%
+> 6.3%
+> 0.06 0.08 0.10 0.12 0.14 0.16
+> Force MAE
+> 0.1%
+> 2.0%
+> 2.6%
+> 0.8%
+> 1.2%
+
+Held-out OMAT24 Source-family Generalization  
+
+> Baseline PaMM
+
+Figure 4: Held-out OMAT24 source-family comparison at the matched checkpoint. Bars com-pare the plain baseline and the evaluated PaMM checkpoint on each source family. The PaMM checkpoint is consistently better across all five source families on both energy and force MAE. No-gate        
+
+> Pair-only
+> Triplet-only
+> Random-bucket
+> MLP control
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> Test Energy MAE
+> 0.4601 0.4673 0.4627 0.4623
+> 0.5089
+> No-gate
+> Pair-only
+> Triplet-only
+> Random-bucket
+> MLP control
+> 0.00
+> 0.02
+> 0.04
+> 0.06
+> 0.08
+> 0.10
+> Test Force MAE
+> 0.0978 0.0990 0.0988 0.0990 0.1020
+
+Aligned Control Experiments at the Paper Budget 
+
+Figure 5: Visual summary of the aligned 10k-step controls. Pair-only and triplet-only remain weaker than the full pair+triplet memory path, while the parameter-matched MLP control is the clearest negative reference. 
+
+A.4 Anytime and Source-Family Visualizations A.5 Visual Summary of the Controls A.6 External and OOD Boundary Checks 
+
+The appendix is the right place for external evidence that is informative but less tightly protocol-matched than the main OMAT comparison. The role of these experiments is not to upgrade the paper into a broad transfer claim, but to check how the proposed memory path behaves once eval-uation is pushed outside the main in-domain setting. The picture is mixed rather than decisive: the sampled Alexandria-PBE comparison is slightly unfavorable to PaMM, the harder family-holdout pilot remains only mildly positive, and the planned MPtrj benchmark was not yet run at paper freeze. We therefore treat all three as boundary evidence rather than as core support for the paper’s main claim. 14 Variant Shards Samples Energy / atom ↓ Force ↓                
+
+> Baseline 10 5000 0.05799 0.02561
+> PaMM 10 5000 0.05853 0.02588 Baseline 20 10000 0.06076 0.02535
+> PaMM 20 10000 0.06122 0.02552
+
+Table 8: Alexandria-PBE external benchmark at the 10k training checkpoint. We report two evaluation sample counts from stored benchmark logs. PaMM remains close to the plain baseline, but in this sampled external comparison it is slightly worse on both energy and force MAE at both sizes. We therefore treat Alexandria as a comparability check rather than as positive transfer evi-dence for the main paper claim.            
+
+> Tracker ID Host / setting Variant Status
+> R024 Medium host ( K10L4 ,max_atoms=700 )Baseline RUNNING R025 Medium host ( K10L4 ,max_atoms=700 )PaMM RUNNING
+
+Table 9: Experiment-record placeholder for the planned medium-host OMAT boundary check. 
+
+The tracker contains the intended baseline and PaMM runs beyond UMA-S, but no stable evaluation summary was archived at paper freeze. We therefore report only the tracked setup and status here, not numerical results. 
+
+A.7 Tracked Medium-Host Boundary Check 
+
+The experiment record also includes a planned host-scaling check beyond UMA-S. In the tracked wave, R024 and R025 correspond to a medium-host OMAT comparison with a K10L4 setting and 
+
+max_atoms=700 , intended as appendix-only boundary evidence rather than as a main-paper rescue path. At the paper-freeze snapshot used for this submission, both tracker entries were still marked as running and no stable checkpoint-level evaluation summary had been archived. We therefore record the intended setup below without using it as numerical evidence. 
+
+A.8 Planned MPtrj External Placeholder 
+
+We also reserve MPtrj as a planned external benchmark beyond the current OMAT-centered study. This comparison was not yet run at paper freeze, so we keep it only as a placeholder to make the intended evidence package explicit rather than to imply that an unreported result was favorable. 
+
+A.9 Harder OOD Family-Holdout Pilot 
+
+We also ran a first harder OOD pilot under a leave-one-source-family-out protocol. The completed pilot was a rattled holdout: all rattled-300/500/1000 training sources were removed from the training mix, and evaluation was performed only on held-out rattled validation and test splits. We compare only the plain baseline and the gate-only PaMM variant, keeping the same UMA-S host and the same 10k-step budget as in the main paper. This pilot is informative because it is only mildly positive rather than decisive. Under the harder family-holdout shift, PaMM remains broadly comparable to the baseline and does not yet justify a stronger OOD headline. Its value is to mark the current boundary of the paper’s strongest claim, especially when read together with the mixed Alexandria comparison and the currently unfilled MPtrj placeholder above. 
+
+A.10 Mechanism Analyses 
+
+The following plots are intended as mechanism-oriented consistency checks rather than as causal proof. They ask whether the observed gains align with the proposed story that periodic materials repeatedly instantiate motifs that can be reused through an explicit memory path. Figure 6 shows that the empirical motif distribution is concentrated rather than flat, which supports the premise that periodic local geometry presents repeated objects worth storing. Figure 7 shows 15 Dataset Compared systems Intended budget Status    
+
+> MPtrj Baseline vs. PaMM Locked 10k checkpoint export NOT_RUN
+
+Table 10: Placeholder for planned MPtrj external evaluation. No stable MPtrj run or archived metric summary was available at paper freeze, so the paper does not use this benchmark as evidence. We include the placeholder only to document the intended next external check.                 
+
+> Variant Val E ↓Val F ↓Test E ↓Test F ↓
+> Gate-only PaMM 0.3611 0.1498 0.4719 0.1485 Baseline 0.3627 0.1499 0.4803 0.1485
+
+Table 11: Leave-one-rattled -family-out OOD pilot at the 10k-step budget. Gate-only PaMM is slightly better on validation energy/force and test energy, while test force is tied. We therefore treat this as a boundary check rather than as core supporting evidence. that the memory path is used selectively across layers and source families rather than behaving like a uniform feature concatenation. Figure 8 is correlational, but it is directionally consistent with the intended reuse story: more frequent motifs tend to align with more favorable PaMM–baseline deltas. 
+
+A.11 Theory-Only Overhead Analysis 
+
+PaMM does not introduce a second message-passing stack or a new all-to-all interaction pattern. Its added work is local lookup plus local modulation, which is why we view it as a controlled additive memory path rather than a replacement backbone. 
+
+A.12 Bucket-Count Sweep 
+
+We also swept the PaMM bucket count on UMA-S under the same 10k-step protocol, using matched pair and triplet table sizes of 2048, 4096, 8192, and 16384. The trend is stable: increasing the bucket count from 2k to 8k improves both validation and test metrics, while moving from 8k to 16k gives only marginal additional energy benefit and no consistent force improvement. 16 4 5 6 7 8 9 10 11 12 13 14 15 
+
+Distance Bin 
+
+> 7-7
+> 3-3
+> 7-33
+> 7-53
+> 53-7
+> 33-7
+> 76-3
+> 12-3
+> 3-76
+> 3-12
+> 12-12
+> 53-53
+> Element Pair  (Zi, Zj)
+
+Frequent Pair Motifs Recur Across Validation Structures 
+
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> 1.2
+> 1.4
+> log 10  (1 + count)
+
+Figure 6: Frequent pair motifs recur across the analyzed OMAT24 validation slice. A relatively small subset of pair types occupies a large fraction of the motif mass. 0 1 2 3
+
+Layer 
+
+> aimd_1000
+> Source Family
+
+PaMM Gates Are Selectively Stronger Across Layers and Families 
+
+> 1.42
+> 1.44
+> 1.46
+> 1.48
+> 1.50
+> 1.52
+> 1.54
+> 1.56
+> Mean Gate
+
+Figure 7: Gate usage is structured across layers and source families. The mean scalar gate magnitude is not uniform, suggesting that the memory path is used selectively rather than as a static extra feature block. 1
+
+2-3 
+
+4-7 
+
+8-15 
+
+16-31 
+
+32-63 
+
+64-127 
+
+128-255 
+
+256-511 
+
+512-1023 
+
+1024-2047 
+
+4096-8191 
+
+Motif Frequency Bin 
+
+0.05 
+
+0.04 
+
+0.03 
+
+0.02 
+
+0.01 
+
+0.00    
+
+> Mean  Error (PaMM - Baseline)
+> -0.036
+> -0.020
+> -0.031
+> -0.035
+> -0.052 -0.052 -0.052
+> -0.030
+> -0.022
+> -0.052
+> -0.029
+> -0.052
+
+0
+
+10 
+
+20 
+
+30 
+
+40 
+
+50 
+
+> Motif Count
+
+Frequent Motifs Tend to Show Larger PaMM Gains 
+
+Figure 8: More frequent motifs tend to align with larger PaMM gains in the analysis slice. The plotted quantity is the mean error change (PaMM − baseline) , so lower is better. 17 Table 12: Theoretical overhead decomposition of PaMM. Here E is the number of directed edges, 
+
+T is the number of enumerated triplets, d is the memory width, H is the number of hash functions, and L is the number of message-passing layers. 
+
+Component Added cost Pair hash memory parameters O(HM pair d); lookup work linear in E
+
+Triplet hash memory parameters O(HM tri d); enumeration and aggregation linear in T
+
+Edge-wise gate edge-local projections and scalar modulation, linear in L and active edges Affine modulation per-layer memory MLP plus channel-wise affine update, linear in 
+
+L, E, and edge width 
+
+Buckets Val E ↓ Val F ↓ Test E ↓ Test F ↓
+
+2048 0.04435 0.10507 0.06121 0.10851 4096 0.04373 0.10515 0.06009 0.10844 8192 0.04301 0.10464 0.05905 0.10833 
+
+16384 0.04315 0.10487 0.05818 0.10849 
+
+Table 13: Bucket-count sweep for PaMM on UMA-S at the 10k checkpoint. Performance im-proves substantially from 2k to the 8k–16k regime, with diminishing returns beyond 8k. 2048 4096 8192 16384    
+
+> Bucket Count
+> 0.045
+> 0.050
+> 0.055
+> 0.060
+> Energy MAE
+> Validation
+> Test
+> 2048 4096 8192 16384
+> Bucket Count
+> 0.105
+> 0.106
+> 0.107
+> 0.108
+> Force MAE
+> Memory Capacity Sweep
+
+Figure 9: Bucket-count sweep at the matched 10k-step budget. Increasing the number of pair/triplet memory buckets from 2k to 8k improves both validation and test metrics, while the move from 8k to 16k gives only marginal additional benefit. 18
