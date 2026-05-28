@@ -1,0 +1,602 @@
+Title: CALMem : Application-Layer Dual Memory for Conversational AI
+
+URL Source: https://arxiv.org/pdf/2605.20724v1
+
+Published Time: Thu, 21 May 2026 00:34:51 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# Application-Layer Dual Memory for Conversational AI: Achieving Virtually Unbounded Context Without Model Modification       
+
+> Rajendra Narayan Jena Rajan Padmanabhan Sankar Arumugam Infosys Limited Infosys Limited Infosys Limited
+> rajendra_jena@infosys.com Rajan_P@infosys.com sankaran_arumugam@infosys.com
+
+Abstract 
+
+Large language models (LLMs) operate within fixed context windows that fundamentally limit conversational continuity. When con-text fills, compaction discards history irre-versibly; when sessions end, all memory re-sets to zero. Existing solutions—larger context windows, retrieval-augmented generation for knowledge bases, and memory-augmented ar-chitectures such as MemGPT—either require model modification, impose provider lock-in, or do not address the compaction continu-ity problem. We present CALMem (Con-versational Application-Layer Memory) , an application-layer dual memory architecture that gives LLM-based conversational assistants virtually unbounded effective context with-out any modification to the underlying model. CALMem combines two complementary mem-ory subsystems: an episodic memory layer built on sliding-window vector embeddings of con-versation history, and a semantic memory layer of agent-writable structured facts. A token-budget-adaptive injection mechanism, called the MOIM (Message of Injected Memory) ,automatically retrieves and injects relevant past context each turn, scaling injection depth in-versely with context pressure. A key contri-bution is intra-session retrieval : compacted-away turns from the current session remain searchable, closing a gap unaddressed by prior work. The system is implemented as a pure ap-plication layer in a production Rust codebase, is provider-agnostic, and degrades to original LLM behaviour with zero overhead when dis-abled. We describe the architecture, design decisions, and performance characteristics, and analyse the trade-offs that guided each imple-mentation choice. 
+
+1 Introduction 
+
+The context window is the fundamental unit of memory for a large language model. Everything the model “knows” during a conversation must fit within it. Current frontier models offer windows that have grown dramatically: GPT-5.2 provides 400,000 to-kens (OpenAI, 2026), Claude 4.6 Sonnet extends to 1,000,000 (Anthropic, 2026), Gemini 2.0 Pro reaches 2,000,000 (Google DeepMind, 2026), and Alibaba’s Qwen3-30B supports up to 1,000,000 tokens (Alibaba Cloud, 2026). Despite these re-markable capacities, two structural problems re-main unsolved. First, windows are still finite: long-running, task-intensive conversations—particularly in software engineering, research, or multi-day projects—exhaust even million-token windows. Second, and more fundamentally, every new con-versation begins at zero regardless of window size. A 2,000,000-token window provides no memory of yesterday’s session. Practical deployments handle this through com-paction : when the context approaches capacity, older turns are summarised and discarded from the active window. Compaction preserves the overall thread of conversation but loses detail. Once a turn is compacted away, any specific fact, decision, or piece of work it contained becomes inaccessible to the model—permanently, unless re-introduced through user effort. The cross-session problem is worse. Every new conversation begins from a blank slate. A user who spent three sessions last week debugging a complex system must re-explain the entire context at the start of session four. The model has no memory of any of it. These are not problems with model capabil-ity. They are structural consequences of the con-text window as an architectural primitive. The question is not whether to build larger windows— hardware and attention complexity impose real lim-its (Vaswani et al., 2017)—but whether the applica-tion layer can compensate intelligently. There is also a third, practical problem: cost .LLM providers bill per token in context. Sending a 2,000,000-token window to the model on every turn 
+
+> arXiv:2605.20724v1 [cs.IR] 20 May 2026
+
+costs proportionally more than sending a focused, compact context. For an application that manages memory intelligently—retrieving only the ∼750 to-kens of relevant history each turn rather than retain-ing millions of tokens in the active window—the per-turn API cost can be one to two orders of mag-nitude lower than the naïve “use the largest window available” approach. CALMem is not only a mem-ory architecture; it is inherently a cost-efficiency architecture. 
+
+Retrieval-Augmented Generation (RAG) (Lewis et al., 2020) addresses this for static knowledge bases: pre-index a corpus, retrieve relevant passages at query time, inject into the prompt. But applying RAG to conversation history introduces problems not present in document retrieval. Conversation is not a corpus: it is a temporally ordered, contextually entangled stream. 
+
+MemGPT (Packer et al., 2023) introduced the idea of OS-inspired virtual context for LLMs, treat-ing the context window as RAM and external stor-age as disk. This is a powerful framing, but it requires custom prompting infrastructure, relies on the model itself to make memory management decisions, and does not distinguish episodic from semantic memory. We propose a different approach: build the mem-ory system entirely in the application layer, invisi-ble to the model, requiring no prompt changes, no fine-tuning, and no modification to the underlying LLM provider. This paper makes the following contributions: 1. CALMem , a dual memory architecture com-bining episodic retrieval (vector embeddings of conversation history) and semantic retrieval (structured agent-writable facts), deployed as a pure application layer. 2. Token-budget-adaptive injection : a MOIM mechanism that scales retrieval depth propor-tionally to available context headroom, pre-venting memory injection from accelerating the compaction it is designed to mitigate. 3. Intra-session continuity : episodic retrieval operates over compacted-away turns from the current session, not just prior sessions— re-covering context that no existing system re-trieves. 4. Zero-regression design : the system degrades to standard LLM behaviour when disabled, with no latency overhead, no schema depen-dency, and no prompt structure changes. 5. A concrete implementation in a production Rust system with analysis of design deci-sions, performance characteristics, and ob-served trade-offs. The rest of the paper is organised as follows. Sec-tion 2 reviews related work. Section 3 describes the overall architecture. Sections 4 and 5 detail the two memory subsystems. Section 6 covers token-budget-adaptive injection. Section 7 discusses per-formance optimisation. Section 8 describes the im-plementation. Section 9 presents evaluation. Sec-tion 10 discusses limitations and future work. Sec-tion 11 concludes. 
+
+2 Related Work 
+
+2.1 Retrieval-Augmented Generation 
+
+The original RAG framework (Lewis et al., 2020) augments autoregressive language models with a non-parametric retrieval component: a dense pas-sage retrieval (DPR) (Karpukhin et al., 2020) model over a fixed document corpus. RAG was designed for open-domain question answering over static knowledge bases, not for conversational memory. Subsequent work has extended RAG to dialogue settings (Xu et al., 2022; Zhong et al., 2023), but these approaches typically treat conversation his-tory as a flat document collection, losing the se-quential and session structure that makes conversa-tional memory different from document retrieval. 
+
+2.2 Long-Context Language Models 
+
+A parallel line of work extends the context win-dow itself through architectural innovations: sparse attention (Child et al., 2019), linear attention (Katharopoulos et al., 2020), and sliding window attention (Beltagy et al., 2020). More recently, FlashAttention (Dao et al., 2022) makes very large windows computationally tractable. Despite these advances, the context window remains finite. More importantly, larger windows do not address the cross-session problem: each new conversation still begins with zero memory regardless of window size. 
+
+2.3 Memory-Augmented Language Models 
+
+MemGPT (Packer et al., 2023) introduced a com-pelling operating-system analogy: the context win-dow as RAM, with a hierarchical external memory as disk, managed by the model itself through ex-plicit function calls. This framework has inspired a family of agent memory architectures (Sumers et al., 2023; Wang et al., 2023). The key limita-tion is that memory management is delegated to the model. Generative Agents (Park et al., 2023) demon-strated long-horizon memory for simulated social agents by combining reflection, synthesis, and re-trieval. The system is powerful but purpose-built for simulation; it is not designed as a drop-in layer for general-purpose conversational assistants. 
+
+2.4 Conversation Summarisation 
+
+An alternative to retrieval is summarisation: period-ically compress conversation history into a running summary (Wu et al., 2021; Chen et al., 2023). Sum-marisation loses detail by design. A retrieval-based approach recovers specific detail on demand rather than trading it for compression. Our system is not an alternative to summarisation but a complement: compaction runs when necessary, and the retrieval layer recovers relevant compacted content. 
+
+2.5 Recent RAG and Agent Memory Advances (2024–2026) 
+
+RAPTOR (Sarthi et al., 2024) introduces recursive abstractive processing: it builds a tree of progres-sively summarised abstractions using an LLM, en-abling retrieval at multiple levels of granularity. CALMem deliberately avoids recursive abstrac-tion for conversation history—raw chunk preserva-tion maintains verbatim detail that summarisation would erase, and abstraction requires an additional LLM call per indexed message. HippoRAG (Gutiérrez et al., 2024) draws inspi-ration from hippocampal memory indexing theory, using a knowledge graph to link named entities and Personalised PageRank for retrieval scoring. The biological framing parallels CALMem’s own grounding in Tulving’s episodic/semantic memory distinction (Tulving, 1972). However, HippoRAG targets static knowledge bases; its graph construc-tion is not suited to the append-only, session-structured nature of conversation history. GraphRAG (Edge et al., 2024) applies commu-nity detection on entity-relationship graphs to sup-port global queries over large corpora. This is powerful for corpus-level summarisation but archi-tecturally misaligned with personal conversational memory. The period 2024–2026 has seen MemGPT evolve into Letta, a production-grade agentic mem-ory platform, and the emergence of dedicated memory-layer services (Mem0, Zep). These sys-tems validate the demand for application-layer memory but typically operate as external services, introducing network latency, data privacy concerns, and provider dependency. CALMem runs entirely in-process with zero network dependency. 
+
+2.6 Positioning 
+
+CALMem occupies a position that prior work does not: it is (a) a pure application layer requiring no model modification, (b) aware of both compaction state and session boundaries, (c) equipped with two complementary memory types, and (d) token-budget-adaptive. Table 1 summarises the compari-son. 
+
+3 System Architecture 
+
+3.1 Overview 
+
+CALMem is structured as three cooperating layers, illustrated in Figure 1.                                
+
+> +---------------------------------------------+ |LLM Provider Layer ||(Claude / GPT / any provider -- unmodified)| +------------------+---------------------------+ | receives enriched context +------------------v---------------------------+ |Context Management Layer (host app) ||+----------------+ +--------------------+ | || Active Context | |MOIM Injector | | || (context window|<-| (token-budget-| | ||+ compaction) | |adaptive) | | |+----------------+ +--------+-----------+ | || retrieves ||+----------v-----------+ | ||CALMem Memory Layer | | || +---------+--------+ | | || | Episodic| Semant.| | | || | Memory | Memory | | | || +---------+--------+ | | |+----------------------+ | +---------------------------------------------+
+
+Figure 1: CALMem three-layer architecture. The LLM provider receives an enriched context assembled by the MOIM injector from both active context and memory layer retrieval. 
+
+3.2 The Three Layers LLM Provider Layer. The underlying language model, accessed via any standard API. CALMem makes no assumptions about the model beyond the existence of a message-based conversation inter-face. No fine-tuning, no special tokens, no prompt structure changes are required. 
+
+Context Management Layer. Manages the ac-tive conversation window and handles compaction Table 1: Comparison with related approaches.                                         
+
+> System Layer Memory Types Budget-Aware Intra-Session Provider-Agnostic
+> RAG (Lewis et al., 2020) Application Episodic only No No Yes MemGPT (Packer et al., 2023) Prompt/Agent Hierarchical No No Partial Gen. Agents (Park et al., 2023) Application Episodic + Reflection No No Yes RAPTOR (Sarthi et al., 2024) Application Hierarchical (tree) No No Yes HippoRAG (Gutiérrez et al., 2024) Application Graph-indexed episodic No No Yes Long-context LLMs (Google DeepMind, 2026) Model Up to 2M tokens N/A Yes No
+> CALMem (this work) Application Episodic + Semantic Yes Yes Yes
+
+when the window approaches capacity. CALMem integrates non-invasively: a hook in the message persistence path triggers background indexing; the MOIM injector runs once per turn to prepend re-trieved memory to the system context. 
+
+Memory Layer. The novel contribution. Two independent stores with complementary retrieval characteristics, described in Sections 4 and 5. 
+
+3.3 The MOIM Interface 
+
+The MOIM (Message of Injected Memory) is the interface between the memory layer and the context management layer. It is a structured text block prepended to the system prompt each turn, containing the most relevant retrieved content from both memory subsystems. The model receives this as context—it does not call retrieval explicitly (un-like MemGPT). The content and size of the MOIM block adapt to available context headroom, as de-scribed in Section 6. 
+
+3.4 Indexing Pipeline 
+
+Every message persisted to the conversation database triggers a background indexing task (Fig-ure 2). This is non-blocking: the message commit completes before indexing begins. The critical in-variant is that the conversation database is always the source of truth; the memory index is a derived, recoverable structure. 
+
+add_message() |vtx.commit() [message durable in SQLite] |v [tokio::spawn] +-- background task -------+ | extract_chunks(msg) || embed() via fastembed || INSERT OR IGNORE || rag_chunks || update cache (if warm) |+--------------------------+ 
+
+Figure 2: Indexing pipeline. The message is committed to the database before any indexing work begins, ensur-ing durability regardless of indexing outcome. 
+
+The following Rust excerpt shows the non-blocking dispatch at the message persistence call site.  
+
+> 1
+
+// Message is durable in SQLite before indexing starts .  
+
+> 2
+
+tx . commit () . await ?;  
+
+> 34
+
+if is_rag_enabled () { 
+
+> 5
+
+let ( sid , mid , text ) = ( 
+
+> 6
+
+session_id . to_string () ,  
+
+> 7
+
+msg . id . clone () ,  
+
+> 8
+
+msg . content . clone ()  
+
+> 9
+
+);  
+
+> 10
+
+tokio :: spawn ( async move { 
+
+> 11
+
+let indexer = RagIndexer :: instance () ;  
+
+> 12
+
+if let Err (e) = indexer . index_message (  
+
+> 13
+
+& sid , & mid , & text ). await 
+
+{ 
+
+> 14
+
+tracing :: warn !( " RAG indexing failed : {} " , e);  
+
+> 15
+
+} 
+
+> 16
+
+}) ;  
+
+> 17
+
+}
+
+Listing 1: Non-blocking indexing dispatch after message commit. 4 Episodic Memory: Vector-Based Conversational Retrieval 
+
+4.1 Design Rationale 
+
+Episodic memory captures the sequential, experi-ential record of conversation: what was said, when, in what context. Retrieval from episodic memory is fuzzy —the user asking “what was that approach we discussed for the authentication bug?” does not know the exact wording of the relevant turn. Dense vector retrieval is the natural fit. We use all-MiniLM-L6-v2 via the fastembed li-brary (Reimers and Gurevych, 2019)—a 384-dimensional sentence embedding model imple-mented in pure Rust via ONNX, requiring no Python runtime or sidecar process. The model pro-duces ∼3 ms embeddings on CPU, is ∼23 MB, and achieves strong performance on the MTEB seman-tic textual similarity benchmarks (Muennighoff et al., 2022) while remaining lightweight enough for a desktop application. 
+
+4.2 Chunking Strategy 
+
+We apply sliding-window chunking with overlap: each message is divided into chunks of at most 1,000 characters ( ≈250 tokens), with consecutive chunks overlapping by 200 characters (Figure 3). The overlap ensures that semantically related sen-tences straddling a chunk boundary are captured by at least one chunk.  
+
+> Message text (2400 chars): +---- Chunk 1 [0..1000] -----+ +---- Chunk 2 [800..1800] ----+ +--- Chunk 3 [1600..2400] ---+ |<200>| |<200>|
+
+Figure 3: Sliding-window chunking (size=1000, over-lap=200, step=800). Overlap preserves cross-boundary semantic context. 
+
+Chunk boundaries are snapped to the nearest whitespace within the overlap window to avoid mid-word cuts. All chunking operates on Unicode scalar values (characters), not bytes, ensuring correctness for multi-byte UTF-8 text. Short messages ( ≤1,000 characters) are stored as a single chunk—a fast path that avoids unnecessary computation for the majority of conversational turns. 
+
+4.3 Intra-Session Retrieval 
+
+A critical and novel aspect of CALMem is that 
+
+intra-session retrieval operates over compacted-away turns from the current session, not only past sessions. Standard RAG over conversation history is typ-ically applied cross-session. This misses a sig-nificant class of relevant content: turns from the current session that have already been compacted out of the active context window. ConvMem imple-ments this by filtering at search time: chunks from the current session whose message IDs appear in the active context are excluded (they are already visible to the model); compacted-away chunks are included.                                           
+
+> 1// active_message_ids : HashSet of IDs in the context window .
+> 2// Compacted - away chunks pass through and are scored normally .
+> 3let exclude =chunk . session_id == current_session_id
+> 4&& active_message_ids . contains (& chunk . message_id );
+> 56if ! exclude {
+> 7let score =cosine_similarity (
+> 8& query_vec , & chunk . embedding );
+> 9if score >= SIMILARITY_THRESHOLD {
+> 10 results . push (( score ,
+> 11 chunk . session_id . clone () ,
+> 12 chunk . chunk_text . clone () ));
+> 13 }
+> 14 }
+
+Listing 2: Intra-session filter predicate applied during scoring. 
+
+This gives the model access to a seamless mem-ory spanning: current active context (directly vis-ible) → compacted current session history (intra-session retrieval) → prior sessions (cross-session retrieval). 
+
+4.4 Retrieval Mechanics 
+
+At search time, the query text is embedded using the same model as indexing. Cosine similarity is computed against all stored embeddings. Aminimum threshold of 0.4 filters results not rel-evant enough to include. The top-k results (default 
+
+k = 5 ) are returned ranked by similarity. The retrieval is exact (brute-force scan), not ap-proximate. For the target deployment scale (up to ∼100K chunks, representing months to years of daily use), exact retrieval is computationally adequate and avoids the approximation error and cold-start penalties of graph-based ANN indices such as HNSW (Malkov and Yashunin, 2018) (see Section 7 for detailed analysis). 5 Semantic Memory: Structured Agent-Writable Facts 
+
+5.1 Design Rationale 
+
+Episodic memory is a poor fit for precise, stable, explicitly-stated facts. A user who tells the assistant their preferred programming language wants that fact retrieved with 100% precision regardless of semantic distance. This motivates a second mem-ory subsystem: semantic memory , a structured key-value store that the agent writes to explicitly and reads from automatically. Semantic memory in CALMem closely parallels its cognitive science counterpart (Tulving, 1972): general, decontextu-alised knowledge as opposed to episodic knowl-edge. 
+
+5.2 Structure and Persistence 
+
+Semantic memory is stored as a relational table (memory_facts ) with the following schema:                                                  
+
+> 1CREATE TABLE memory_facts (
+> 2id INTEGER PRIMARY KEY
+> AUTOINCREMENT ,
+> 3session_id TEXT NOT NULL ,
+> 4category TEXT NOT NULL DEFAULT '
+> general ',
+> 5key TEXT NOT NULL ,
+> 6value TEXT NOT NULL ,
+> 7created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ,
+> 8FOREIGN KEY ( session_id )
+> 9REFERENCES sessions ( id ) ON DELETE CASCADE
+> 10 );
+> 11 CREATE UNIQUE INDEX ON memory_facts ( session_id , key );
+
+Listing 3: Schema for the semantic memory store. 
+
+The UNIQUE INDEX on (session_id, key) en-ables upsert semantics. Categories (e.g., “prefer-ence”, “project”, “configuration”) allow structured filtering without schema changes. 
+
+5.3 Agent Interface 
+
+The agent interacts with semantic memory through four explicit tools exposed via the Model Context Protocol (MCP): • remember_fact — write or update a fact: 
+
+(key, value, category) 
+
+• recall_facts — search facts by key pattern and/or category, cross-session • forget_fact — delete a fact by key within the current session • search_memory — semantic search over episodic memory (bridges both subsystems) 
+
+5.4 Automatic Injection vs Explicit Retrieval 
+
+Semantic memory participates in MOIM injection automatically: all facts for the current session are injected into every turn. Cross-session fact retrieval is available but not injected automatically—the agent uses recall_facts when it needs facts from past sessions. This distinction prevents the injec-tion block from growing unbounded as the fact store accumulates across sessions. 
+
+6 Token-Budget-Adaptive Injection 
+
+6.1 The Injection Problem 
+
+Naïve memory injection creates a paradox: if mem-ory retrieval injects a fixed amount of context each turn, and the context window is already filling with active conversation, memory injection may con-sume capacity that accelerates compaction. The system designed to extend context ends up shorten-ing it. 
+
+6.2 The Four-Tier Budget Model 
+
+CALMem defines a context fill ratio r =
+
+current_tokens /context_window_capacity . The application-layer compaction threshold is set at 
+
+r = 0 .8. MOIM injection uses four tiers keyed on this ratio (Figure 4):                     
+
+> Fill ratio MOIM budget
+> r < 0.60 5 chunks ×600 chars
+> 0.60 ≤r < 0.70 3 chunks ×400 chars
+> 0.70 ≤r < 0.80 2 chunks ×250 chars
+> r≥0.80 Suppress injection
+
+Figure 4: MOIM token budget tiers. Injection depth scales inversely with context pressure. 
+
+At r ≥ 0.80 , compaction is imminent; episodic injection is suppressed. Fact injection (semantic memory) is not suppressed at any tier. The tier selection maps cleanly to a single Rust match expression. A noteworthy correctness detail: the boundaries are literal constants (0.60 , 0.70 ), not computed multiples of the compaction thresh-old. Computing 0.8 × 0.75 in IEEE 754 f32 arith-metic yields 0.6000000000000001 , which can misclassify values exactly at 0.60 .              
+
+> 1// / Returns ( max_chunks , max_chars ) or None to suppress .
+> 2fn moim_budget (r: f32 ) -> Option <( usize , usize ) > {3
+
+match r { 
+
+> 4
+
+r if r >= 0.80 => None ,// suppress  
+
+> 5
+
+r if r >= 0.70 => Some ((2 , 250) ) , // minimal  
+
+> 6
+
+r if r >= 0.60 => Some ((3 , 400) ) , // reduced  
+
+> 7
+
+_ => Some ((5 , 600) ) , // full  
+
+> 8
+
+} 
+
+> 9
+
+}
+
+Listing 4: MOIM budget tier selection using literal constants. 
+
+6.3 MOIM Format 
+
+The injected block is structured plain text prepended to the system prompt: 
+
+=== Memory Context === [Current session facts] [preference] language: Rust [project] current_project: auth-service [Relevant past context] [Session: "auth debugging 2024-11-12", sim: 0.87] "The token refresh logic was failing because..." [This session -- earlier] "We agreed to use RS256 for JWT signing..." === End Memory === 
+
+The format is intentionally readable: the model can understand and reference this content without any special parsing. No prompt engineering, spe-cial tokens, or model-side awareness of the injec-tion mechanism is required. 
+
+7 Performance Optimisation: In-Memory Embedding Cache 
+
+7.1 The I/O Bottleneck 
+
+In the default configuration, each MOIM re-trieval call loads all embedding blobs from the 
+
+rag_chunks table, deserialises each blob from little-endian binary (384 × 4 bytes per chunk), com-putes cosine similarity, and discards the data. At 50,000 chunks, this is approximately 75 MB of I/O per search—the dominant cost. Table 2 shows pro-jected latency across chunk counts for the DB-scan path. 
+
+Table 2: Brute-force search latency vs. chunk count. 
+
+Chunks Data loaded Est. latency 
+
+1,000 ∼1.5 MB ∼2–5 ms 10,000 ∼15 MB ∼20–50 ms 50,000 ∼75 MB ∼100–250 ms 100,000 ∼154 MB ∼200–500 ms 500,000 ∼750 MB ∼1–2.5 s 
+
+7.2 HNSW Analysis and Deferral 
+
+HNSW graphs (Malkov and Yashunin, 2018) offer 
+
+O(log n) approximate nearest-neighbour search. However, HNSW carries significant hidden costs for this deployment context: 
+
+Cold-start rebuild. HNSW must be rebuilt from all stored embeddings on every process start. At 100,000 chunks, rebuild takes 10–30 seconds on a single core. 
+
+Permanent RAM overhead. The graph occu-pies RAM for the entire process lifetime: ∼200– 400 MB at 100,000 chunks, ∼1–2 GB at 500,000. Unlike the DB-scan path, HNSW holds this mem-ory indefinitely—unacceptable for a desktop appli-cation. Given these trade-offs, HNSW is deferred in favour of a simpler alternative. 
+
+7.3 In-Memory Embedding Cache 
+
+We maintain an optional in-memory 
+
+Vec<CachedChunk> —a pre-deserialised cache of all embeddings—built lazily on first search and updated incrementally as new messages are indexed.  
+
+> 1
+
+let scored : Vec <_ > = if 
+
+is_rag_cache_enabled () { 
+
+> 2
+
+self . ensure_cache_warm () . await ?;  
+
+> 3
+
+// Pure - compute path : no DB I/O.  
+
+> 4
+
+tokio :: task :: block_in_place (|| { 
+
+> 5
+
+let guard = self . embedding_cache . lock () . unwrap () ;  
+
+> 6
+
+let cache = guard . as_ref () . expect (" warm ");  
+
+> 7
+
+cache . iter ()  
+
+> 8
+
+. filter (| c| !(  
+
+> 9
+
+c. session_id == current_session_id  
+
+> 10
+
+&& active_ids . contains (& c. message_id )))  
+
+> 11
+
+. filter_map (| c| { 
+
+> 12
+
+let s =cosine_similarity (  
+
+> 13
+
+& query_vec , &c. embedding );  
+
+> 14
+
+(s >= SIMILARITY_THRESHOLD ). then (||  
+
+> 15
+
+(s , c. session_id . clone () ,  
+
+> 16
+
+c. chunk_text . clone () ))  
+
+> 17
+
+}) . collect ()  
+
+> 18
+
+})  
+
+> 19
+
+} else { 
+
+> 20
+
+// DB - scan path .  
+
+> 21
+
+self . search_via_db (  
+
+> 22
+
+query_vec , current_session_id ,  
+
+> 23
+
+active_message_ids ). await ? 
+
+> 24
+
+}; 
+
+Listing 5: Two-path search dispatch: cache vs. DB-scan. New messages append to the Vec incrementally; no full reload is required. Deletes invalidate the cache and trigger a full reload on the next search. 
+
+Durability guarantee. The cache is always a mirror of the database, never the primary store. The indexing pipeline writes to rag_chunks before updating the Vec. A crash at any point leaves the database intact; the cache is reconstructed on next start. The cache is exposed as a user toggle: RAG + DB scan (original behaviour, lower RAM) vs RAG + in-memory cache (faster search, ∼1.5 MB RAM per 1,000 chunks). Table 3 shows the projected improvement. 
+
+Table 3: Latency comparison: DB scan vs. in-memory cache. 
+
+Chunks DB scan Cache RAM 
+
+10,000 20–50 ms 5–10 ms ∼15 MB 50,000 100–250 ms 20–40 ms ∼75 MB 100,000 200–500 ms 40–80 ms ∼150 MB 
+
+8 Implementation 
+
+8.1 Technology Stack 
+
+CALMem is implemented in Rust as part of a pro-duction AI assistant application. The choice of Rust is motivated by (a) the same process hosts the LLM agent, HTTP server, and memory layer— memory safety and predictable performance are non-negotiable; (b) fastembed (Qdrant, 2023), the embedding library used, is a pure-Rust ONNX in-ference implementation requiring no Python run-time. The persistent store is SQLite, accessed via the 
+
+sqlx async database library. SQLite was chosen over a dedicated vector database for deployment simplicity: a single file, zero administration, trans-actions shared with the conversation store. Em-bedding blobs are stored as raw little-endian binary (384 × 4 bytes = 1,536 bytes per chunk). No vector database extension (e.g., sqlite-vss) is required. 
+
+8.2 Schema and Lazy Initialisation 
+
+Both memory tables are created lazily on first access via OnceCell::get_or_try_init , using 
+
+CREATE TABLE IF NOT EXISTS . This avoids coupling the memory layer to the session man-ager’s migration versioning—the memory layer can be added to any existing deployment without a database migration. 
+
+8.3 Zero-Regression Toggle 
+
+The entire CALMem system is gated by a single experiment flag ( rag_enabled ). When disabled: 
+
+add_message() skips the tokio::spawn indexing task entirely; the MOIM injector returns an empty block; no tables are read or written. The flag can be toggled via CLI ( rag enable / disable ) or through the settings UI without application restart. 
+
+8.4 User Interface 
+
+Two toggle switches are exposed in the application settings: 1. Memory Search (RAG) — enables/disables the entire CALMem system 2. Cache embeddings in RAM — selects DB-scan vs. in-memory cache path (active only when toggle 1 is on) Toggle 2 is visually disabled and greyed when tog-gle 1 is off, making the dependency relationship immediately apparent. 
+
+8.5 CLI Tools       
+
+> rag enable # enable CALMem, backfill all sessions rag disable # disable CALMem (index data preserved) rag index --all # manually reindex all sessions rag stats # chunk count, session count, cache state rag cache-enable # switch to in-memory cache path rag cache-disable # revert to DB-scan path
+
+9 Evaluation 
+
+9.1 Retrieval Relevance 
+
+CALMem’s retrieval pipeline surfaces relevant past context across three categories: 
+
+Cross-session factual recall. Queries with clear topical overlap consistently retrieve relevant chunks with similarity scores of 0.65–0.85. With-out CALMem, the model must ask the user to re-explain prior context. 
+
+Intra-session continuity. With intra-session re-trieval, compacted turns remain searchable. Sim-ilarity scores for intra-session retrieval tend to be higher (0.75–0.90) due to shared vocabulary and topic. 
+
+Semantic memory precision. Structured facts are injected with 100% precision for the current session. Users who instruct the agent to remember their preferences observe those preferences being applied consistently across the entire session with-out re-statement. 9.2 Latency 
+
+Table 4 reports observed search latencies on a Mac M2 processor with the SQLite database on an inter-nal SSD. 
+
+Table 4: Observed search latency (Mac M2, internal SSD). 
+
+Chunks DB scan (median) Cache (median) 
+
+∼5,000 12 ms 4 ms 
+
+∼22,000 48 ms 16 ms 
+
+∼60,000 142 ms 38 ms 
+
+Both paths are imperceptible within the larger latency of LLM API calls (typically 500 ms–3 s for first token). 
+
+9.3 Token Budget Adaptation 
+
+At r = 0 .55 , a full injection of 5 chunks × 600 characters adds approximately 750–900 tokens— approximately 0.4–0.9% of a 200K token window, a negligible contribution. At r = 0 .75 , injection is limited to ∼130 tokens. At r ≥ 0.80 , injection is suppressed entirely. 
+
+9.4 Indexing Overhead 
+
+The tokio::spawn dispatch is sub-microsecond. Table 5 shows per-message indexing cost by stage. The embedding step dominates; even the 50 ms worst case has no user-visible impact. 
+
+Table 5: Per-message indexing cost by stage (Mac M2 CPU).                     
+
+> Message length Chunk Embed DB Total
+> Short ( <200 chars) <0.1 ms ∼3 ms ∼1 ms ∼4 ms Medium (500–1K chars) <0.1 ms ∼3 ms ∼1 ms ∼4 ms Long (2K–4K chars) <0.5 ms ∼9–15 ms ∼2 ms ∼12–18 ms Very long ( >8K chars) <1 ms ∼27–45 ms ∼4 ms ∼32–50 ms
+
+9.5 Retrieval Quality Metrics 
+
+We constructed an annotated evaluation set of 120 query–session pairs drawn from real conversation history across 30 sessions covering diverse topics. For each query, relevant chunks were manually labelled. We compare against BM25 (Robertson and Zaragoza, 2009) (SQLite FTS5) and TF-IDF baselines, following the zero-shot retrieval setup of BEIR (Thakur et al., 2021) adapted to the con-versational domain. Table 6 reports Precision@5, Recall@5, and MRR. 
+
+Table 6: Retrieval quality on the 120-query evaluation set. 
+
+Method P@5 R@5 MRR 
+
+TF-IDF (sparse) 0.51 0.47 0.58 BM25 (FTS5) 0.59 0.53 0.65 
+
+CALMem (dense, MiniLM) 0.74 0.69 0.81 
+
+Dense semantic retrieval outperforms both sparse baselines by a substantial margin, partic-ularly on queries that use different vocabulary than the indexed content. The MRR of 0.81 indicates that in 81% of cases the first retrieved result is already relevant. 
+
+9.6 Similarity Threshold Sensitivity 
+
+Table 7 shows precision and noise rate across five threshold values on the same evaluation set. The threshold of 0.40 was selected empirically as the knee of the precision–coverage curve. 
+
+Table 7: Threshold sensitivity: precision vs. noise rate.                      
+
+> Threshold P@5 Noise Avg. chunks
+> 0.25 0.54 0.46 4.8 0.30 0.61 0.39 4.6 0.35 0.69 0.31 4.2
+> 0.40 0.74 0.26 3.8
+> 0.45 0.78 0.22 2.9 0.50 0.81 0.19 1.8
+
+9.7 Dual Memory Ablation 
+
+Table 8 presents an ablation study over 40 extended conversation sessions measuring context recovery rate and fact consistency rate. The two subsystems are genuinely comple-mentary: episodic memory drives context recov-ery (0% →71%) while semantic memory drives fact consistency (31% →91%). Neither alone ap-proaches the performance of the combined system. 
+
+9.8 End-to-End Scenario Analysis 
+
+Table 9 presents six representative scenarios illus-trating the qualitative range of retrieval outcomes. Rows 4 and 5 illustrate the nuanced failure mode: a direct identifier lookup nearly always fails, but a semantic query about the surrounding context fre-quently succeeds. The limitation is “pure identifier lookup”, not ticket-related queries in general— a gap that hybrid BM25 + semantic retrieval (Sec-tion 10.2) is designed to close. Table 8: Ablation: contribution of each memory subsystem.                
+
+> Configuration Context recovery Fact consistency Notes
+> No memory (baseline) 0% 31% Facts in active context only Episodic memory only 67% 31% Cross-session context recovered; facts lost between sessions Semantic memory only 12% 89% Facts consistent; fuzzy recall absent
+> CALMem (both) 71% 91% Best on both dimensions
+> Table 9: Representative retrieval scenarios.
+
+Scenario Query type Without CALMem With CALMem Subsystem 
+
+API auth pattern dis-cussed 3 weeks prior Cross-session, semantic Model asks user to re-explain Retrieves prior ap-proach (sim. 0.82) Episodic User’s preferred code style re-stated 5 ses-sions ago Cross-session, factual Applies default style Applies user prefer-ence correctly Semantic Architecture decision made at session start, now compacted Intra-session Decision lost af-ter compaction Retrieves decision (sim. 0.88) Episodic (intra-session) Ticket number lookup: “find JIRA-1234” Exact match, identifier Not found Not found (∼5% recall) — identifier scores below threshold Neither (known gap) Ticket context query: “auth expiry bug we dis-cussed” Semantic, identifier context Not found Often found when con-text is rich ( ∼55% re-call) Episodic (partial) Running task across a multi-day project Multi-session, mixed No project con-text Injects facts + prior dis-cussion chunks Both 
+
+10 Discussion 
+
+10.1 Limitations Retrieval is semantic, not temporal. The system retrieves by semantic similarity. A query requiring temporal reasoning (“what did we discuss most recently about X?”) is not explicitly supported— the most recent relevant chunk is not necessarily the highest-scoring one. 
+
+No re-ranking. Retrieval uses first-stage cosine similarity only. A re-ranking step using a cross-encoder model (Nogueira and Cho, 2019) would improve precision at the cost of additional latency. 
+
+Single-user model. The current implementation is designed for single-user desktop deployment. The LazyLock singleton pattern and in-memory cache are not designed for multi-tenant use. 
+
+Chunking is not semantic. The sliding-window chunker splits text by character count. A semantics-aware chunker (splitting on sentence or paragraph boundaries) would produce more coherent retrieval units at the cost of variable chunk sizes. 
+
+10.2 Future Work Hybrid retrieval (BM25 + semantic). Dense re-trieval misses exact-match queries (ticket numbers, identifiers, specific names). Adding a BM25 com-ponent via SQLite FTS5 and combining scores with Reciprocal Rank Fusion (Cormack et al., 2009) would handle this class of query. 
+
+Search latency observability. Adding per-search timing to rag stats will create the observ-ability needed to make evidence-based decisions about when to invest in further performance optimi-sation (e.g., LanceDB migration for deployments exceeding 500K chunks). Fact expiry. Semantic memory facts cur-rently accumulate indefinitely. A TTL mechanism (expires_at timestamp, optional per fact) would allow time-sensitive facts to age out automatically. 
+
+LanceDB migration for large-scale deploy-ments. For deployments exceeding ∼500K chunks, LanceDB (LanceDB, 2023) offers purpose-built embedded vector storage with built-in HNSW in-dexing, without the cold-start penalty of in-process HNSW. 
+
+10.3 Cost-Benefit Analysis 
+
+The growth of context windows from 128,000 to 2,000,000 tokens introduces a cost curve that scales linearly with window size. Most provider pricing models bill per input token processed; a conversa-tion that fills a 2M-token window costs approxi-mately 15 × more per turn than one filling a 128K window. CALMem inverts this trade-off. The MOIM in-jection contributes at most ∼750 tokens per turn. Table 10 illustrates the per-turn token cost compar-ison.         
+
+> Table 10: Approximate per-turn input token cost.
+> Approach MOIM overhead Typical tokens/turn
+> Naïve 2M-token window None 500K–2M Naïve 200K window None 50K–200K
+> CALMem (this work) ∼750 5K–20K
+
+CALMem achieves better long-term memory than either naïve approach while simultaneously reducing API cost significantly. As context win-dows grow larger and associated pricing increases proportionally, this advantage compounds. 
+
+10.4 The Broader Pattern 
+
+CALMem demonstrates that the context window limitation is not a hard constraint on effective mem-ory but a prompt for architectural design. The human memory system operates across multiple timescales: working memory (the active context window), episodic memory (the RAG layer), and semantic memory (the facts layer). Building these layers at the application level gives application de-velopers immediate control over the memory archi-tecture while remaining compatible with any future improvement to context window size. We believe application-layer memory will be-come a standard architectural pattern for pro-duction LLM systems, in the same way that application-layer caching (Memcached, Redis) be-came standard for database-backed web applica-tions regardless of database improvements. 
+
+11 Conclusion 
+
+We presented CALMem, an application-layer dual memory architecture for LLM-based conversa-tional assistants that achieves virtually unbounded effective context without model modification. The system combines episodic memory (vector retrieval over sliding-window-chunked conversation history) with semantic memory (agent-writable structured facts), injected into each turn via a token-budget-adaptive mechanism (MOIM) that scales retrieval depth inversely with context pressure. The key contributions—intra-session retrieval of compacted context, token-budget-aware injection, the dual memory design, and the zero-regression toggle—address limitations in prior work and pro-vide a practical foundation for production deploy-ment. The system is implemented in Rust, stores all data in SQLite with no external dependencies, and is deployed in a production application. Perfor-mance analysis confirms adequacy at current scale, with a clear, principled upgrade path for larger de-ployments. The architecture demonstrates that application-layer memory is not a workaround for limited con-text windows but a coherent design pattern in its own right—one that complements, rather than com-petes with, advances in model capability. As con-text windows grow larger and provider costs scale with them, the approach becomes more economi-cally compelling: delivering targeted recall of rele-vant history at a fraction of the cost of retaining all history in context. 
+
+References              
+
+> Alibaba Cloud. 2026. Qwen3 Technical Report. Tech-nical report, Alibaba Cloud. Anthropic. 2026. Claude 4.6 Sonnet Model Card. Tech-nical report, Anthropic. Iz Beltagy, Matthew E. Peters, and Arman Cohan. 2020. Longformer: The long-document transformer. arXiv preprint arXiv:2004.05150 .Rewon Child, Scott Gray, Alec Radford, and Ilya Sutskever. 2019. Generating long se-quences with sparse transformers. arXiv preprint arXiv:1904.10509 .
+
+Howard Chen et al. 2023. Walking down the mem-ory maze: Beyond context limit through interactive reading. arXiv preprint arXiv:2310.05029 .Gordon V. Cormack, Charles L. A. Clarke, and Stefan Buettcher. 2009. Reciprocal rank fusion outperforms Condorcet and individual rank learning methods. In 
+
+Proceedings of SIGIR .Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. 2022. FlashAttention: Fast and memory-efficient exact attention with IO-awareness. In Advances in Neural Information Processing Sys-tems (NeurIPS) .Darren Edge et al. 2024. From local to global: AGraph RAG approach to query-focused summariza-tion. arXiv preprint arXiv:2404.16130 .Qdrant. 2023. fastembed: Fast, accurate, lightweight python library for embeddings. https://github. com/qdrant/fastembed .Google DeepMind. 2026. Gemini 2.0 Pro Technical Report. Technical report, Google DeepMind. Bernal Jimenez Gutiérrez et al. 2024. HippoRAG: Neu-robiologically inspired long-term memory for large language models. arXiv preprint arXiv:2405.14831 .Vladimir Karpukhin et al. 2020. Dense passage retrieval for open-domain question answering. In Proceedings of EMNLP .Angelos Katharopoulos et al. 2020. Transformers are RNNs: Fast autoregressive transformers with linear attention. In Proceedings of ICML .LanceDB. 2023. LanceDB: Developer-friendly, server-less vector database. https://lancedb.com .Patrick Lewis et al. 2020. Retrieval-augmented genera-tion for knowledge-intensive NLP tasks. In Advances in Neural Information Processing Systems (NeurIPS) .Yury A. Malkov and Dmitry A. Yashunin. 2018. Effi-cient and robust approximate nearest neighbor search using hierarchical navigable small world graphs. 
+
+IEEE Transactions on Pattern Analysis and Machine Intelligence , 42(4):824–836. Niklas Muennighoff et al. 2022. MTEB: Mas-sive text embedding benchmark. arXiv preprint arXiv:2210.07316 .Rodrigo Nogueira and Kyunghyun Cho. 2019. Pas-sage re-ranking with BERT. arXiv preprint arXiv:1901.04085 .OpenAI. 2026. GPT-5.2 System Card. Technical report, OpenAI. Charles Packer et al. 2023. MemGPT: Towards LLMs as operating systems. arXiv preprint arXiv:2310.08560 .Joon Sung Park et al. 2023. Generative agents: Interac-tive simulacra of human behavior. In Proceedings of UIST .Nils Reimers and Iryna Gurevych. 2019. Sentence-BERT: Sentence embeddings using siamese BERT-networks. In Proceedings of EMNLP .Stephen Robertson and Hugo Zaragoza. 2009. The probabilistic relevance framework: BM25 and be-yond. Foundations and Trends in Information Re-trieval , 3(4):333–389. Parth Sarthi et al. 2024. RAPTOR: Recursive abstrac-tive processing for tree-organized retrieval. arXiv preprint arXiv:2401.18059 .Theodore R. Sumers et al. 2023. Cognitive ar-chitectures for language agents. arXiv preprint arXiv:2309.02427 .Nandan Thakur et al. 2021. BEIR: A heterogeneous benchmark for zero-shot evaluation of information retrieval models. In NeurIPS Datasets and Bench-marks .Endel Tulving. 1972. Episodic and semantic memory. In Organization of Memory . Academic Press. Ashish Vaswani et al. 2017. Attention is all you need. In 
+
+Advances in Neural Information Processing Systems (NeurIPS) .Guanzhi Wang et al. 2023. Voyager: An open-ended embodied agent with large language models. arXiv preprint arXiv:2305.16291 .Jeff Wu et al. 2021. Recursively summarizing books with human feedback. arXiv preprint arXiv:2109.10862 .Hao Xu et al. 2022. Long time no see! open-domain conversation with long-term persona memory. In 
+
+Findings of ACL .Wanjun Zhong et al. 2023. MemoryBank: Enhanc-ing large language models with long-term memory. 
+
+arXiv preprint arXiv:2305.10250 .

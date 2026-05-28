@@ -1,0 +1,493 @@
+Title: Beyond Chunk-Local Extraction: Cross-Chunk Graph Augmentation for GraphRAG
+
+URL Source: https://arxiv.org/pdf/2605.28004v1
+
+Published Time: Thu, 28 May 2026 00:49:48 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Beyond Chunk-Local Extraction: Cross-Chunk Graph Augmentation for GraphRAG 
+
+Jiaming Zhang 1, Yibo Zhao 1, Jing Yu 1,Jianxiang Yu 1, Xiang Li 1*1School of Data Science and Engineering, East China Normal University 
+
+Abstract 
+
+GraphRAG extends retrieval-augmented gener-ation by organizing corpora as explicit knowl-edge graphs, enabling graph-based retrieval for complex question answering. However, exist-ing frameworks extract entities and relations within individual chunks, leaving cross-chunk relations—those whose evidence spans multi-ple passages—systematically absent from the index. Exhaustive LLM-based recovery of such relations is impractical due to the combina-torial explosion of chunk combinations. We present C ROSS AUG , a GNN-guided CROSS -Chunk Graph AUG mentation method that en-riches GraphRAG indices with cross-chunk relational structure as an offline step before query-time retrieval. C ROSS AUG derives train-ing supervision through self-supervised graph corruption, uses a topology-aware GNN to score subgraphs for missingness, and applies evidence-grounded LLM completion only to selected high-scoring regions. Experiments on three LLM-based GraphRAG frameworks across four multi-hop and long-document QA benchmarks demonstrate that C ROSS AUG con-sistently improves performance, confirming the benefit of cross-chunk graph augmentation for retrieval-based question answering. Our code is available at https://github.com/ DonFinliani/CrossAug .
+
+1 Introduction 
+
+Retrieval-augmented generation (RAG) is widely used in processing long documents, where docu-ments are typically chunked into smaller segments for retrieval and generation. Recent GraphRAG frameworks extend this paradigm by organizing the corpus as an explicit graph in which entities are extracted from text and linked via relation triples, enabling graph algorithms and community summa-rization to support multi-hop retrieval and corpus-level queries (Edge et al., 2024; Gutiérrez et al.,  
+
+> *Corresponding author: xiangli@dase.ecnu.edu.cn
+
+2024). This direction has shown particular promise for long texts and complex QA, where flat vector retrieval frequently surfaces superficially relevant information while missing the critical evidence re-quired for complex question answering. However, the conventional chunk-based con-struction of GraphRAG introduces a fundamental blind spot. Existing frameworks typically extract entities and relations within individual chunks, im-plicitly assuming that document-level relational structure can be recovered by stitching together locally extracted triples. This assumption is frag-ile for long texts, where many important relations, such as alias resolution and causal chains, depend on evidence distributed across multiple chunks. For example, when HippoRAG2 (Gutiérrez et al., 2025) constructs a graph index for Voodoo Planet , the re-sulting graph contains locally correct triples such as (Tau, approached, Lumbrilo) and (Tau, defeated, Lumbrilo) , but these can only form an event chain around Tau and Lumbrilo without specifying where the confrontation takes place, causing the frame-work to answer incorrectly. The cross-chunk loca-tive relation (Khatkan swamp, location of, final con-frontation with Lumbrilo) can only be recovered by jointly reading the chunk that describes the swamp with those describing the battle, which a chunk-local extractor has no access to. Community sum-marization solves corpus-level queries but cannot recover such precise cross-chunk relational facts and can even discard relational details rather than preserving them (Han et al., 2025). A GraphRAG index may thus contain many locally correct edges while still missing the hidden cross-chunk relations required for long-document reasoning. Most existing GraphRAG methods focus on im-proving how an already constructed graph is used for retrieval, ranking, summarization, or multi-hop reasoning; if the graph is incomplete at construc-tion time, however, downstream algorithms can only operate over a partial structure (Yang et al., 
+
+> arXiv:2605.28004v1 [cs.CL] 27 May 2026
+
+2026). While LLMs could in principle recover missing cross-chunk relations, applying them ex-haustively is impractical due to the combinatorial explosion of chunk combinations. We therefore introduce graph neural networks (GNNs) into the GraphRAG pipeline as a structural guide: by com-bining semantic node features with relational graph structure through edge-type-aware message pass-ing (Gilmer et al., 2017; Schlichtkrull et al., 2018), a GNN can identify structural patterns character-istic of chunk-local extraction failures and locate where evidence-grounded LLM completion is most likely to recover useful relational structure. In this paper, we introduce C ROSS AUG , a GNN-guided CROSS -Chunk Graph AUG mentation method for GraphRAG. C ROSS AUG is built around three design principles. First, a self-supervised graph corruption module creates training data by corrupting the base graph itself—masking fact edges and deleting entity nodes—to match the in-completeness patterns introduced by chunk-local extraction. Second, a topology-aware GNN scoring module learns to assign missingness scores to local subgraphs, turning cross-chunk discovery from ex-haustive entity enumeration into a targeted extrac-tion problem with a budget hyperparameter. Third, a GNN-guided LLM completion module applies the LLM only to selected, evidence-grounded sub-graphs and persists validated extracted triples back into the graph index. In this way, the additional reasoning cost is paid once during offline augmen-tation, while the enriched relational structure can be reused by any downstream retrieval pipeline. Finally, our contributions are threefold: • We identify GraphRAG’s chunk-local extrac-tion bottleneck and formulate it as cross-chunk relation/entity recovery. • We propose a self-supervised GNN scoring framework that reframes cross-chunk discov-ery as subgraph-level missingness detection, replacing intractable enumeration with tar-geted and topology-guided selection. • We present a GNN–LLM collaboration pipeline that yields consistent performance improvements across three GraphRAG frame-works and four QA benchmarks. 
+
+2 Related Work 
+
+GraphRAG has recently gained increasing attention in the research community. MS-GraphRAG (Edge et al., 2024) is among the first GraphRAG frame-works to build a knowledge graph index directly from raw text for corpus-level question answering. Its pipeline demonstrates strong improvements over flat vector retrieval for broad queries, though graph construction requires substantial LLM inference. Recent GraphRAG frameworks can be broadly grouped by how they construct the indexing graph. One line of work uses LLMs or OpenIE-style ex-traction to build semantic graphs with explicit enti-ties and relations. HippoRAG and HippoRAG2 ex-tract entities and (subject, predicate, object) triples from each chunk to build schema-free knowledge graphs, and then apply Personalized PageRank over entity, fact, and passage nodes to support asso-ciative multi-hop retrieval (Gutiérrez et al., 2024, 2025). LightRAG constructs a graph-enhanced in-dex with entity and relation descriptions and com-bines low-level and high-level retrieval to improve both local factual access and broader contextual retrieval (Guo et al., 2024). GFM-RAG extends this line by training a general GNN over the ex-tracted graph to enable topology-aware retrieval beyond similarity-based ranking (Luo et al., 2026). A second line of work reduces indexing cost by avoiding heavy LLM relation extraction. For exam-ple, LinearRAG builds a relation-free hierarchical index with lightweight entity extraction and seman-tic linking, avoiding explicit relation-triple gen-eration during graph construction (Zhuang et al., 2025). E2GraphRAG similarly focuses on effi-cient index construction with NLP-tool-based en-tity graphs and bidirectional entity–chunk links, with summaries used only as lightweight retrieval support (Zhao et al., 2025). These lightweight frameworks trade explicit semantic relation mod-eling for lower construction cost and higher scal-ability. Despite their different cost–quality trade-offs, both families construct graphs primarily from chunk-local evidence: LLM-based frameworks usu-ally extract triples within individual chunks, while lightweight frameworks rely on local entity men-tions, co-occurrence, or chunk-level indexes. As a result, neither family directly addresses relations that can only be recovered by jointly reading evi-dence distributed across multiple chunks. 
+
+3 Method 
+
+3.1 Overview 
+
+Given a long document collection, a standard GraphRAG pipeline splits the text into chunks, ex-tracts entities and triples, and builds a graph index 1.Build Base Graph Documents Chunk Basic Graph G Standard GraphRAG Indexing Extract (Entities & Triples) Each triple retains provenance links to source chunks. triple -> chunk provenance 2.CrossAug Offline Augmentation 2.Score with GNN 3.Rank & Select 4.Assemble Context 5.LLM Complete 6.Validate & Insert 1.Corrupt Subgraph for inference Subgraph for training     
+
+> Weighted random walks from root entity over entity–entity edges (fact favored, synonym allowed)
+> inact y=0 corrupted y=1 inact y=0 corrupted y=1 Encode Message Passing Score (missingness) Inference Training GNN Message Passing Graph Pooling MLP BCE Loss New entities/triples Propose missing entities/triples with supporting chunks Base Graph G Augmented Graph G+ Root entity Entity node Chunk Known edge New edge Masked edge Removed entity New entity Root entity Entity node Masked edge Removed entity Known edge Expanded edge Expanded entity New entity New edge
+
+3.Downstream Use Build evidence-grounded context for each selected subgraph Validater & filter Keep evidence-grounded triples only Retrieve on Augmented Graph G+ Generate Answer No GNN or Completion at Query Time Rank candidates, prune overlap keep diverse top-K Rank by m(S) (high->low) 
+
+> m(S)>θ
+> Candidates subgraphs
+
+User Query Insert into Graph Figure 1: Overview of the C ROSS AUG workflow. GNN-based missingness scoring selects incomplete subgraphs, and LLM completion extracts evidence-grounded triples before augmenting the graph index. 
+
+G = ( V, E) for retrieval. Nodes include entity, passage, and auxiliary nodes; edges include fact edges from extracted triples, synonym edges, and entity–chunk edges. Although this graph supports graph-based retrieval, it remains incomplete be-cause chunk-local extraction can miss both entities and fact edges. The goal of C ROSS AUG is to dis-cover missing entities and hidden triples that are supported by the original text but absent from the graph, especially when their evidence is distributed across multiple chunks. CROSS AUG is applied as an offline augmenta-tion step after the base graph has been constructed by the GraphRAG pipeline. It does not mod-ify the query-time retrieval or generation compo-nents; instead, it enriches the graph index once before any downstream use. C ROSS AUG operates through a three-module pipeline. First, the self-supervised graph corruption module builds train-ing data from the existing graph itself. It samples local entity-centered subgraphs and constructs in-complete views by masking fact edges or deleting entity nodes. This converts the absence of manually labeled missing triples into a self-supervised miss-ingness detection task. Second, the topology-aware GNN scoring module learns to assign a missing-ness score to a sampled subgraph. The GNN does not predict a particular missing edge; instead, it estimates whether the local topology looks incom-plete, which is better aligned with the goal of de-ciding where the LLM should spend effort. Third, the GNN-guided LLM completion module sends only high-scoring and low-overlap subgraphs to the LLM together with evidence chunks and known triples. The LLM produces new evidence-grounded triples, and the validated triples are inserted back into the GraphRAG index. In this way, C ROSS AUG 
+
+separates structural search from semantic comple-tion: the GNN provides a cheap global filter over many candidate regions, while the LLM performs expensive extraction only on selected contexts. 
+
+3.2 Self-Supervised Graph Corruption Heterogeneous graph construction. 
+
+CROSS AUG is designed for the common family of GraphRAG frameworks that construct a graph from LLM-extracted triples. Such frameworks usually produce an entity-centric graph: entities are represented as nodes, extracted triples induce semantic relation edges between entities, and each relation is associated with its source chunk as textual provenance. C ROSS AUG 
+
+therefore assumes a minimal graph interface rather than a framework-specific schema: the base index should provide entity nodes, relation-bearing edges, and a way to trace extracted facts back to evidence chunks. Each node v ∈ V is assigned a semantic feature xv from the existing retrieval index when available. When the base graph stores edge weights, C ROSS AUG uses the raw weight 
+
+we as an edge-strength signal, such as the number of extracted triples supporting a fact edge or the similarity score of an alias/synonym edge; otherwise, unweighted fact edges are assigned a default weight of 1. Each edge is also assigned a relation type ψ(e) that distinguishes semantic fact edges from auxiliary structural edges. This abstraction makes the method applicable to LLM-based GraphRAG indices beyond a specific GraphRAG implementation. 
+
+Weighted random-walk sampling. Since the full graph can be large, C ROSS AUG does not enu-merate all entity pairs or chunk pairs. Instead, it samples local entity subgraphs around root enti-ties. A root entity is eligible if it is an entity node, is not filtered out for its uninformative content (e.g., purely numeric strings), and has at least one neighboring entity through a fact or synonym edge. From each root r, C ROSS AUG launches multiple weighted random walks over entity–entity edges. Let e = ( u, v ) be a fact or synonym edge with raw graph weight we. The transition weight used for sampling is: 
+
+˜we = min( we, c ) · αψ(e),
+
+where c clips very large edge weights and αψ(e)
+
+is an edge-type multiplier. In our implementation, fact edges receive a larger multiplier than synonym edges, so walks prefer semantically informative factual connections while still allowing alias or synonym expansion. The transition probability is then calculated by: 
+
+P (v | u) = ˜ w(u,v )/ X 
+
+> z∈N(u)
+
+˜w(u,z ).
+
+The walk length is measured in entity hops, and chunk nodes are not traversed during sampling. Ev-idence chunks are collected later from the prove-nance of fact edges. This choice keeps the sampled region focused on entity-level relational structure and prevents early expansion into broad passage neighborhoods. The sampled node set defines a local subgraph 
+
+Sr = ( Vr, E r). C ROSS AUG retains only subgraphs with at least a minimum number of nodes and at least one fact edge. This filtering removes degener-ate samples with little training signal and ensures that each retained subgraph has sufficient relational structure for corruption and LLM completion. 
+
+Corruption as missingness supervision. Man-ually annotating which triples are missing from a long-document graph is expensive. Our method therefore derives training supervision through self-supervised learning. Note that at both training and inference time, a candidate subgraph sampled from a root entity is fed directly to the GNN for miss-ingness scoring. During training, the sampled sub-graph serves as the base for constructing corrupted positive examples ( y = 1 ) by applying two cor-ruption operators (details will be described below). The intact negative examples ( y = 0 ), however, are obtained by more extensively exploring the local neighborhood around the same root entity, yield-ing comparatively richer and larger subgraphs than those sampled at inference time. This design en-sures that the GNN learns to distinguish structurally incomplete regions, rather than acquiring an inci-dental association between subgraph density and the missingness label. Two corruption operators are used. The first operator masks fact edges. Given the fact-edge set Efact  
+
+> r
+
+, C ROSS AUG removes a random subset 
+
+Me ⊂ Efact  
+
+> r
+
+with ratio ρe, while preserving at least the required minimum number of fact edges. This simulates the common failure mode where an extractor recognizes the relevant entities but misses one or more relations. The second operator deletes entity nodes. It selects eligible non-root entity nodes that participate in at least one fact edge and removes a subset Mv with ratio ρv, pro-vided that the remaining graph still contains enough fact edges. This simulates a stronger failure mode where the graph misses an entity along with its related relations. These two corruptions correspond to the two main types of incompleteness that appear in GraphRAG: missing relation edges and missing entity nodes. The corruption task is intentionally defined at the subgraph level rather than the edge level. A hidden cross-chunk fact such as alias or causal chain requires region-level relational context rather than a single isolated entity pair. By asking the model to detect whether a local region is incom-plete, C ROSS AUG learns a retrieval-control signal: which graph regions deserve LLM completion. 3.3 Topology-Aware GNN Missingness Scoring GNN encoder. For every sampled subgraph view, CROSS AUG constructs a heterogeneous graph rep-resentation for message passing with node features, typed edges, and node-type identifiers. Let xv
+
+denote the input semantic feature vector of node 
+
+v, and let Wx be a learned projection matrix that maps input features into the GNN hidden space. In CROSS AUG , the textual content of entity nodes and chunk nodes is encoded by the same embedding model. Therefore, although the sampled graph con-tains different node types, their features lie in the same vector space and have the same dimensional-ity, allowing them to share the same projection ma-trix Wx. The missingness detector initializes each node representation by combining this projected feature with a learned embedding of the node type: 
+
+h(0)  
+
+> v
+
+= Wxxv + eϕ(v).
+
+The node representations are then updated through two layers of message passing. For relational GNNs, the update uses edge-type-specific trans-formations: 
+
+h(ℓ+1)  
+
+> v
+
+= σ 
+
+> X
+> τ
+> X
+> u∈Nτ(v)
+
+W (ℓ) 
+
+> τ
+
+h(ℓ) 
+
+> u
+> 
+
+,
+
+where ℓ denotes the message-passing layer, τ
+
+ranges over edge types, Nτ (v) denotes the neigh-bors of node v connected by edges of type τ , u is a neighboring node in this typed neighborhood, W (ℓ)
+
+> τ
+
+is the layer-specific transformation matrix for edge type τ , and σ(·) is a nonlinear activation function. 
+
+Graph-level missingness prediction. After mes-sage passing, C ROSS AUG aggregates the node representations into a single subgraph representa-tion. Since graph nodes have no fixed order, we use order-invariant pooling operations. Following common graph-level pooling practice, we concate-nate global mean pooling and global max pooling (Wang et al., 2024): 
+
+g(S) = [mean v∈S hv; max v∈S hv] .
+
+Mean pooling summarizes the overall distribution of node representations in the sampled subgraph, while max pooling preserves the strongest local activation. Their concatenation therefore captures both the global subgraph context and localized evi-dence of incompleteness. A multilayer classifier maps g(S) to a logit a(S),and the missingness score is m(S) = σ(a(S)) ,where σ(·) denotes the sigmoid function.The model is trained with binary cross-entropy. Intact sam-pled views are treated as negative examples and corrupted views as positive examples. 
+
+LBCE = −y log m(S) − (1 − y) log(1 − m(S)) .
+
+Dynamic training and inference selection. At each training epoch, C ROSS AUG re-samples a fixed number of root entities and constructs fresh in-tact/corrupted training groups. This dynamic sam-pling exposes the GNN to different local neighbor-hoods and different corruption patterns, reducing overfitting to a static set of artificial examples. At inference time, the trained GNN scores each sampled subgraph, and candidates are ranked by 
+
+m(S). A subgraph is eligible for LLM comple-tion only if its score exceeds a threshold θ. Can-didates with high node-level overlap with already-selected subgraphs—measured by Jaccard similar-ity J(Si, S j ) = |Vi ∩ Vj |/|Vi ∪ Vj |—are skipped to avoid redundant LLM calls on nearly identical evidence. Selection continues until the LLM call budget B is exhausted. The GNN module thereby transforms the problem from exhaustive enumera-tion of all possible cross-chunk combinations into targeted selection of a diverse, high-missingness subgraph set, improving cost efficiency by direct-ing LLM completion toward contexts where it is most likely to recover useful relational information. 
+
+3.4 GNN-Guided LLM Completion and Graph Augmentation 
+
+For each selected subgraph, C ROSS AUG assembles a context that includes the subgraph’s root entity, the full list of entities in the local region, all al-ready extracted triples, and the evidence passages retrieved from the provenance of participating fact edges. The GNN is used to identify regions that are likely to be incomplete, while the LLM performs completion based on the actual entities, triples, and evidence passages in those regions. The LLM is instructed to propose new entities and relations that are directly stated or unambigu-ously supported by the provided passages. Every proposed entity and relation must include a list of supporting chunk identifiers drawn from the evi-dence set; this citation requirement enforces cross-chunk grounding and prevents hallucinated graph expansion. Relations without valid chunk citations are discarded. The validated triples are then in-serted into the base graph index using the same schema as the original extractor, so the augmented graph is structurally consistent with the base and immediately compatible with any downstream re-trieval pipeline. Because all augmentation is per-formed offline, the enriched graph serves as a static index for subsequent retrieval and question answer-ing; neither the LLM completion step nor the GNN need to be re-invoked at query time. 
+
+4 Experiments 
+
+Due to space limitations, we defer additional results to the Appendix, including Cost and Efficiency Analysis (Appendix C) and Hyperparameter Sensi-tivity Analysis (Appendix D). 
+
+4.1 Experimental Settings Datasets and Baselines We evaluate our method on four benchmarks: three widely used multi-hop QA benchmarks—MusiQue (Trivedi et al., 2022), 2WikiMultiHopQA (Ho et al., 2020), and HotpotQA (Yang et al., 2018)—and Liter-aryQA (Bonomo et al., 2025), a long-document QA benchmark over literary texts. Following previ-ous work (Gutiérrez et al., 2024), we sample 1,000 questions from each multi-hop benchmark to con-trol experimental cost. For LiteraryQA, we use the first 50 books from the test set, comprising 1,358 queries in total; most books in this set exceed the context window of the base model. Detailed dataset statistics are shown in Table 1.                               
+
+> Statistic LiteraryQA MuSiQue 2Wiki HotpotQA
+> Chunks 9,550 11,656 6,119 9,811 Base nodes 68,014 104,190 54,487 84,632 Base edges 225,908 331,233 169,455 262,256 Base triples 103,148 123,308 64,523 98,592 Added nodes 3,203 2,994 1,569 1,718 Added edges 27,284 20,093 9,781 9,839 Added triples 8,707 8,901 5,048 5,252
+> Table 1: Dataset-level graph statistics for the base GraphRAG index and the C ROSS AUG -augmented index. “2Wiki” denotes 2WikiMultiHopQA and “HotpotQA” denotes HotpotQA.
+
+We apply C ROSS AUG to three GraphRAG frame-works that construct their graphs through LLM-based extraction: LightRAG (Guo et al., 2024), HippoRAG2 (Gutiérrez et al., 2024), and GFM-RAG (Luo et al., 2026). For each, we compare the original base framework against its C ROSS AUG -augmented variant. We additionally include Lin-earRAG (Zhuang et al., 2025), a non-LLM-based baseline, for broader context; C ROSS AUG is not applied to LinearRAG, as its graph construction does not rely on LLM extraction. 
+
+Base Models We adopt Qwen3-32B (Yang et al., 2025) as the backbone LLM; its 32,768-token con-text window provides sufficient capacity for the long evidence passages retrieved across our bench-marks. BGE-M3 (Chen et al., 2024) serves as the embedding model, and BAAI-bge-reranker-v2-m3 is used as the reranker where applicable. We set 
+
+k=5 for top-k retrieval across all frameworks. 
+
+Metrics We evaluate using Exact Match (EM) and F1 scores, which are widely used metrics in QA research (Gutiérrez et al., 2024; Guo et al., 2024; Luo et al., 2026). 
+
+4.2 Experimental Results 
+
+Table 2 shows that C ROSS AUG improves perfor-mance across all three base frameworks, show-ing that the proposed graph augmentation is framework-agnostic. Gains are most pronounced on MuSiQue and LiteraryQA, where cross-chunk evidence plays a more prominent role. In particular, HippoRAG2+C ROSS AUG achieves F1 improve-ments of +1.33 and +1.09 on these two bench-marks, respectively. Among all the results, Lin-earRAG achieves the highest F1 score (65.16) on 2WikiMultiHopQA despite using no LLM extrac-tion, but falls behind HippoRAG2+C ROSS AUG ,which achieves the overall best performance, on the remaining three benchmarks. 
+
+Fine-grained Retrieval Analysis. We further ex-amine the fine-grained effects of C ROSS AUG on downstream retrieval and QA through false-to-true (F2T) cases, where the base framework fails but the C ROSS AUG -augmented variant succeeds. As shown in Figure 2, these gains mainly arise from two retrieval effects. Chunk order change keeps the retrieved chunk set unchanged but ranks more useful evidence higher, increasing its LLM atten-tion. Chunk set change alters the retrieved evi-dence by introducing either gold chunks into the top-k or non-gold bridging chunks that still sup-port the reasoning chain. In LightRAG, retrieved facts are directly inserted into the QA prompt, so CROSS AUG -extracted hidden facts can also pro-vide compact relational evidence, accounting for many F2T improvements. To assess whether these changes also produce harmful effects, we jointly Framework Setting MuSiQue 2Wiki HotpotQA LiteraryQA EM F1 EM F1 EM F1 EM F1 
+
+LinearRAG – 24.10 37.23 47.90 65.16 47.00 64.59 11.56 26.57 LightRAG Base 20.50 28.09 28.40 36.93 44.90 58.60 11.26 26.24 CROSS AUG 21.40 29.24 29.30 37.34 44.90 58.50 11.63 26.82 GFM-RAG Base 20.30 30.61 52.90 60.43 40.50 50.42 12.59 27.49 CROSS AUG 20.40 30.96 53.20 60.44 40.30 50.82 14.58 28.83 HippoRAG2 Base 27.90 39.95 51.20 57.53 53.80 68.03 17.59 32.72 CROSS AUG 29.30 41.28 51.90 58.15 54.10 68.44 18.40 33.81 
+
+Table 2: Main results on multi-hop and long-document question answering benchmarks. Bold values indicate the best result in each metric column.            
+
+> M2W HLQ M2W HLQ M2W HLQ
+
+0
+
+20 
+
+40 
+
+60 54   
+
+> 47 45
+> 30
+> 41
+> 20
+> 25
+> 17 19
+> 6
+> 16
+> 25
+> GFM-RAG LightRAG HippoRAG2
+> False-to-True Cases (EM)
+> Order-only Set-only
+> New gold in top-kHidden facts in QA
+> Other F2T
+
+Figure 2: False-to-true EM case breakdown across three GraphRAG frameworks. Bars are stacked by retrieval effect; M (MuSiQue), 2W (2Wiki), H (HotpotQA), and LQ (LiteraryQA) denote the corresponding datasets.                
+
+> M2W HLQ M2W HLQ M2W HLQ M2W HLQ
+
+−40 
+
+−20 
+
+0
+
+20 
+
+40  
+
+> HippoRAG2 chunk
+> LightRAG chunk
+> LightRAG facts
+> GFM-RAG chunk
+> Cases (EM)
+> False-to-True True-to-False
+
+Figure 3: Bidirectional EM effect of retrieval changes. Upward bars show F2T cases, while downward bars show T2F cases, grouped by framework and change source. 
+
+examine F2T and true-to-false (T2F) cases caused by chunk changes and by hidden facts in the QA context. As shown in Figure 3, F2T counts con-sistently and substantially exceed the correspond-ing T2F counts across all frameworks and bench-marks. This confirms that the retrieval changes introduced by C ROSS AUG are predominantly bene-ficial, primarily surfacing missing cross-chunk evi-dence rather than introducing misleading retrievals. 
+
+4.3 Case Study 
+
+We present representative cases illustrating CROSS AUG ’s advantages in retrieval and down-stream QA. We focus on a cross-chunk locative case where C ROSS AUG recovers a relation unavail-able from chunk-local triples alone, with additional cases in Appendix B. 
+
+Recovering a cross-chunk locative relation. In 
+
+Voodoo Planet , the question asks: “Where does the confrontation between the Medic and Lum-brilo take place?” The gold answer is in a deadly swamp . The base framework answers “on a camp-ing ground” , whereas C ROSS AUG answers that the confrontation occurs in the Khatkan poachers’ camp within a swamp. The base graph contains locally correct triples such as (Tau, approached, Lumbrilo) , (Tau, defeated, Lumbrilo) , (Lumbrilo, practices, new magic) , and (Voodoo Planet, fea-tures, showdown between Lumbrilo and Asaki) .However, these triples only indicate that Tau and Lumbrilo are involved in a conflict; even when con-nected through multi-hop reasoning, these triples trace an event chain centering on Tau and Lum-brilo’s conflict without specifying where the con-frontation takes place. The base framework conse-quently forms an answer from incomplete context and misidentifies the location. CROSS AUG extracts cross-chunk locative facts that directly connect the confrontation to the miss-ing location, including (khatkan swamp, location of battle, lumbrilo vs tau and dane) and (khatkan swamp, location of, final confrontation with lum-brilo) . These facts are supported by the chunk that describes the swamp and camp together with the chunks that describe the battle itself. By adding these cross-chunk locative links to the graph index, CROSS AUG causes retrieval to surface the relevant swamp and confrontation passages: 
+
+> “The shadow thing in the swamp moved . . . ‘I’d rather get at the source.’ There was a grim note in the Medic’s reply. ‘And to do that I want to look at their camp.”’
+
+This case illustrates the core failure mode tar-geted by C ROSS AUG : the base graph contains true local event triples, but the cross-chunk rela-tion needed to answer the question is absent from the index. 
+
+4.4 Validation of Augmented Triple Quality           
+
+> Criterion DeepSeek Rate Human–LLM F1 Cohen’s κ
+> Factual correctness 84.35 0.940 0.765 Chunk ID correctness 81.54 0.899 0.781
+
+Table 3: Validation results for the DeepSeek judge on generated triples. DeepSeek correct rates are computed over parseable judge outputs, while Human–LLM F1 and Cohen’s κ are computed on the 100 manually anno-tated agreement samples. 
+
+To validate the quality of triples produced by CROSS AUG , we randomly sample 1,000 aug-mented triples from each of the four datasets under the HippoRAG2+C ROSS AUG setting and evalu-ate them using DeepSeek-V4-Pro as an automatic judge. Each triple is assessed on two criteria: fac-tual correctness (whether the relation is accurate given the source document) and chunk citation ac-curacy (whether the cited chunk indeed supports the triple). To verify the reliability of this automatic evaluation, we further randomly sample 100 triples for human annotation on the same two criteria. We compute Human–LLM F1 and Cohen’s κ between human and automatic judgments to measure inter-rater agreement. Table 3 reports the results. The DeepSeek judge assigns high correct rates to both factual correctness (84.35%) and chunk citation accuracy (81.54%), indicating that the augmented triples are predominantly accurate and grounded in the cited evidence. The strong Human–LLM F1 scores (0.940 and 0.899) and substantial Cohen’s 
+
+κ values (0.765 and 0.781) further confirm that the automatic evaluation closely mirrors human judg-ment, validating both the quality of C ROSS AUG -extracted triples and the reliability of the automatic judge. 
+
+4.5 Ablation Study                        
+
+> Dataset Setting EM F1
+> MuSiQue CROSS AUG 29.30 41.28 w/o GNN 28.40 39.95 2Wiki CROSS AUG 51.90 58.15 w/o GNN 50.90 57.52 HotpotQA CROSS AUG 54.10 68.44 w/o GNN 53.30 67.66 LiteraryQA CROSS AUG 18.40 33.81 w/o GNN 18.19 33.17
+
+Table 4: Ablation study on the GNN scorer in Hip-poRAG2. The w/o GNN setting replaces C ROSS AUG ’s scorer-selected subgraphs with the same number of ran-domly selected subgraphs for LLM completion. 
+
+To assess the GNN scorer, we replace it with random subgraph selection under the same LLM completion budget, isolating the effect of subgraph selection quality. As shown in Table 4, this replace-ment degrades performance on all four benchmarks, especially MuSiQue (F1: −1.33; EM: −0.90) and 2WikiMultiHopQA (EM: −1.00). These results show that topology-guided scoring improves sub-graph selection and is effective in C ROSS AUG .
+
+5 Conclusion 
+
+We present C ROSS AUG , a GNN-guided graph completion method that addresses the chunk-local extraction bottleneck in GraphRAG. C ROSS AUG 
+
+operates through three coordinated modules: aself-supervised graph corruption module that de-rives training supervision directly from the base graph without manual annotation; a topology-aware GNN scoring module that identifies struc-turally incomplete subgraphs; and a GNN-guided LLM completion module that produces evidence-grounded triples for the selected regions. Applied to three LLM-based GraphRAG frameworks across four QA benchmarks, C ROSS AUG consistently im-proves performance. By restricting LLM com-pletion to a targeted subset of high-missingness subgraphs, C ROSS AUG produces a persistent aug-mented graph that can be reused by any down-stream retrieval pipeline without further recompu-tation. Limitations 
+
+CROSS AUG introduces additional indexing cost primarily through prompt tokens, as each LLM completion call is supplied with a local subgraph, multiple evidence passages, and known triples. As discussed in Appendix C, the GNN scorer limits LLM completion to a small subset of selected sub-graphs, keeping the additional call count and wall-clock time to modest fractions of the base pipeline overhead. The overall additional cost is therefore controllable through the GNN scoring threshold and LLM budget parameters. Nevertheless, the prompt overhead per call is substantial by design, and future work could explore more efficient con-text compression or selective evidence retrieval strategies to further reduce this cost without sacri-ficing completion quality. 
+
+Ethical considerations 
+
+CROSS AUG augments GraphRAG indices with LLM-generated triples; despite our citation-grounding filter and the validation rates above 81% reported in Section 4.4, residual extraction errors may propagate to downstream QA, and prac-titioners should verify the augmented triples in high-stakes settings. All four English QA bench-marks (MusiQue, 2WikiMultiHopQA, HotpotQA, LiteraryQA) and all models used (Qwen3-32B, BGE-M3, BAAI-bge-reranker-v2-m3, DeepSeek-V4-Pro) are publicly released for research and are used in a manner consistent with their original in-tended purposes under their respective licenses; the underlying corpora are drawn from Wikipedia and public-domain literary works and contain no pri-vate personal information, so no anonymization or participant consent was required. Dataset statis-tics, train/test splits, and graph statistics are re-ported in Table 1; the model configurations, GNN scorer ( ∼10 6 parameters), A800-based infrastruc-ture, and full indexing-time compute budget (LLM calls, prompt/completion tokens, and wall-clock hours) are reported in Appendix C and Table 5, with existing packages used at default settings. The 100 manually annotated triples in Section 4.4 were labeled internally by the authors on two binary criteria, so no external recruitment, payment, con-sent procedure, or ethics-board review was applica-ble. We release the source code under a permissive open-source license, and AI assistants were used only for editorial polishing and routine code sug-gestions, with all scientific claims authored and verified by the human authors. 
+
+References 
+
+Tommaso Bonomo, Luca Gioffré, and Roberto Navigli. 2025. Literaryqa: Towards effective evaluation of long-document narrative qa. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 34074–34095. Jianlv Chen, Shitao Xiao, Peitian Zhang, Kun Luo, Defu Lian, and Zheng Liu. 2024. Bge m3-embedding: Multi-lingual, multi-functionality, multi-granularity text embeddings through self-knowledge distillation. 
+
+arXiv preprint arXiv:2402.03216 , 4(5). Darren Edge, Ha Trinh, Newman Cheng, Joshua Bradley, Alex Chao, Apurva Mody, Steven Truitt, Dasha Metropolitansky, Robert Osazuwa Ness, and Jonathan Larson. 2024. From local to global: A graph rag approach to query-focused summarization. 
+
+arXiv preprint arXiv:2404.16130 .Justin Gilmer, Samuel S Schoenholz, Patrick F Riley, Oriol Vinyals, and George E Dahl. 2017. Neural mes-sage passing for quantum chemistry. In International conference on machine learning , pages 1263–1272. Pmlr. Zirui Guo, Lianghao Xia, Yanhua Yu, Tian Ao, and Chao Huang. 2024. Lightrag: Simple and fast retrieval-augmented generation. arXiv preprint arXiv:2410.05779 , 2(3). Bernal J Gutiérrez, Yiheng Shu, Yu Gu, Michihiro Ya-sunaga, and Yu Su. 2024. Hipporag: Neurobiologi-cally inspired long-term memory for large language models. Advances in neural information processing systems , 37:59532–59569. Bernal Jiménez Gutiérrez, Yiheng Shu, Weijian Qi, Sizhe Zhou, and Yu Su. 2025. From rag to memory: Non-parametric continual learning for large language models. In International Conference on Machine Learning , pages 21497–21515. PMLR. Haoyu Han, Li Ma, Yu Wang, Harry Shomer, Yongjia Lei, Zhisheng Qi, Kai Guo, Zhigang Hua, Bo Long, Hui Liu, and 1 others. 2025. Rag vs. graphrag: A sys-tematic evaluation and key insights. arXiv preprint arXiv:2502.11371 .Xanh Ho, Anh-Khoa Duong Nguyen, Saku Sugawara, and Akiko Aizawa. 2020. Constructing a multi-hop qa dataset for comprehensive evaluation of reasoning steps. In Proceedings of the 28th International Con-ference on Computational Linguistics , pages 6609– 6625. Linhao Luo, Zicheng Zhao, Reza Haffari, Dinh Phung, Chen Gong, and Shirui Pan. 2026. Gfm-rag: graph foundation model for retrieval augmented generation. 
+
+Advances in Neural Information Processing Systems ,38:36371–36405. Michael Schlichtkrull, Thomas N Kipf, Peter Bloem, Rianne Van Den Berg, Ivan Titov, and Max Welling. 2018. Modeling relational data with graph convolu-tional networks. In European semantic web confer-ence , pages 593–607. Springer. Harsh Trivedi, Niranjan Balasubramanian, Tushar Khot, and Ashish Sabharwal. 2022. MuSiQue: Multi-hop questions via single-hop question composition. 
+
+Transactions of the Association for Computational Linguistics .Yan Wang, Wenju Hou, Nan Sheng, Ziqi Zhao, Jialin Liu, Lan Huang, and Juexin Wang. 2024. Graph pooling in graph neural networks: methods and their applications in omics studies. Artificial Intelligence Review , 57(11):294. An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, and 1 others. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Chang Yang, Chuang Zhou, Yilin Xiao, Su Dong, Luyao Zhuang, Yujing Zhang, Zhu Wang, Zijin Hong, Zheng Yuan, Zhishang Xiang, and 1 others. 2026. Graph-based agent memory: Taxonomy, techniques, and applications. arXiv preprint arXiv:2602.05665 .Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William Cohen, Ruslan Salakhutdinov, and Christo-pher D Manning. 2018. Hotpotqa: A dataset for diverse, explainable multi-hop question answering. In Proceedings of the 2018 conference on empiri-cal methods in natural language processing , pages 2369–2380. Yibo Zhao, Jiapeng Zhu, Ye Guo, Kangkang He, and Xiang Li. 2025. Eˆ 2graphrag: Streamlining graph-based rag for high efficiency and effectiveness. arXiv preprint arXiv:2505.24226 .Luyao Zhuang, Shengyuan Chen, Yilin Xiao, Huachi Zhou, Yujing Zhang, Hao Chen, Qinggang Zhang, and Xiao Huang. 2025. Linearrag: Linear graph re-trieval augmented generation on large-scale corpora. 
+
+arXiv preprint arXiv:2510.10114 .A Prompt Subgraph incompleteness hint: 
+
+{
+
+"gnn_missing_score": <GNN_MISSING_SCORE>, 
+
+"possible_missingness_types": [ 
+
+"missing_relations", 
+
+"missing_entities", 
+
+"missing_relations_and_entities" 
+
+], 
+
+"instruction": "Treat this sampled subgraph as potentially incomplete. 
+
+Look for important gaps in both relations and entities, not just shallow 
+
+restatements of the known triples." 
+
+}
+
+Subgraph root entity: 
+
+<ROOT_ENTITY> 
+
+Existing entities in the sampled subgraph: 
+
+<ENTITY_LIST> 
+
+Known triples in this sampled subgraph: 
+
+<KNOWN_TRIPLES> 
+
+Evidence passages: 
+
+<EVIDENCE_PASSAGES> 
+
+Silently follow this extraction strategy before producing the final JSON: 
+
+1. Summarize the current subgraph coverage. 
+
+2. Identify likely missing relations, likely missing entities, or both. 
+
+3. Prioritize deeper completions that connect multiple known triples, 
+
+resolve references across multiple passages, or enrich the subgraph with 
+
+important time, condition, prerequisite, ownership, role, sequence, or 
+
+part-whole information. 
+
+4. When a new triple depends on multiple passages, attach all relevant 
+
+chunk_ids instead of citing only one chunk. 
+
+5. Keep only facts that are directly stated or unambiguously supported by 
+
+the evidence passages. 
+
+Required output schema: 
+
+{
+
+"new_triples": [ 
+
+{
+
+"triple": ["subject", "predicate", "object"], 
+
+"chunk_ids": ["chunk-id"] 
+
+}
+
+]
+
+}
+
+Return JSON only. 
+
+# Subgraph Completion Prompt  
+
+> Figure 4: Prompt used by C ROSS AUG for GNN-guided LLM completion. The selected subgraph, known triples, candidate entities, and evidence chunks are provided to the LLM, which is instructed to return only evidence-supported triples and entities.
+
+B Case Study 
+
+We provide additional representative examples where C ROSS AUG improves downstream QA per-formance. Each case illustrates a distinct failure mode of the base framework—misidentified enti-ties, absent relational links, or insufficiently ranked evidence—and shows how cross-chunk augmen-tation addresses it by enriching the graph index before retrieval. 
+
+Recovering the correct object in long-document QA. In Immensee , the question asks: “What did Erich give Elisabeth?” The gold answer is a bird 
+
+or a new bird . The base framework answers “The gilded birdcage” , while C ROSS AUG answers “A canary” . The base retrieval returns chunks 0025, 0026, 0013, 0021, and 0027, which contain related narrative context but do not directly identify the gift. CROSS AUG instead generates hidden relational facts around the same narrative neighborhood, such as (Eric, is, friend of Elisabeth) and (Elisabeth, ac-cepted proposal from, Eric) . These triples do not directly state the answer, but they make the Eric– Elisabeth relation more explicit in the graph and change retrieval toward the passage where Eric’s gift is described. As a result, C ROSS AUG replaces chunk 0027 with chunk 0014, which already con-tains the base-extracted fact (Eric, sent canary to, Elisabeth) and the decisive textual evidence: 
+
+> “Elisabeth was standing by the window and stick-ing some fresh chick-weed in a gilded birdcage which he had not seen in the place before. In the cage was a canary . . . ‘Your friend Eric sent it this noon from his estate as a present for Elisabeth.”’
+
+This example illustrates a common long-document failure mode in which the retrieved con-text contains a salient object near the answer but not the answer-defining relation. The birdcage is strongly associated with the scene and with Elis-abeth, so it is a plausible distractor for the base framework. However, knowing that Elisabeth is near a birdcage, or that Erich is associated with Elisabeth elsewhere in the story, is not sufficient to infer what Erich gave her. The retrieval im-provement therefore comes from a two-step effect: CROSS AUG first strengthens the graph neighbor-hood connecting the giver and recipient, and this modified graph then surfaces chunk 0014, where the canary is explicitly linked to Eric as the sender and Elisabeth as the recipient of the present. By shifting retrieval to this chunk, C ROSS AUG pre-vents the LLM from answering with a nearby con-tainer and instead grounds the answer in the entity that actually satisfies the gift relation. 
+
+Using hidden facts to bridge retrieval. On MuSiQue, the question asks: “What was the date that Pam got married in The Office?” The gold answer is October 8, 2009 . The base framework answers that the date is not mentioned in the pro-vided information, whereas C ROSS AUG answers 
+
+“October 8, 2009.” The base retrieval mainly re-turns general Pam Beesly and The Office passages. These passages state that Jim and Pam marry in the episode Niagara , but they do not directly surface the episode date: 
+
+> “Jim and Pam marry early in the season, at Ni-agara Falls, during the highly anticipated, hour long episode, ‘Niagara’.”
+
+CROSS AUG extracts hidden facts that connect the marriage event to the episode, including (nia-gara the office, features, pam beesly and jim halpert s marriage) and (the episode, features, jim and pam s marriage at niagara falls) . These hidden facts add a more direct graph link between the marriage event and the episode. As a result, retrieval in-cludes the Niagara episode page, which contains the exact answer:   
+
+> “Niagara” The Office episode . . . Original air date October 8, 2009.
+
+The base triples can connect Pam , Jim , and the wedding event, but they do not reliably bridge that event to the episode page that stores the air date. This case shows that C ROSS AUG does not merely add more triples to the index. The completed graph can change the starting points of graph retrieval, allowing downstream QA to reach evidence that the base graph fails to use. 
+
+Correcting an entity through better evidence retrieval. In Youth , the question asks: “What is the name of the steamer that agrees to tow the crew?” The gold answer is Sommerville . The base framework answers “The Judea” , confusing the damaged ship with the steamer that tows it. CROSS AUG answers “The Sommerville.” The base retrieval surfaces narrative passages from Youth ,including chunks 0001, 0006, 0016, 0012, and 0027. These passages mention the ship Judea and earlier accidents but do not identify the towing steamer. C ROSS AUG instead retrieves chunks 0020 and 0021, where the towing event is explicitly de-scribed: “When our skipper came back we learned that the steamer was the Sommerville, Captain Nash . . . and that the agreement was she should tow us to Anjer or Batavia, if possible . . . At noon the steamer began to tow.” 
+
+The following chunk continues the same event:  
+
+> “The speed of the towing had fanned the smol-dering destruction . . . ‘We had better stop this towing’.”
+
+The base answer is plausible precisely because 
+
+Judea is the central vessel throughout the narrative. The question, however, asks for the steamer that performs the towing, not the ship being towed. The base evidence associates a prominent entity with the question but does not resolve the specific rela-tional role it asks about. C ROSS AUG retrieves the event-local passages that explicitly distinguish the vessel doing the towing from the one being towed. 
+
+Improving evidence ranking with a hidden date relation. Another MuSiQue example asks: 
+
+“What date saw the writing of the song where the devil went down to the state where WDXQ is located?” The gold answer is May 21, 1979 .The base framework answers “1978” , while CROSS AUG answers “May 21, 1979.” Both frame-works retrieve passages about The Devil Went Down to Georgia and WDXQ, but C ROSS AUG 
+
+moves the most useful evidence from rank 2 to rank 1. The retrieved WDXQ passage establishes the state: 
+
+> “WDXQ (1440 AM) is a radio station licensed to Cochran, Georgia, United States.”
+
+The decisive song passage states: 
+
+> “The Devil Went Down to Georgia” . . . Released May 21, 1979 . . . Songwriter(s) Charlie Daniels, Tom Crain, “Taz” DiGregorio, Fred Edwards, Charles Hayward, James W. Marshall.
+
+CROSS AUG introduces the hidden fact (the devil went down to georgia, released in, may 21 1979) ,which links the song directly to its release date in the graph index. The base evidence can connect WDXQ to Georgia and the song to adjacent release context, but without the precise date relation it is susceptible to anchoring on an approximate nearby year such as 1978 . This example highlights a bene-fit distinct from the preceding cases: C ROSS AUG 
+
+need not always introduce an entirely new docu-ment into retrieval. By anchoring retrieval to this hidden date triple, it promotes already-relevant evi-dence to a higher rank, enabling the LLM to ground its answer in the passage that contains the exact date. 
+
+C Cost and Performance Across Parameter Settings 
+
+CROSS AUG exposes an LLM completion budget parameter that controls how many candidate sub-graphs receive LLM completion calls during in-dexing. Adjusting this budget allows practition-ers to navigate the trade-off between augmenta-tion coverage and indexing overhead. Table 5 re-ports the overhead introduced by C ROSS AUG at the default budget setting on LiteraryQA, where CROSS AUG adds 1,483 LLM calls, 17.66M prompt tokens, and 5.7 hours of indexing time on top of the base pipeline—approximately 8.2% and 15.3% of the base’s calls and wall-clock time. Each prompt is substantially longer than in the base pipeline be-cause it incorporates a local subgraph, multiple ev-idence passages spanning different chunks, known triples, and entity context; completion overhead is comparatively small, as the model outputs only evidence-supported triples. Figure 5 shows how EM and F1 respond as the budget is varied from 50 to 200 on LiteraryQA. Both metrics improve as the budget increases while completion-token cost scales proportionally. A bud-get of 50 already yields measurable gains over the base pipeline, showing that useful augmentation is achievable at modest additional cost; increasing the budget to 200 provides further, consistent improve-ment. This controllable mechanism allows users to select an operating point that matches their latency and cost requirements.                
+
+> Setting Prompt Completion LLM Time (×10 6)(×10 6)Calls (h)
+> Base 17.83 23.02 17,990 37.2 CROSS AUG 17.66 2.63 1,483 5.7
+
+Table 5: Cost comparison between the HippoRAG2 base pipeline and C ROSS AUG . The C ROSS AUG row reports the additional overhead introduced by C ROSS AUG on top of the base pipeline. Prompt and completion token counts are reported in millions of tokens ( ×10 6). 50 100 150 200       
+
+> 18 .2
+> 18 .4
+> 18 .6
+> 18 .8
+> EM
+> (a) EM
+> 50 100 150 200
+> 33 .6
+> 33 .8
+> 34
+> F1
+> (b) F1
+> 50 100 150 200
+> 2
+> 3
+> 4
+> 5
+> 6
+> Budget
+> Tokens ( ×10 6) (c) Completion Tokens
+
+Figure 5: Budget sensitivity on LiteraryQA. Panels re-port EM, F1, and completion-token overhead as the LLM completion budget changes. 
+
+D Hyperparameter Sensitivity Analysis 
+
+We further analyze the sensitivity of C ROSS AUG ’s performance to key hyperparameters. Specifically, we consider the LLM completion budget ( B), the fact-edge mask ratio ( ρe), and the entity-node dele-tion ratio ( ρv), varying one hyperparameter at a time while fixing the others. The results show that CROSS AUG is robust against these hyperparame-ters across a practical range of values.                         
+
+> Fact Mask EM F1 Calls Prompt tokens Completion tokens (×10 6)
+> 0.10 17.60 32.96 2,313 27.79 4.02 0.15 17.60 32.99 1,577 18.70 2.84 0.20 18.40 33.81 1,483 17.66 2.63 0.25 17.45 33.41 1,031 11.97 1.83
+
+Table 6: Hyperparameter sensitivity analysis for the fact-mask ratio on (HippoRAG2+C ROSS AUG , LiteraryQA). Prompt and completion token counts are reported in millions of tokens ( ×10 6). 
+
+The default ratio ρe=0 .20 achieves the best per-formance (EM 18.40, F1 33.81). Lower ratios (0.10, 0.15) produce corruption signals that are too subtle, yielding a less discriminative scorer that passes more subgraphs to the LLM (up to 2,313 calls) without improving QA performance. A ra-tio of 0.25 over-corrupts the training examples, re-moving so many edges that the surviving subgraph structure is too sparse to provide useful training signal, reducing both LLM calls and performance.                         
+
+> Entity Mask EM F1 Calls Prompt tokens Completion tokens (×10 6)
+> 0.06 17.53 33.02 1,309 12.91 1.83 0.08 18.40 33.81 1,483 17.66 2.63 0.10 17.89 33.44 1,433 16.83 2.57 0.12 17.67 32.93 1,400 16.12 2.53
+
+Table 7: Hyperparameter sensitivity analysis for the entity-mask ratio on (HippoRAG2+C ROSS AUG , Liter-aryQA). Prompt and completion token counts are re-ported in millions of tokens ( ×10 6). 
+
+The default ratio ρv=0 .08 yields the best per-formance (EM 18.40, F1 33.81). A smaller ratio (0.06) produces insufficiently corrupted views, lim-iting the GNN’s ability to learn entity-level absence patterns and resulting in fewer selected subgraphs (1,309). Larger ratios (0.10, 0.12) remove too many entities, stripping the training examples of the re-lational structure needed for discriminative learn-ing. The relatively narrow range of performance differences across all four settings indicates that CROSS AUG is moderately robust to the entity-mask ratio.                              
+
+> Score (θ)EM F1 LLM Calls Prompt tokens Completion tokens (×10 6)
+> 0.40 18.58 34.24 53.30 3,788 40.42 6.38 0.45 18.43 34.02 53.04 2,452 32.48 5.22 0.50 18.40 33.81 53.09 1,483 17.66 2.63 0.55 17.92 33.54 51.59 760 8.57 1.36
+
+Table 8: Hyperparameter sensitivity analysis for GNN score threshold θ on (HippoRAG2+C ROSS AUG , Lit-eraryQA). Prompt and completion token counts are in millions ( ×10 6). 
+
+Lowering θ allows more subgraphs to pass the GNN filter, increasing both coverage and LLM cost. At θ=0 .40 , C ROSS AUG selects 3,788 subgraphs and achieves the best EM (18.58) and F1 (34.24), but at more than 2.5 × the token cost of the de-fault ( θ=0 .50 ). At θ=0 .55 , the call count drops to 760 and prompt tokens fall to 8.57M, but both EM and F1 also decline below the default. The default 
+
+θ=0 .50 provides a balanced operating point; prac-titioners can shift θ to trade performance for cost as their indexing budget allows. 
+
+E Human Preference Trial and Evaluation Details 
+
+This appendix documents the protocol behind the human evaluation summarized in Section 4.4 of the main text, whose purpose is twofold: to estimate the absolute quality of C ROSS AUG -augmented triples and to verify that the DeepSeek-V4-Pro judge produces decisions consistent with informed human raters. 
+
+Annotator profile. Three of the paper authors served as annotators. All three have prior research experience with knowledge graphs and retrieval-augmented generation, so they can interpret triple syntax and reason about whether a cited chunk sup-ports a triple. No external annotators or crowdwork-ers were recruited, and no monetary compensation, recruitment platform, or demographic balancing was involved. 
+
+Sampling. From the pool of CROSS AUG -augmented triples produced by Hip-poRAG2+C ROSS AUG on the four benchmarks, we drew a stratified random sample of 100 triples (25 per benchmark). Stratification ensures that domain-specific failure modes—encyclopedic factoid linkage in HotpotQA/2Wiki, multi-hop composition in MusiQue, and narrative coreference in LiteraryQA—are equally represented in the human-labeled set. 
+
+Rubric. Each item presented to an annotator in-cludes the triple in (subject, relation, object) form, the cited chunk identifier(s), and the full chunk text. Annotators returned a strict binary judgment on two independent criteria: • Factual correctness —the triple expresses a relation that is true with respect to the cited evidence and the document context. • Chunk-citation accuracy —at least one cited chunk contains direct textual evidence for the triple. The instructions explicitly state that the two criteria are decided independently: a triple may be factually correct overall while its citation fails to provide direct support, and vice versa. 
+
+Procedure and quality control. Each triple was labeled independently by all three annotators with-out communication during labeling. The final bi-nary label per criterion is the majority vote across the three annotators; disagreements were logged for post-hoc inspection. Annotators were instructed to rely only on the cited chunk text and to sup-press external knowledge—a rule that is especially important for LiteraryQA, where annotators may recognize the source works. 
+
+Agreement with the automatic judge. Inter-rater agreement between the majority human la-bel and the DeepSeek-V4-Pro decision is reported as Human–LLM F1 and Cohen’s κ in Table 3. The κ values of 0.765 (factual correctness) and 0.781 (chunk-citation accuracy) fall within the substantial-agreement range under common inter-pretation, justifying the use of the DeepSeek judge as a scalable proxy for the larger per-dataset evalu-ation of 1,000 triples. 
+
+Risks and consent. The annotation task involved only publicly available text (Wikipedia excerpts and public-domain literary passages) and posed no foreseeable risks to annotators. Because all anno-tation was internal to the research team and used only publicly released material, no external consent procedure or ethics-board review was applicable.
