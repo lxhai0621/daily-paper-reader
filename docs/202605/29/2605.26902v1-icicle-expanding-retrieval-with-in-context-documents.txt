@@ -1,0 +1,787 @@
+Title: ICICLE: Expanding Retrieval with In-Context Documents
+
+URL Source: https://arxiv.org/pdf/2605.26902v1
+
+Published Time: Wed, 27 May 2026 01:04:04 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# ICICLE: Expanding Retrieval with In-Context Documents 
+
+Yu-Chen Den 1* Yung-Yu Shih 1* Zhi Rui Tam 1 Kuan-Yu Chen 1
+
+Pu-Jen Cheng 1 Yun-Nung Chen 1 Eugene Yang 21National Taiwan University 2Johns Hopkins University 
+
+{d13944011,f12944007,d14922019,d13922034}@ntu.edu.tw pjcheng@csie.ntu.edu.tw y.v.chen@ieee.org eugene.yang@jhu.edu 
+
+Abstract 
+
+Generative retrieval (GR) maps queries di-rectly to document identifiers (docids) using parametric knowledge, However, this design makes corpus expansion costly: adding new documents requires updating model parame-ters to encode new document-docid associa-tions incurs repeated training and catastrophic forgetting of previously indexed documents. In this work, we revisit incremental GR as an in-context retrieval problem, where newly added documents are supplied as inference-time document-docid evidence. We propose ICICLE, an in-context indexing framework that performs source-aware docid generation over both parametric memory and context-provided document-docid pairs. ICICLE combines a 
+
+[COPY] -based routing mechanism, preference-based calibration, and large context adapta-tion to distinguish context-grounded retrieval from parametric retrieval. Experiments on MS MARCO and NQ320K show that ICICLE im-proves retrieval of newly introduced documents while preserving seen-document retention with-out corpus-specific retraining. Our analysis fur-ther shows that high-shot degradation is mainly caused by routing failure, highlighting source-selection calibration as a key bottleneck for scaling in-context generative retrieval. 
+
+1 Introduction 
+
+Generative retrieval (GR) has emerged as arapidly growing paradigm for information retrieval, demonstrating strong performance across diverse tasks—including document retrieval, entity search, and recommendation—while outperforming dense retrieval baselines across settings (Tay et al., 2022; Wang et al., 2022; Rajput et al., 2023). Unlike dense retrievers, which encode documents into vec-tors stored in an external index, GR trains a lan-guage model to directly map queries to document  
+
+> *Equal contribution.
+
+identifiers (docids), encoding document–query as-sociations into model parameters. This parametric design eliminates the need for an external docu-ment index, reducing both the memory overhead of storing large-scale document embeddings and the query-time cost of approximate nearest neighbor search (Sun et al., 2023). However, real-world re-trieval systems typically contend with evolving cor-pora, where new documents are continuously added after deployment (Lawrie et al., 2024; Kishore et al., 2023). While dense retrievers accommo-date this naturally by inserting new vectors into the index (Karpukhin et al., 2020; Chen et al., 2024), GR faces a fundamental tension: retrieving a docu-ment requires its content–docid association to be encoded in model parameters (Zhang et al., 2025), making the addition of new documents a model-update problem rather than a simple indexing oper-ation (Mehta et al., 2023; Guo et al., 2025). Existing approaches address this by incorpo-rating new documents through continued train-ing, parameter-efficient expansion, constrained pa-rameter updates, or model editing, all of which modify model parameters to encode newly added document-docid associations (Mehta et al., 2023; Kishore et al., 2023; Huynh et al., 2025; Zhang et al., 2026; Son et al., 2026). While these methods can extend the retrievable corpus, they tie corpus growth to repeated optimization. Each update may require additional training, validation, and rede-ployment, and repeated modifications can interfere with previously learned docid mappings, leading to catastrophic forgetting of old documents and higher operational costs (Mehta et al., 2023; Mekonnen et al., 2026). This makes it difficult to deploy GR in settings where corpora evolve frequently. We there-fore ask: Can a GR model retrieve newly added, context-provided documents while preserving re-trieval over previously learned documents, without document-specific parameter updates whenever the corpus grows? 1
+
+> arXiv:2605.26902v1 [cs.IR] 26 May 2026
+
+Unlike existing approaches that update model parameters to incorporate new document–docid as-sociations, we expose them in the input context at inference time (Ram et al., 2023), casting in-cremental GR as an in-context retrieval problem: given a query and a set of context-provided doc-ument–docid pairs, the model must generate the docid of the relevant document. In contrast to stan-dard in-context learning (ICL), where demonstra-tions specify how to solve a task (Brown et al., 2020; Dong et al., 2024), in-context retrieval uses document–docid pairs as a temporary index over newly added documents—requiring the model to combine parametric memory for seen documents with contextual evidence for unseen ones. However, simply prompting a GR model with document–docid pairs is insufficient. The model must determine whether a query should be an-swered from parametric memory or from the context-provided index. When parametric mem-ory dominates, the model may return a memorized docid even if the relevant new document is in con-text (Lee et al., 2023b); when contextual cues dom-inate, it may latch onto an irrelevant in-context docid due to shallow prompt artifacts (Min et al., 2022; Shi et al., 2024; Xu et al., 2024). Both failure modes result in incorrect docid generation. To address this, we introduce In-Context 
+
+Indexing for do C-Level Expansion (ICICLE) , a framework that trains GR models to perform source-aware docid generation via explicit rout-ing supervision and preference-based calibration. ICICLE encourages the model to ground gener-ation in context when the relevant document is newly provided, while preserving parametric re-trieval for seen documents—extending GR from a closed-corpus retriever to one that operates over dy-namically supplied documents without parameter updates. Our main contributions are as follows: • We cast incremental GR as in-context re-trieval , a new problem formulation in which newly added documents are supplied as inference-time document–docid evidence, eliminating the need for document-specific parameter updates. • We introduce ICICLE, a three-stage training framework for source-aware docid generation. ICICLE combines a [COPY] -based routing mechanism with DPO-based calibration to dis-tinguish context-grounded from parametric re-trieval, and a long-context adaptation stage to bridge the train-test mismatch under large candidate pools. • We conduct experiments on MS MARCO (Nguyen et al., 2016) and NQ320K (Kwiatkowski et al., 2019), showing that ICICLE is a strong alternative to incre-mental GR baselines, improving retrieval of newly introduced documents while preserving retention on seen documents without corpus-specific retraining. Further analysis shows that high-shot degradation mainly stems from routing failure, highlighting source-selection calibration as a key bottleneck for scaling in-context generative retrieval. 
+
+2 Preliminaries 
+
+2.1 Generative Retrieval 
+
+Given a document corpus D = {d1, d 2, . . . , d N },generative retrieval (GR) retrieves documents by directly generating their identifiers. For a query q,a GR model autoregressively generates a document identifier (docid) y = ( y1, y 2, . . . , y T ):
+
+pθ(y | q) = 
+
+> T
+
+Y
+
+> t=1
+
+pθ(yt | y<t , q ), (1) where θ denotes the model parameters. Follow-ing prior work (Tay et al., 2022), GR is typically trained with both retrieval and indexing objectives: the model learns to generate the docid from either a relevant query or the document content itself. Given a query–document pair (q, d ) with docid y,the training loss is:          
+
+> LGR =−
+> TX
+> t=1
+> log pθ(yt|y<t , q )−
+> TX
+> t=1
+> log pθ(yt|y<t , d )
+
+.
+
+(2) In this work, we adopt the title-as-docid 
+
+scheme (De Cao et al., 2020; Lee et al., 2023a), where each document is identified by its title. This avoids introducing an auxiliary docid vocabulary and naturally assigns identifiers to newly arriving documents without modifying the model’s token space. At inference time, the model generates a docid using constrained beam search over valid do-cids, and the associated document is returned as the retrieval result. 22.2 Incremental Learning for Generative Retrieval 
+
+Standard GR assumes a static corpus fixed at train-ing time. In real-world applications, however, doc-ument collections are often dynamic: new docu-ments may be created or ingested after the retriever has already been trained and deployed. We formalize this setting as follows. Let 
+
+Dtrain = {d1, . . . , d N } denote the corpus used to train a GR model fθ. After deployment, a set of unseen documents Dnew = {dN +1 , . . . , d N +M }
+
+may be added, where Dnew ∩ D train = ∅. The re-triever is then expected to answer queries over the expanded corpus Dtrain ∪ D new .This setting is challenging because documents in Dnew are absent during training, the model has not learned the document—docid associations. Al-though the underlying language model may under-stand an unseen document’s content, GR requires generating it’s exact docid. Therefore, for a query q
+
+whose relevant document d+ ∈ D new , the original model fθ may fail unless the new document–docid association is retrained into the model or otherwise provided at inference time. 
+
+3 ICICLE: In-Context Indexing for doC-Level Expansion 
+
+Building on the incremental GR setting introduced in Section 2.2, ICICLE aims to support retrieval over newly added documents without retraining the generative retriever whenever the corpus expands. The key idea is to treat the documents provided in the prompt as a temporary in-context index: in-stead of encoding every new document into the model parameters, ICICLE learns to retrieve from document-docid pairs supplied at inference time. As shown in Figure 1, ICICLE first learns an in-context retrieval template, then calibrates whether the model should retrieve from the contextual index or fall back to parametric memory. At inference time, newly added documents can be incorporated by updating only the prompt-side candidates and the dynamically constructed decoding trie. 
+
+3.1 Learning In-Context Template 
+
+Given a base generative retriever fθ, we finetune it to condition generation on a small set of in-context document-docid pairs. For each training query q ∈Qtrain with gold document d∗ and gold docid y∗,we construct an in-context candidate set 
+
+C = {(d1, y 1), . . . , (dn, y n)}. (3) The model is trained to generate y∗ conditioned on 
+
+(q, C). To teach the model when to use the context and when to ignore it, we construct two types of training instances: 
+
+Context-Dependent. The gold pair (d∗, y ∗) is in-serted into C at a uniformly sampled position, while the remaining n − 1 positions are filled with hard negative documents H(d∗) retrieved from a dense embedding space as semantic neighbors of d∗, mak-ing the discrimination non-trivial. The model is expected to uses the provided candidate set as a temporary index and copies the corresponding do-cid from the context. 
+
+Query-Irrelevant. The entire context contains only hard negatives drawn from H(d∗) and excludes (d∗, y ∗). Here, y⋆ belongs to the base corpus known to the original GR model, so the model should ignore the irrelevant context and fall back to parametric retrieval. These instances prevent the model from over-copying irrelevant contextual docids when the answer is absent. This design reflects real-world retrieval settings in which the answer to an incoming query may or may not be present in the provided context. There-fore, the model must learn not only to retrieve from contextual evidence when it is relevant, but also to ignore irrelevant context and fall back to para-metric generative retrieval when necessary. We show examples of the full in-context template in Appendix A.1. 
+
+Document Compression. To fit more candidates into the prompt, we compress each document offline before constructing in-context instances. Each document is summarized by Qwen2.5-14B-Instruct (Yang et al., 2025) into a retrieval-oriented representation of at most 256 tokens, preserving key entities, dates, aliases, relations, and facts. The compression model only observes document con-tent and does not access queries, relevance labels, or test annotations. At inference time, each candi-date is represented by its compressed text followed by its title docid. The full compression analysis is provide in Section K. 
+
+3.2 Routing Between Contextual and Parametric Retrieval 
+
+A key challenge is to calibrate whether the model should ground its prediction in the provided con-text or rely on its parametric memory. This distinc-3s 
+
+> Traditional GR model
+> Vanilla Constrained Decoding
+> Query
+> Seen Docs
+> Unseen Trie
+> Seen Trie
+> Context-Aware Constrained Decoding
+> D1
+> DN
+> Unseen Docs
+> Does relevant doc exist in-context ?
+> YES
+> NO ! fall back to Seen Trie Requires re-train / re-deploy
+> (a) Traditional Generative Retrieval cannot handle new documents without retraining
+> (b) ICICLE tunes GR model to retrieve new documents through context-aware constrained decoding
+> Build Trie
+> Build Trie (test-time)
+> y1
+> yN
+> In-Context Template Tuning
+
+ICICLE 
+
+> (ours)
+
+Figure 1: Overview of ICICLE. (a) Traditional GR models are constrained to a fixed trie built from seen documents and cannot handle unseen documents without retraining. (b) ICICLE tunes the GR model with in-context template to perform context-aware constraint decoding: given unseen candidate document-docid pairs at test time, the model decides whether the relevant document exists in context — if so, it decodes against a dynamically constructed unseen trie; otherwise, it falls back to its own parametric memory without any retraining. 
+
+tion is non-trivial because contextual identifiers and memorized identifiers share the same output space, while standard sequence likelihood training only su-pervises the final identifier and does not explicitly indicate which retrieval mode should be used. We address this issue by introducing a [COPY] router token and further calibrating the routing behavior with preference optimization. 
+
+[COPY] Token as Router. To distinguish context-based retrieval from parametric recall, we introduce a special token [COPY] . As described in Section 3.1, the gold document may either be present in the pro-vided candidate set or be absent from it. Without an explicit signal, the model must use the same output format for both cases, making it unclear whether the docid should be retrieved from the context or generated from its own memory. During training, if the gold pair appears in the context, the model is trained to output [COPY] to-ken followed by the docid. Otherwise, it directly generates the plain docid. Formally, the supervi-sion target is 
+
+˜yi =
+
+(
+
+[COPY] y∗, if y∗ ∈ Y (C),y∗, otherwise . (4) We optimize the standard next-token cross-entropy objective: 
+
+LSFT = − X
+
+> i
+
+log pθ
+
+ ˜yi Ci, q i
+
+ . (5) At inference time, [COPY] determines the con-strained decoding space. If the model generates 
+
+[COPY] as the first token, subsequent decoding is constrained by a trie dynamically built from the in-context docids Y(Cq); otherwise, decoding uses the base trie over Ybase . The [COPY] token is used only as an internal routing signal and is removed before evaluation. Details are provided in Appendix B.1 
+
+Calibration with DPO. Although SFT on in-context pairs teaches the model the desired output format, it does not explicitly calibrate the routing decision induced by the [COPY] token. We observe that an SFT model may learn the template while still failing to activate this router reliably at test time, either by ignoring the context and falling back to parametric retrieval, or by ranking plau-sible but incorrect identifiers above the gold one during beam search. We therefore apply Direct Preference Optimiza-tion (DPO) (Rafailov et al., 2023) after SFT. For each prompt (C, q ), we construct a chosen response 
+
+y+ and a rejected response y−. We consider two types of preference pairs. First for ranking failures, if the gold docid appears in the top-B beams candi-dates but is not ranked first, we use the gold docid as y+ and the top-ranked incorrect beam as y−.Second, for routing failures in context-dependent samples, we use [COPY] y∗ as the y+ and an in-correct zero-shot context-blind prediction as y−.Although the rejected docid is mined from zero-shot or context-blind predictions, both the chosen and rejected responses are paired with the same in-context prompt during DPO optimization. The detail of DPO is provided in Appendix B.2. 43.3 Large Title Context Adaptation 
+
+SFT and DPO stages use short document-docid contexts due to input length constraints. However, at inference time, we may involve up to K = 100 
+
+in-context pairs. This creates a train-test mismatch: the model is optimized with short, context-rich demonstrations but evaluated with larger candidate lists. Moreover, including full document texts for all K candidates is often infeasible under a fixed context budget. To bridge this mismatch, we add a lightweight large context adaptation stage using title-only context: 
+
+ˆC = {yi}Ki=1 , (6) where each yi is a natural-language title docid. Since titles preserve lexical and semantic cues, this provides a compact approximation of a long candi-date index. Starting from the DPO-trained model, we freeze the backbone and update only LoRA parameters: 
+
+max 
+
+> ∆θLoRA
+
+log pθ+∆ θLoRA (y∗ | q, ˆC). (7) The backbone θ is frozen and only the LoRA pa-rameters are updated. This stage adapts the model to larger title-level prompts following the idea of ef-ficient context extension (Yang, 2023). This adapta-tion is performed only on training corpus instances and does not use test queries, relevance labels, or document-query pairs from the evaluation set. De-tails are provided in Appendix C. 
+
+4 Experiments 
+
+4.1 Experiment Settings Datasets. We conduct experiments on Natural Questions 320K (NQ320K) (Kwiatkowski et al., 2019) and MS MARCO (Nguyen et al., 2016) 1.To simulate the arrival of new documents, we split each corpus into an initial corpus Dtrain and an un-seen corpus Dnew , containing 90% and 10% of the documents, respectively. The base GR model is trained only on Dtrain , while Dnew is introduced only at adaptation and evaluation time. We eval-uate adaptation using queries targeting Dnew , and retention using queries targeting Dtrain . Further details are provided in Appendix D. 
+
+> 1We use the smaller v1.1 dataset due to restricted compu-tational resource
+
+Baselines. We compare ICICLE with two groups of baselines, distinguished by whether they are ex-plicitly adapted to the unseen corpus Dnew . The first group is not trained or adapted on Dnew . It includes the original DSI model (Tay et al., 2022), which is trained only on Dtrain but decodes over a trie containing document ids from both Dtrain and 
+
+Dnew . Thus, its retrieval performance on Dnew re-flects the model’s parametric generalization ability rather than explicit access to new documents. The second group has access to Dnew through di-rect indexing, retraining, fine-tuning, or model edit-ing. This includes sparse retriever BM25 (Robert-son and Zaragoza, 2009) and dense retriever DPR (Karpukhin et al., 2020), which directly index new documents; F ROM SCRATCH , which trains a GR model on Dtrain ∪ D new ; New-Doc FT and DSI++ (Mehta et al., 2023), which incrementally fine-tune the GR model with new-document data; and DOME (Zhang et al., 2026), which adapts GR models through model editing. 
+
+Evaluation Protocol. ICICLE retrieves docu-ments from two sources: retrieve from its para-metric memory over Dtrain , while the in-context document-docid pairs provide query-time access to newly added documents from Dnew . For each unseen query with gold document d+ ∈ D new , we construct a query-specific unseen candidate set Dq
+
+by combining d+ with N − 1 randomly sampled non-gold documents: 
+
+Dq = {d+} ∪ { d− 
+
+> i
+
+}N −1 
+
+> i=1
+
+, d − 
+
+> i
+
+∈ D new \ { d+}. (8) Since the number of in-context pairs is bounded by the maximum context length, we set N = 100 
+
+in the main experiments. ICICLE receives Dq as in-context document-docid pairs and retrieves over 
+
+Dtrain ∪ Dq. For non-context baselines, we build the corresponding retrieval index or decoding trie over the same search space Dtrain ∪ Dq. Therefore, all methods are evaluated under the same query-specific search space, and differ only in how they incorporate newly added documents. 
+
+Evaluation Metrics. Following prior work on GR (Tay et al., 2022; Mehta et al., 2023), we report Hits@1 and Hits@10. We report adaptation per-formance on queries targeting Dnew , and retention performance on seen-document queries targeting 
+
+Dtrain . Efficiency is measured as the theoretical training cost required to incorporate unseen doc-uments into the model weights, where N and M
+
+denote the size of Dtrain and Dnew , respectively. 5Implementation Details. Unless otherwise spec-ified, ICICLE uses N = 100 in-context document-docid pairs. All GR-based methods use the same document-id space and decoding constraints for fair comparison. Training hyperparameters, prompt templates, and baseline-specific configurations are provided in Appendix F. 
+
+4.2 Main Result 
+
+Table 1 reports retrieval performance on both the originally indexed corpus Dtrain and the newly added corpus Dnew . We include BM25 and DPR as non-parametric retrieval references indexed over 
+
+Dtrain ∪ D new , while focusing our main compari-son on GR-based incremental methods. Overall, ICICLE achieves strong incremental retrieval per-formance without any document-specific parameter update. On Dnew , ICICLE obtains 0.607 Hits@1 and 0.800 Hits@10 on MS MARCO, outperform-ing DSI++ and DOME and approaching oracle-style methods such as From Scratch and New-Doc FT that directly train on new-document supervi-sion. On NQ320K, ICICLE further achieves the best performance on newly added documents, with 0.649 Hits@1 and 0.772 Hits@10. Meanwhile, ICI-CLE preserves competitive performance on Dtrain ,including the strongest Hits@1 among GR-based methods on NQ320K. These results show that in-context document-docid pairs provide an effective lightweight interface for corpus expansion, shifting incremental adaptation from offline model updates to query-time context conditioning. Beyond retrieval, ICICLE substantially reduces the cost of supporting an expanded corpus. For standard generative retrieval methods, unseen doc-uments cannot be retrieved unless their identi-fiers are incorporated into the model through ad-ditional training. As shown in Table 1, retraining from scratch requires optimization over the full expanded corpus Dtrain ∪ D new , resulting in an update cost of O(N + M ), while continual fine-tuning methods still require updating the model on the newly added O(M ) documents. By con-trast, ICICLE performs document expansion non-parametrically: after a one-time training stage that teaches the model to use in-context document-docid pairs, new documents can be added at infer-ence time by updating only the prompt-side candi-date set and the dynamic decoding trie. Therefore, ICICLE does not need to retrain or fine-tune the model whenever unseen documents are introduced, making it more efficient for dynamic retrieval set-tings. Moreover, we provide inference latency of different number of shots in Appendix J. 
+
+4.3 Ablation Studies 
+
+Table 2 evaluates each component of ICICLE on 
+
+Dtrain and Dnew . Direct inference performs poorly, showing that instruction following alone is insuf-ficient for mapping newly provided documents to docids. The ICL template improves retrieval, but the [COPY] token brings the largest gain on Dnew ,increasing Hits@1 from 0.102 to 0.526 and con-firming the need for an explicit context-copying signal. DPO then improves retention on Dtrain , rais-ing Hits@1 from 0.379 to 0.549 and Hits@10 from 0.572 to 0.788. Finally, high-shot long-context adaptation further improves unseen-document re-trieval to 0.607 Hits@1 and 0.800 Hits@10, with only a modest drop on Dtrain . These results show that the [COPY] token enables context retrieval, DPO balances context usage with parametric mem-ory, and long-context adaptation strengthens re-trieval under larger candidate sets. 
+
+5 Analysis 
+
+5.1 In-Context Shots Scaling 
+
+Figure 2 shows how retrieval performance scales with the number of in-context shots N . For in-context retrieval on unseen documents ( Dnew , bot-tom panel), performance is near-perfect when N ≤
+
+10 but degrades as the candidate pool grows, reach-ing Hits@1=0.607 and Hits@10=0.800 at N =100 . A similar trend holds for parametric mem-ory on seen documents ( Dtrain , top panel): both the context-dependent condition (Hits@1: 1.00 to 
+
+0.862 ) and the query-irrelevant condition (Hits@1: 
+
+0.602 to 0.519 ) degrade with N , indicating that longer in-context candidate lists interfere with re-trieval in both modes. However, aggregate Hits@ k does not reveal the source of this degradation. In particular, high-shot errors on Dnew may arise from two different failure modes: the model may fail to activate the [COPY] 
+
+routing signal when the answer is present in the context ( routing failure ), or it may correctly de-cide to copy but select the wrong candidate doc-ument ( retrieval failure ). The fact that ICICLE still achieves Hits@ 1=0.607 at N = 100 suggests that the copy mechanism does not completely col-lapse under long contexts. Thus, we further analyze whether errors arise from source selection or from document retrieval after copying in Section 5.3. 6Table 1: Main results on MS MARCO and NQ320K for dynamic corpus retrieval. Dtrain is the initially indexed corpus and Dnew is the unseen corpus added at inference time. We evaluate retrieval performance on both corpora using Hits@1 and Hits@10, and compare the theoretical training cost required to support the expanded corpus Dnew .
+
+Bold and underline shows best and second best result, respectively. BM25 & DPR are non-GR references, while the main comparison is among GR methods.                                                                                                  
+
+> MS MARCO NQ320K Unseen Corpus Update Cost Method Eval on Dtrain Eval on Dnew Eval on Dtrain Eval on Dnew
+> H@1 H@10 H@1 H@10 H@1 H@10 H@1 H@10
+> Indexed on Dtrain
+> DSI 0.634 0.850 0.003 0.006 0.424 0.608 0.156 0.317 –
+> Indexed on Dtrain ∪ D new
+> BM25 ∗0.614 0.937 0.601 0.928 0.386 0.617 0.297 0.471 –DPR ∗0.444 0.752 0.477 0.779 0.471 0.719 0.479 0.723 –From Scratch 0.590 0.813 0.603 0.788 0.450 0.611 0.395 0.559 O(N+M)
+> New-Doc FT 0.437 0.690 0.676 0.836 0.418 0.570 0.432 0.556 O(M)
+> DSI++ 0.485 0.696 0.506 0.666 0.422 0.607 0.604 0.723 O(M)
+> DOME 0.450 0.606 0.518 0.692 0.424 0.608 0.609 0.725 O(M)
+> ICICLE (Ours) 0.519 0.772 0.607 0.800 0.483 0.664 0.649 0.772 –
+
+Table 2: Ablation results on MS MARCO with 100-shot in-context demonstrations. Starting from direct infer-ence and the ICL template, we incrementally add the 
+
+[COPY] token, DPO alignment, and large title context adaptation. Best and second-best results are bolded and underlined.                             
+
+> Method Eval on Dtrain Eval on Dnew
+> Hit@1 Hit@10 Hit@1 Hit@10
+> Instruct Model
+> Direct Inference 0.015 0.042 0.013 0.040
+> Base Model
+> ICL Template 0.208 0.484 0.102 0.292 +[COPY] token 0.379 0.572 0.526 0.740 +DPO 0.549 0.788 0.546 0.782 +Large Context Adap. 0.519 0.772 0.607 0.800
+
+5.2 Model Calibration 
+
+We further analyze whether the model can reli-ably distinguish context-based retrieval from para-metric recall. Since the [COPY] token is gener-ated when the model believes that the target docu-ment is present in the candidate set, its probability 
+
+si = pθ([COPY] | qi, Ci). can be viewed as the model’s confidence in using the provided context. As shown in Figure 3, retrieval accuracy and cal-ibration performance are consistently correlated across all methods and shot settings: models with lower calibration error achieve higher retrieval ac-curacy. Notably, ICICLE maintains low expected calibration error (ECE) as the number of shots in-creases, while [COPY] and [COPY] +DPO become less calibrated under larger candidate pools. This suggests that robust retrieval depends not only on document matching, but also on knowing when to use context. Details of ECE are provided in Ap-pendix H. 
+
+5.3 Know to Copy or Know to Retrieve? 
+
+To isolate the effect of DPO, we decompose overall retrieval performance into two sub-abilities: rout-ing (correctly generating the [COPY] token when the answer is in context) and retrieval (retriev-ing the correct answer after deciding to copy). As shown in Figure 4, with DPO maintains stable con-ditional retrieval accuracy ( P (hit | [COPY] )) at 0.943 to 1.000 across all shot counts, while rout-ing recall monotonically degrades. This indicates that the performance bottleneck under shot scaling lies in routing rather than retrieval. Moreover, the routing-recall gap between the cases of without and with DPO shows that DPO mainly improves source selection under long-context inference. We fur-ther shows the source selection analysis on initial corpus Dtrain in Appendix I. 
+
+6 Related Works 
+
+Generative Retrieval and Incremental Updates 
+
+Generative retrieval (GR) trains a model to map queries directly to document identifiers (docids) via autoregressive decoding (De Cao et al., 2020; Tay et al., 2022; Wang et al., 2022). Because document-docid associations are encoded into model weights, adding new documents requires parameter updates. Prior work addresses this through incremental train-71   
+
+> 2
+> 3
+> 5
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 80
+> 100
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> 0.65
+> 0.70
+> 0.75
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> 1.00
+> Score  0.862
+> 1.000 0.967
+> 1.000
+> 0.519
+> 0.602
+> 0.772
+> 0.823
+> Parametric Memory ( train )
+> ctx@1
+> ctx@10
+> noise@1
+> noise@10
+> 1
+> 2
+> 3
+> 5
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 80
+> 100
+> Number of ICL shots
+> 0.55
+> 0.60
+> 0.65
+> 0.70
+> 0.75
+> 0.80
+> 0.85
+> 0.90
+> 0.95
+> 1.00
+> Score
+> 0.607
+> 1.000
+> 0.800
+> 1.000
+> In-Context Retrieval ( new )
+> ctx@1
+> ctx@10
+
+Figure 2: Retrieval performance as a function of the number of ICL shots N . Top : Hits@1 and Hits@10 on seen documents ( Dtrain ) under context-dependent (ctx ) and query-irrelevant ( noise ) conditions. Bottom :Hits@1 and Hits@10 on unseen documents ( Dnew ) un-der the context-dependent condition. Subscripts @1 and @10 denote Hits@1 and Hits@10 respectively. 
+
+ing (Mehta et al., 2023; Chen et al., 2023; Zhang et al., 2025; Kishore et al., 2023; Huynh et al., 2025; Son et al., 2026; Guo et al., 2025) or model edit-ing (Zhang et al., 2026), both of which tie corpus growth to weight modification. ICICLE instead supplies new document-docid pairs in the input context at inference time, eliminating document-specific parameter updates. 
+
+In-Context Learning and Source-Aware Re-trieval In-context learning (ICL) (Brown et al., 2020; Ram et al., 2023; Dong et al., 2024) adapts language models through input demonstrations without weight changes. When applied to GR, it en-ables retrieval over newly added documents by plac-ing document-docid pairs directly in the prompt. However, this creates a source-selection problem: the model must determine whether to copy a docid from context or recall one from parametric memory. Prior work on knowledge conflicts (Xu et al., 2024) and routing methods such as Self-RAG (Asai et al., 0.0 0.1 0.2 0.3 0.4 0.5   
+
+> ECE (lower is better)
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Retrieval Hit@1  ( higher is better)  3-shot
+> 100-shot
+> 3-shot
+> 100-shot
+> 3-shot
+> 100-shot
+> Method
+> ICICLE
+> [COPY]+DPO
+> [COPY]
+> # Shots
+> 3-shot
+> 10-shot
+> 20-shot
+> 100-shot
+
+Figure 3: Retrieval Hit@1 vs. ECE across methods and shot settings. Each point represents a (method, shot) configuration, lower ECE and higher Hit@1 is better. 1
+
+> 2
+> 3
+> 5
+> 10
+> 20
+> 30
+> 40
+> 50
+> 60
+> 80
+> 100
+> Number of ICL Shots
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Retrieval Accuracy
+> Retrieval Accuracy ([COPY]+DPO)
+> Retrieval Accuracy ([COPY])
+> Routing Recall ([COPY]+DPO)
+> Routing Recall ([COPY])
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> 1.1
+> Routing Recall
+
+Figure 4: Routing recall and retrieval accuracy as a function of in-context shot count N , comparing [COPY] 
+
+and [COPY] +DPO. 
+
+2024), R-Tuning (Zhang et al., 2024), and adaptive retrieval (Moskvoretskii et al., 2025) address when to retrieve, but assume fully observable retrieval outputs. ICICLE faces a harder problem: unlike in-context listwise reranking (Gupta et al., 2026; Tang et al., 2024), which ranks over a fixed observable pool, ICICLE must route between context-provided docids and parametric docids that exist only as im-plicit memory, with no direct signal indicating what the model has memorized. 
+
+7 Conclusion 
+
+We presented ICICLE, an in-context indexing framework for extending generative retrieval to dy-namically expanding corpora without document-specific retraining. ICICLE supplies newly added document-docid associations in the prompt and uses router-aware constrained decoding to decide whether to retrieve from contextual evidence or parametric memory. Experiments on MS MARCO 8and NQ320K show that ICICLE retrieves unseen corpus at inference time while preserving competi-tive performance on the original corpus. Our anal-ysis further shows that scaling to larger candidate pools is mainly limited by routing failure rather than ranking difficulty, suggesting calibration as a key factor for reliable in-context generative re-trieval. 
+
+Limitations 
+
+While ICICLE provides a practical alternative to full re-indexing for incorporating new documents into a generative retrieval model, its applicability is subject to three boundaries. First, the number of new documents that ICI-CLE can accommodate per query is bounded by the model’s context window, which was limited by the computation resource on our end. Our current implementation supports at most 100 in-context document–docid pairs. However, 100 is still much smaller than the updates seen in real-world retrieval systems, where thousands of new documents may arrive at once. Scaling to this setting would re-quire a two-stage pipeline, in which a coarse pre-retrieval step first reduces the candidate set to a context-feasible size before ICICLE performs the final ranking, and errors at this step would prop-agate to the final retrieval result. We leave this two-stage extension to future work. Second, our shot-scaling analysis show that re-trieval accuracy on unseen documents drops as the number of in-context candidates grows. This sug-gests that ICICLE does suffer from the same con-text degradation like a LLM (Hsieh et al., 2024), however, we believe solutions used in LLM (Gao et al., 2025; Xiao et al., 2024) can be applied to ICICLE as well. Third, conditioning on an in-context candidate pool inevitably increases prefill cost relative to query-only generative retrieval baselines, and trie-constrained decoding adds further per-step over-head during generation. Reducing this cost—for example, through adaptive budget allocation of KV-cache across queries (Feng et al., 2026)—is a promising direction for future work. 
+
+References 
+
+Akari Asai, Zeqiu Wu, Yizhong Wang, Avi Sil, and Hannaneh Hajishirzi. 2024. Self-rag: Learning to re-trieve, generate, and critique through self-reflection. In International conference on learning representa-tions , volume 2024, pages 9112–9141. Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, and 1 others. 2020. Language models are few-shot learners. Advances in Neural Information Processing Systems , 33:1877–1901. Jiangui Chen, Ruqing Zhang, Jiafeng Guo, Maarten de Rijke, Wei Chen, Yixing Fan, and Xueqi Cheng. 2023. Continual learning for generative retrieval over dynamic corpora. In Proceedings of the 32nd ACM International Conference on Information and Knowledge Management , pages 306–315. Jianlyu Chen, Shitao Xiao, Peitian Zhang, Kun Luo, Defu Lian, and Zheng Liu. 2024. M3-embedding: Multi-linguality, multi-functionality, multi-granularity text embeddings through self-knowledge distillation. In Findings of the associ-ation for computational linguistics: ACL 2024 , pages 2318–2335. Nicola De Cao, Gautier Izacard, Sebastian Riedel, and Fabio Petroni. 2020. Autoregressive entity retrieval. 
+
+arXiv preprint arXiv:2010.00904 .Qingxiu Dong, Lei Li, Damai Dai, Ce Zheng, Jingyuan Ma, Rui Li, Heming Xia, Jingjing Xu, Zhiyong Wu, Baobao Chang, and 1 others. 2024. A survey on in-context learning. In Proceedings of the 2024 Con-ference on Empirical Methods in Natural Language Processing .Yuan Feng, Junlin Lv, Yukun Cao, Xike Xie, and S Kevin Zhou. 2026. Ada-kv: Optimizing kv cache eviction by adaptive budget allocation for efficient llm inference. Advances in Neural Information Pro-cessing Systems , 38:113152–113188. Tianyu Gao, Alexander Wettig, Howard Yen, and Danqi Chen. 2025. How to train long-context language models (effectively). In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 7376– 7399. Jiafeng Guo, Changjiang Zhou, Ruqing Zhang, Jian-gui Chen, Maarten de Rijke, Yixing Fan, and Xueqi Cheng. 2025. Corpusbrain++: A continual genera-tive pre-training framework for knowledge-intensive language tasks. ACM Transactions on Information Systems , 44(1):1–35. Nilesh Gupta, Chong You, Srinadh Bhojanapalli, Sanjiv Kumar, Inderjit Dhillon, and Felix Yu. 2026. Scal-able in-context ranking with generative models. Ad-vances in Neural Information Processing Systems ,38:36590–36613. Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shan-tanu Acharya, Dima Rekesh, Fei Jia, and Boris Gins-burg. 2024. Ruler: What’s the real context size of your long-context language models? In First Confer-ence on Language Modeling .
+
+9Tuan-Luc Huynh, Thuy Vu, Weiqing Wang, Trung Le, Dragan Gasevic, Yuan-Fang Li, and Thanh-Toan Do. 2025. Mixlora-dsi: Dynamically expandable mixture-of-lora experts for rehearsal-free generative retrieval over dynamic corpora. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 380–396. Vladimir Karpukhin, Barlas Oguz, Sewon Min, Patrick Lewis, Ledell Wu, Sergey Edunov, Danqi Chen, and Wen-tau Yih. 2020. Dense passage retrieval for open-domain question answering. In Proceedings of the 2020 conference on empirical methods in natural language processing (EMNLP) , pages 6769–6781. Varsha Kishore, Chao Wan, Justin Lovelace, Yoav Artzi, and Kilian Q Weinberger. 2023. Incdsi: In-crementally updatable document retrieval. In Inter-national Conference on Machine Learning , pages 17122–17134. PMLR. Tom Kwiatkowski, Jennimaria Palomaki, Olivia Red-field, Michael Collins, Ankur Parikh, Chris Alberti, Danielle Epstein, Illia Polosukhin, Matthew Kelcey, Jacob Devlin, Kenton Lee, Kristina N. Toutanova, Llion Jones, Ming-Wei Chang, Andrew Dai, Jakob Uszkoreit, Quoc Le, and Slav Petrov. 2019. Natu-ral questions: a benchmark for question answering research. Transactions of the Association of Compu-tational Linguistics .Dawn Lawrie, Efsun Kayi, Eugene Yang, James May-field, and Douglas W Oard. 2024. Plaid shirttt for large-scale streaming dense retrieval. In Proceedings of the 47th International ACM SIGIR Conference on Research and Development in Information Retrieval ,pages 2574–2578. Hyunji Lee, Jaeyoung Kim, Hoyeon Chang, Hanseok Oh, Sohee Yang, Vladimir Karpukhin, Yi Lu, and Minjoon Seo. 2023a. Nonparametric decoding for generative retrieval. In Findings of the Association for Computational Linguistics: ACL 2023 , pages 12642–12661. Sunkyung Lee, Minjin Choi, and Jongwuk Lee. 2023b. Glen: Generative retrieval via lexical index learning. In Proceedings of the 2023 Conference on Empiri-cal Methods in Natural Language Processing , pages 7693–7704. Sanket Vaibhav Mehta, Jai Gupta, Yi Tay, Mostafa De-hghani, Vinh Q Tran, Jinfeng Rao, Marc Najork, Emma Strubell, and Donald Metzler. 2023. Dsi++: Updating transformer memory with new documents. In Proceedings of the 2023 conference on Empiri-cal Methods in Natural Language Processing , pages 8198–8213. Kidist Amde Mekonnen, Yubao Tang, and Maarten de Rijke. 2026. A parametric memory head for continual generative retrieval. arXiv preprint arXiv:2604.23388 .Sewon Min, Xinxi Lyu, Ari Holtzman, Mikel Artetxe, Mike Lewis, Hannaneh Hajishirzi, and Luke Zettle-moyer. 2022. Rethinking the role of demonstrations: What makes in-context learning work? In Proceed-ings of the 2022 Conference on Empirical Methods in Natural Language Processing .Viktor Moskvoretskii, Maria Marina, Mikhail Sal-nikov, Nikolay Ivanov, Sergey Pletenev, Daria Gal-imzianova, Nikita Krayko, Vasily Konovalov, Irina Nikishina, and Alexander Panchenko. 2025. Adap-tive retrieval without self-knowledge? bringing uncer-tainty back home. In Proceedings of the 63rd Annual Meeting of the Association for Computational Lin-guistics (Volume 1: Long Papers) , pages 6355–6384. Tri Nguyen, Mir Rosenberg, Xia Song, Jianfeng Gao, Saurabh Tiwary, Rangan Majumder, and Li Deng. 2016. MS MARCO: A human gener-ated machine reading comprehension dataset. CoRR ,abs/1611.09268. Rafael Rafailov, Archit Sharma, Eric Mitchell, Christo-pher D Manning, Stefano Ermon, and Chelsea Finn. 2023. Direct preference optimization: Your language model is secretly a reward model. Advances in neural information processing systems , 36:53728–53741. Shashank Rajput, Nikhil Mehta, Anima Singh, Raghu-nandan Hulikal Keshavan, Trung Vu, Lukasz Heldt, Lichan Hong, Yi Tay, Vinh Tran, Jonah Samost, and 1 others. 2023. Recommender systems with generative retrieval. Advances in Neural Information Process-ing Systems , 36:10299–10315. Ori Ram, Yoav Levine, Itay Dalmedigos, Dor Muhlgay, Amnon Shashua, Kevin Leyton-Brown, and Yoav Shoham. 2023. In-context retrieval-augmented lan-guage models. Transactions of the Association for Computational Linguistics , 11:1316–1331. Stephen Robertson and Hugo Zaragoza. 2009. The prob-abilistic relevance framework: BM25 and beyond ,volume 4. Now Publishers Inc. Weijia Shi, Xiaochuang Han, Mike Lewis, Yulia Tsvetkov, Luke Zettlemoyer, and Wen-tau Yih. 2024. Trusting your evidence: Hallucinate less with context-aware decoding. In Proceedings of the 2024 Confer-ence of the North American Chapter of the Associ-ation for Computational Linguistics: Human Lan-guage Technologies (Volume 2: Short Papers) , pages 783–791. HuiJeong Son, Hyeongu Kang, Sunho Kim, Subeen Ho, SeongKu Kang, Dongha Lee, and Susik Yoon. 2026. Cream: Continual retrieval on dynamic streaming corpora with adaptive soft memory. In Proceedings of the 32nd ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 1 , pages 1297–1308. Weiwei Sun, Lingyong Yan, Zheng Chen, Shuaiqiang Wang, Haichao Zhu, Pengjie Ren, Zhumin Chen, Dawei Yin, Maarten Rijke, and Zhaochun Ren. 2023. Learning to tokenize for generative retrieval. Ad-vances in Neural Information Processing Systems ,36:46345–46361. 
+
+10 Yubao Tang, Ruqing Zhang, Jiafeng Guo, Maarten De Rijke, Wei Chen, and Xueqi Cheng. 2024. List-wise generative retrieval models via a sequential learning process. ACM Transactions on Information Systems , 42(5):1–31. Yi Tay, Vinh Tran, Mostafa Dehghani, Jianmo Ni, Dara Bahri, Harsh Mehta, Zhen Qin, Kai Hui, Zhe Zhao, Jai Gupta, and 1 others. 2022. Transformer memory as a differentiable search index. Advances in Neural Information Processing Systems , 35:21831–21843. Yujing Wang, Yingyan Hou, Haonan Wang, Ziming Miao, Shibin Wu, Qi Chen, Yuqing Xia, Chengmin Chi, Guoshuai Zhao, Zheng Liu, and 1 others. 2022. A neural corpus indexer for document retrieval. Ad-vances in Neural Information Processing Systems ,35:25600–25614. Chaojun Xiao, Pengle Zhang, Xu Han, Guangxuan Xiao, Yankai Lin, Zhengyan Zhang, Zhiyuan Liu, and Maosong Sun. 2024. Infllm: Training-free long-context extrapolation for llms with an efficient con-text memory. Advances in neural information pro-cessing systems , 37:119638–119661. Shitao Xiao, Zheng Liu, Peitian Zhang, and Niklas Muennighoff. 2023. C-pack: Packaged resources to advance general chinese embedding. arXiv preprint arXiv:2309.07597 .Rongwu Xu, Zehan Qi, Zhijiang Guo, Cunxiang Wang, Hongru Wang, Yue Zhang, and Wei Xu. 2024. Knowledge conflicts for llms: A survey. In Proceed-ings of the 2024 Conference on Empirical Methods in Natural Language Processing , pages 8541–8565. An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, and 1 others. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Jianxin Yang. 2023. Longqlora: Efficient and effective method to extend context length of large language models. arXiv preprint arXiv:2311.04879 .Hanning Zhang, Shizhe Diao, Yong Lin, Yi Fung, Qing Lian, Xingyao Wang, Yangyi Chen, Heng Ji, and Tong Zhang. 2024. R-tuning: Instructing large lan-guage models to say ‘i don’t know’. In Proceedings of the 2024 Conference of the North American Chap-ter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Pa-pers) , pages 7113–7139. Zhen Zhang, Xinyu Ma, Weiwei Sun, Pengjie Ren, Zhumin Chen, Shuaiqiang Wang, Dawei Yin, Maarten de Rijke, and Zhaochun Ren. 2025. Repli-cation and exploration of generative retrieval over dynamic corpora. In Proceedings of the 48th Inter-national ACM SIGIR Conference on Research and Development in Information Retrieval , pages 3325– 3334. Zhen Zhang, Zihan Wang, Xinyu Ma, Shuaiqiang Wang, Dawei Yin, Xin Xin, Pengjie Ren, Maarten de Rijke, and Zhaochun Ren. 2026. Model editing for new doc-ument integration in generative information retrieval. In Proceedings of the ACM Web Conference 2026 ,pages 1993–2003. 
+
+11 A In-Context Template Learning 
+
+A.1 In-Context Template 
+
+We use a unified in-context template to support two retrieval modes within the same GR model. Given a query and a candidate set, the model must either copy the docid of a relevant candidate from context or fall back to its parametric memory when the relevant document is absent from the context. The special token [COPY] serves as an explicit routing signal for the former case. When the gold document appears in the candidate list, the target output is [COPY] followed by the corresponding docid. When the context contains only irrelevant documents, the target output is the gold docid without [COPY] , forcing the model to retrieve from its learned global document-docid mapping. In-Context Template 
+
+System: Given a query and a list of candidate documents, retrieve the title of the most relevant document. If the relevant document appears in the candidate list, output [COPY] followed by its title. Otherwise, output the title from memory directly. 
+
+Candidates: [1] {compressed content of document 1} 
+
+Title: {title 1} 
+
+[2] {compressed content of document 2} 
+
+Title: {title 2} 
+
+...
+
+[n] {compressed content of document n} 
+
+Title: {title n} 
+
+Query: {query} 
+
+Output (context-dependent): [COPY] {gold title} 
+
+Output (all-noise): {gold title} 
+
+A.2 Details of Hard Negatives Mining 
+
+For each training document d ∈ D train , we construct a hard negative set H(d) by retrieving its nearest semantic neighbors using a dense retrieval model. Concretely, we encode every documents in Dtrain with 
+
+bge-base-en-v1.5 (Xiao et al., 2023) and ℓ2-normalize the resulting embedding. We then index the pool with an exact inner-product (FAISS IndexFlatIP ). For each document d, we retrieve its top-k most similar documents, excluding d itself, and take them as H(d); we set k = 100 in all experiments. When constructing in-context instances, the irrelevant slots in Ci are filled by sampling without replacement from H(d⋆i ) rather than from randomly drawn documents in Dtrain . Because hard negatives share topical content with d⋆i , the model cannot rely on superficial topical differences to identify the correct candidate and must instead learn fine-grained semantic distinctions and faithfully use the provided document–DocID mapping. 
+
+B Routing Between Contextual and Parametric Retrieval 
+
+B.1 Details of Context-Aware Constrained Decoding 
+
+We modify the trie-based constrained decoding to account for the [COPY] routing token. At the first decoding step, the model must choose between generating [COPY] or directly generating a valid global docid prefix. This first token determines the decoding route: if [COPY] is generated, the remaining tokens are constrained by the context trie T Ci , ensuring that the prediction is copied from the candidate set; otherwise, decoding is constrained by the global trie TG, corresponding to parametric retrieval from the full corpus. Thus, the decoding procedure preserves valid docid generation while enforcing the intended separation between context-dependent and query-irrelevant retrieval. 12 Algorithm 1 Context-Aware Constrained Decoding 
+
+Require: Global trie TG, context trie T Ci for sample i
+
+Require: Generated tokens y1: t (excluding prompt) 
+
+Require: Logits s ∈ R|V|  
+
+> 1:
+
+if t = 0 then ▷ force routing decision  
+
+> 2:
+
+allow only [COPY ] or valid starts of TG 
+
+> 3:
+
+else if y1 = [ COPY ] then  
+
+> 4:
+
+constrain s using T Ci on y2: t ▷ copy from context  
+
+> 5:
+
+else  
+
+> 6:
+
+constrain s using TG on y1: t ▷ retrieve from corpus  
+
+> 7:
+
+end if B.2 Details of DPO 
+
+Let πθ denote the policy model and πref denote the frozen reference model initialized from the SFT checkpoint. We optimize the DPO objective: 
+
+LDPO = −E(C,q,y +,y −) log σ
+
+
+
+β
+
+
+
+log πθ(y+ | C , q )
+
+πref (y+ | C , q ) − log πθ(y− | C , q )
+
+πref (y− | C , q )
+
+ 
+
+. (9) This objective explicitly encourages the model to prefer context-grounded copying over context-blind parametric fallback when the answer is available in the prompt, while also improving the ranking of correct identifiers among beam candidates. 
+
+C Details of Large Title Context Adaptation 
+
+The DPO stage is optimized with a 3-shot template, but inference uses up to K = 100 in-context candidates. To bridge this gap, we perform a LoRA-based adaptation stage after DPO, using an identifier-only context ˜CK = {yi}Ki=1 in which only document titles (identifiers) appear, with no document content. This reduces the per-candidate footprint to a short token sequence and allows 100 candidates to fit within the model’s context window. 
+
+Training data construction. For each training query qi with gold docid y⋆i , we sample K − 1 distractor identifiers from Dtrain and insert y⋆i at a uniformly sampled position, forming ˜CK . We include both context-dependent instances (gold present in ˜CK ) and all-noise instances (gold absent, distractors only). The training objective is identical to LICL in Section 3, applied to the identifier-only context. 
+
+D Details of Datasets 
+
+MS MARCO. We use the MS MARCO passage retrieval collection (Nguyen et al., 2016), which contains near 100K passages. We adopt the standard training queries and randomly partition the corpus into 90% ( Dtrain , 90K passages) used to train the base GR model and 10% ( Dnew , 10K passages) withheld as the unseen document set. 
+
+NQ320K. We use the Natural Questions (Kwiatkowski et al., 2019) retrieval benchmark with also near 100K passages. The same 90/10 corpus partition is applied, yielding Dtrain (90K passages) and Dnew (10K passages). For both datasets, test queries are split according to whether their relevant document belongs to Dtrain 
+
+or Dnew , and performance is reported separately for each subset. 13 E Details of Baselines 
+
+For sparse retrieval, we implement BM25 using the bm25s package 2. For dense retrieval, we build DPR with Pyserini 3. We use our own implementations for DSI, DSI++, and the two oracle-style incremental learning baselines, F ROM -S CRATCH and N EW DOC FT. The two oracle-style baselines share the same hyperparameter configuration reported below, with the only difference being the number of training epochs: F ROM -S CRATCH is trained for 15 epochs, whereas N EW DOC FT is trained for 10 epochs. For DOME, we directly use the authors’ official implementation 4.
+
+Hyperparameter Value 
+
+Backbone Qwen3-1.7B-Base learning rate 1 × 10 −4
+
+Warmup ratio 0.1 training epochs 10/15 Effective batch size 128 Optimizer AdamW Maximum sequence length L 2048 
+
+F ICICLE Training Configurations 
+
+We perform the training of the ICICLE model entirely on RTX PRO 6000 Blackwell. 
+
+F.1 Stage-1 SFT Training 
+
+Stage-1 SFT consists of two consecutive supervised finetuning phases. First, we train the model with indexing conversations to establish the document–DocID mapping ability required by GR. Second, starting from this indexing checkpoint, we continue SFT on in-context instances constructed as described in Section 3.1. For each training query, we generate one context-dependent instance and one all-noise instance, so that each optimization step sees both retrieval modes. Hard negatives are used as irrelevant documents in both instance types (Appendix A.2). We further mix indexing-style conversations into this phase as anchor data, which preserves the learned identifier mappings while the model adapts to in-context retrieval. 
+
+Hyperparameter Value 
+
+Backbone Qwen3-1.7B-Base Indexing SFT learning rate 1 × 10 −4
+
+Indexing SFT training epochs 10 ICL SFT learning rate 5 × 10 −5
+
+ICL SFT effective batch size 512 Shots n per instance 3Maximum sequence length L 4096 Warmup ratio 0.1 Optimizer AdamW Special token [COPY] 
+
+F.2 Stage-2 DPO Training 
+
+DPO preference pairs are constructed as described in Section 3, covering both routing failures and ranking failures. We use a 3-shot template for all DPO instances. 
+
+> 2https://github.com/xhluca/bm25s
+> 3https://github.com/castorini/pyserini
+> 4https://github.com/zhangzhen-research/DOME
+
+14 Hyperparameter Value 
+
+β 0.1 Learning rate 5 × 10 −6
+
+Effective batch size 64 Training epochs 3Warmup ratio 0.1 Optimizer AdamW 
+
+Number of preference pairs (routing / ranking) 
+
+NQ320K 8435 / 8435 MS MARCO 9160 / 9160 
+
+F.3 Large Title Context Adaptation 
+
+After DPO, we perform the large title context adaptation stage described. This stage uses title-only contexts with up to K = 100 candidates and trains LoRA adapters while keeping the backbone frozen. The purpose is to reduce the mismatch between the short 3-shot training template and the long candidate lists used at inference time. Since only identifiers are included in the context, the adaptation stage is computationally lighter than full document-based long-context training and allows the model to observe many more candidate positions. 
+
+Hyperparameter Value 
+
+LoRA rank r 16 LoRA α 16 Dropout rate 0.05 Learning rate 1 × 10 −5
+
+Warmup ratio 0.1 Optimizer AdamW Training epochs 2Frozen parameters Backbone θ
+
+Target modules 
+
+Attention q_proj , k_proj , v_proj , o_proj 
+
+Feed-forward gate_proj , up_proj , down_proj 
+
+G Full Experiment Results over N -shots 
+
+Table 4 reports Hits@1 on both Dtrain and Dnew for each in-context shot count N ∈ { 3, 10 , 20 , 50 , 100 }
+
+under the context-dependent ( ctx ) and all-noise ( noise ) conditions.    
+
+> Table 3: N-shot result of Dtrain
+
+MS MARCO NQ320K 
+
+# shots → 3 10 20 50 100 3 10 20 50 100 
+
+[COPY] 0.503 0.508 0.518 0.448 0.379 0.280 0.300 0.300 0.320 0.356 
+
+[COPY] + DPO 0.602 0.610 0.609 0.630 0.549 0.300 0.432 0.448 0.524 0.524 ICICLE 0.621 0.620 0.603 0.635 0.519 0.236 0.396 0.400 0.500 0.483 15 Table 4: N -shot result of Dnew 
+
+MS MARCO NQ320K 
+
+# shots → 3 10 20 50 100 3 10 20 50 100 
+
+[COPY] 0.959 0.868 0.737 0.719 0.526 0.600 0.712 0.664 0.592 0.416 
+
+[COPY] + DPO 0.984 0.914 0.715 0.624 0.546 0.804 0.728 0.664 0.568 0.556 ICICLE 0.992 0.942 0.870 0.782 0.607 0.832 0.780 0.732 0.624 0.649 
+
+H Details of ECE 
+
+For each instance, we define the ground-truth mode as 
+
+zi =
+
+(
+
+1, if d⋆i ∈ C i,
+
+0, otherwise , (10) where d∗ 
+
+> i
+
+is the target document and Ci is the context. We use the [COPY] probability si as the confidence score for context-based retrieval. ECE measures the discrepancy between the model’s confidence and empirical correctness across confidence bins: 
+
+ECE = 
+
+> M
+
+X
+
+> m=1
+
+|Bm|
+
+N |acc( Bm) − conf( Bm)| , (11) where 
+
+acc( Bm) = 1
+
+|Bm|
+
+X
+
+> i∈Bm
+
+I[ˆ zi = zi], (12) and 
+
+conf( Bm) = 1
+
+|Bm|
+
+X
+
+> i∈Bm
+
+max( si, 1 − si). (13) A lower ECE indicates that the model’s confidence better reflects the actual correctness of its retrieval-mode decision. 
+
+I [COPY] Token Routing Probability 
+
+We analyze how the model decides between context retrieval and parametric memory. This analysis is conducted on the test set, where each query is evaluated under two conditions: a context-dependent condition in which the answer is provided in the ICL context, and an all-noise condition in which the same query must be answered from parametric memory. As shown in Figure 5(a), when the answer is present in context, the model assigns near-unity probability to the [COPY] token at low shot counts, despite being capable of retrieving the same answers from parametric memory—evidenced by the ∼0.65 Hit@1 achieved under the all-noise condition on identical queries (Figure 5(b)). This suggests that the model treats a short, focused context as a stronger evidence signal than its own encoded knowledge. However, this preference weakens monotonically as the number of ICL shots increases, and retrieval accuracy degrades accordingly. We further show the scenario of [COPY] token generation error in below table. 
+
+J N -Shot Inference Latency 
+
+Table 6 reports inference cost and latency across four few-shot budgets, averaged over 30 runs per condition. TTFT increases monotonically with context length, rising from 9.0 ms at 3-shot to 61.8 ms at 100-shot—a 6.9 × increase that tracks the roughly 26 × growth in mean input tokens (392 to 10,264), consistent with the linear prefill cost of KV cache construction. Total latency follows the same trend, growing from 53 ms to 298 ms, with notably tighter standard deviations at 100-shot ( ±42 ms) compared 16 1
+
+> 2
+> 3
+> 10
+> 20
+> 30
+> 40
+> 60
+> 80
+> 100
+> # ICL Shots
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Avg [COPY] Token Probability
+> (a) [COPY] Token Probability
+> Context-dependent
+> Query-Irrelevant
+> 1
+> 2
+> 3
+> 10
+> 20
+> 30
+> 40
+> 60
+> 80
+> 100
+> # ICL Shots
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> 1.1
+> Hit@1
+> (b) Retrieval Accuracy
+> Context-dependent
+> Query-Irrelevant
+
+Figure 5: [COPY] token probability and retrieval accuracy under two context conditions on the same test queries. Context-dependent: the answer is present in context. All-noise: context contains only irrelevant documents. All test documents were seen during training. Table 5: Analysis of [COPY] token generation errors across shot counts. Wrong Ctx copy : true document is in the context but model copies a different in-context document. Spurious Copy : true document is not in context but model generates [COPY] anyway. 
+
+Shots Emit+Miss Wrong Ctx Copy Spurious Copy Miss Rate 
+
+1 0.0% 0.0% 0.0% 0.0% 2 0.0% 0.0% 0.0% 0.0% 3 0.0% 0.0% 0.0% 0.0% 10 0.0% 0.0% 0.0% 0.0% 20 2.2% 1.1% 1.1% 2.2% 30 0.0% 0.0% 0.0% 0.0% 40 2.4% 0.0% 2.4% 2.4% 60 5.6% 4.4% 1.1% 5.6% 80 6.3% 1.3% 5.1% 6.3% 100 16.9% 9.1% 7.8% 16.9% to the lighter settings, suggesting more predictable latency at larger context sizes. Throughput declines steadily from 250.4 tok/s at 3-shot to 36.9 tok/s at 100-shot, driven by the disproportionate growth in input tokens relative to output tokens: at n=100 , the model generates only 11.4 output tokens on average against a 10,264-token prompt, yielding a 6.8 × throughput reduction compared to the 3-shot baseline. For latency-sensitive deployments, these results indicate that increasing the few-shot budget beyond 20 examples incurs substantial prefill overhead with diminishing returns in output richness. 
+
+K Impact of Document Compression 
+
+Placing full documents in the in-context template increases per-candidate token cost, directly limiting how many candidates can fit in the context window. Document compression reduces this cost and enables a larger few-shot budget, but different compression strategies trade off token efficiency against the semantic fidelity needed for retrieval. We compare two offline compression strategies: Abstractive (rewriting each passage into a 2–3 sentence summary) and Keyword (distilling into a pipe-separated phrase list targeting 10–20 tokens), applied using two compressors: GPT-OSS-20B and Qwen2.5-14B-Instruct. The GR model is the Stage-1 SFT checkpoint (Qwen3-1.7B, [COPY] processor, 3-shot hard-negative template), trained on uncompressed passages. Table 7 reports token-length statistics measured with the Qwen3 BPE tokenizer. The following examples illustrate the output format of each strategy on the same source passage. 17 Table 6: KV cache latency and throughput under varying few-shot settings. Each condition was evaluated over 
+
+n=30 samples. TTFT denotes time to first token. 
+
+N -shot Input tokens TTFT (s) Total latency (s) Throughput (tok/s) 
+
+3 392.4 0.0090 0.0534 250.4 10 1,132.4 0.0123 0.0779 212.5 20 2,091.7 0.0173 0.0974 197.6 100 10,264.5 0.0618 0.2981 36.9 
+
+Source Passage (MS MARCO, uncompressed — 74 tokens) 
+
+> The Battle of Hastings was fought on 14 October 1066 between the Norman-French army of William, the Duke of Normandy, and an English army under Anglo-Saxon King Harold II. Harold was killed in the battle—the Bayeux Tapestry depicts him as being shot through the eye with an arrow—and William went on to become King of England, marking the beginning of the Norman Conquest.
+
+Abstractive Compression — Example Output (46 tokens) 
+
+The Battle of Hastings, fought on 14 October 1066, ended with the defeat and death of Anglo-Saxon King Harold II at the hands of William, Duke of Normandy. William’s victory initiated the Norman Conquest of England and his coronation as King of England. The battle is famously commemorated in the Bayeux Tapestry. 
+
+Keyword Compression — Example Output (18 tokens) 
+
+Battle of Hastings | 14 October 1066 | William Duke of Normandy | Harold II | Norman Conquest | Bayeux Tapestry | King of England 
+
+Table 7: Token-length statistics of MS MARCO corpus variants across two offline compressors, measured with the Qwen3 BPE tokenizer. Avg reduction and Retained are computed relative to the uncompressed original of the same documents.                   
+
+> Variant Avg tokens Avg reduction Retained
+> Original 82.4 −100.0%
+> GPT-OSS-20B
+> Abstractive 63.3 −20.1 75.9% Keyword 35.9 −47.5 43.0%
+> Qwen2.5-14B-Instruct
+> Abstractive 46.1 −37.1 55.4% Keyword 26.1 −57.1 31.4%
+
+As offline corpus compression was still in progress at the time of evaluation, we first conduct a small-scale pilot study using GPT-OSS-20B-compressed documents on the subset of icl_test samples whose every in-context document was already present in both compressed corpora, yielding 238 matched samples (119 context-dependent + 119 all-noise ). Results are shown in Table 8. Abstractive compression is the better strategy: it reduces token length by 24% while dropping context-dependent Hit@1 by only 0.8 pp (2.1% relative), as coherent summaries preserve the semantic signal needed for [COPY] routing. Keyword compression is more aggressive (57% reduction) but incurs a larger 4.2 pp drop (10.4% relative) in context-dependent Hit@1, suggesting that stripping away sentence structure makes it harder for the model to match a query against the compressed passage. Notably, Hit@10 is identical across all variants, meaning compression does not remove the correct document from the 18 Table 8: Retrieval performance when context documents are replaced with GPT-OSS-20B-compressed texts at inference time (238 matched samples). ∆ is relative to the uncompressed baseline.                 
+
+> Context H@1 H@10 Ctx-dep H@1 ∆
+> Uncompressed 0.202 0.357 0.403 −
+> Abstractive 0.197 0.357 0.395 −0.008 Keyword 0.181 0.357 0.361 −0.042
+
+reachable beam; only its rank-1 precision suffers. All-noise Hit@1 is 0 in all conditions, as the evaluation targets D1 documents absent from the model’s parametric memory, which compression does not affect. We further evaluate both compressors at full scale across all icl_test queries (18,320 total). Table 9 reports results for each compressor and strategy. 
+
+Table 9: Full-scale retrieval performance on icl_test (18,320 queries; partial evaluation) per compressor and compression strategy. The uncompressed baseline is shared across both compressors. ∆ H@1 is the absolute change relative to Uncompressed. cd@1 = context-dependent Hit@1.                           
+
+> Compressor Context H@1 H@10 cd@1 ∆H@1
+> Uncompressed 0.175 0.351 0.351 −
+> GPT-OSS-20B
+> Abstractive 0.218 0.382 0.436 +0.043 Keyword 0.193 0.361 0.386 +0.018
+> Qwen2.5-14B-Instruct
+> Abstractive 0.204 0.372 0.404 +0.029 Keyword 0.147 0.298 0.290 −0.028
+
+Abstractive compression improves over the uncompressed baseline for both compressors: GPT-OSS-20B gains +0.043 H@1 and +0.085 cd@1, while Qwen2.5-14B-Instruct gains +0.029 H@1 and +0.053 cd@1. Keyword compression tells a different story across the two compressors. GPT-OSS-20B key-word still improves ( +0.018 H@1, +0.035 cd@1), whereas Qwen2.5-14B-Instruct keyword degrades performance ( −0.028 H@1, −0.061 cd@1), consistent with the small-scale pilot finding that aggressive compression strips the sentence structure needed for reliable [COPY] routing. The divergence reflects their different compression intensities: GPT-OSS-20B retains 43.0% of tokens for keyword (35.9 avg tokens), while Qwen2.5-14B-Instruct retains only 31.4% (26.1 avg tokens), crossing a fidelity threshold below which the model can no longer match queries against compressed passages. Hit@10 remains stable across all conditions ( ≤0.021 spread), confirming that compression does not evict the correct document from the reachable beam. In absolute performance, GPT-OSS-20B achieves marginally higher H@1 than Qwen2.5-14B-Instruct under abstractive compression (0.218 vs. 0.204) and under keyword (0.193 vs. 0.147). However, Qwen2.5-14B-Instruct produces substantially more compact abstractive summaries (46.1 avg tokens vs. 63.3 for GPT-OSS-20B, a 27% reduction), directly freeing additional context slots for more in-context candidates within the 128K window. Given this token efficiency advantage and the comparable abstractive retrieval quality ( +0.029 vs. +0.043 ∆H@1), we adopt Qwen2.5-14B-Instruct abstractive compression as the document representation strategy for §3, where each passage is compressed to at most 256 tokens before being placed in the in-context template. 19 K.1 Document Compression Prompt 
+
+Document Compression Prompt 
+
+System: You compress documents for retrieval/indexing datasets. 
+
+User: You are compressing a noisy Wikipedia-style document for Natural Questions retrieval training. Write ONE retrieval-oriented summary. Target length: 256 tokens. 
+
+Rules: 
+
+• Output ONLY the summary. • Do NOT copy the source text verbatim. • Do NOT continue the original document. • Do NOT include headings, table of contents, navigation text, references, external links, infobox fields, or maintenance notices. • If the document is primarily a list or table, summarize what the list contains, its categories, and representative important entities. Do not copy rows. • Preserve key entities, dates, definitions, aliases, relationships, major events, and facts likely to answer questions. • Use complete sentences. • Stop after the summary. 
+
+Title: {title} 
+
+Source Document: 
+
+{document content} 
+
+Summary: 
+
+20
