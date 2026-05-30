@@ -6,109 +6,94 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-29
-- 运行时间：2026-05-29 21:29:52 UTC
+- 最新运行日期：2026-05-30
+- 运行时间：2026-05-30 20:59:16 UTC
 - 运行状态：成功
-- 本次总论文数：29
-- 精读区：14
-- 速读区：15
+- 本次总论文数：24
+- 精读区：10
+- 速读区：14
 
 ### 今日简报（AI）
-1. 今日29篇论文中，14篇精读聚焦检索增强与智能体，两篇9.0高分论文分别探索强化学习优化长期记忆检索和事实性片段迭代纠正。  
-2. 最值得关注方向：记忆增强QA利用强化学习延时记忆验证，以及Agentic RAG的自动检索修正机制。  
-3. 建议先精读《DeferMem》与《Iterate Until Retrieved》，再通过速读篇理解LLM成本效率与多工具编排实践。
-- 详情：[/202605/29/README](/202605/29/README)
+今日共处理24篇论文，精读10篇，速读14篇，重点推荐两篇9.0高分工作。  
+最值得关注的方向：移动GUI代理的显式记忆训练方法（STAMP）与开放域文档问答的分层多模态检索（HiKEY）。  
+建议优先阅读这两篇精读论文，并留意CARIBOU、Certified Traces等速读文献中关于可信AI与生物信息学的新思路。
+- 详情：[/202605/30/README](/202605/30/README)
 
 ### 精读区论文标签
-1. [DeferMem: Query-Time Evidence Distillation via Reinforcement Learning for Long-Term Memory QA](/202605/29/2605.22411v1-defermem-query-time-evidence-distillation-via-reinforcement-learning-for-long-term-memory-qa)  
+1. [STAMP: Training Explicit Memory for Mobile GUI Agents in Controllable and Scalable Virtual Environments](/202605/30/2605.29324v1-stamp-training-explicit-memory-for-mobile-gui-agents-in-controllable-and-scalable-virtual-environments)  
    标签：评分：9.0/10、query:agent
-   evidence：基于强化学习的长期记忆QA证据蒸馏
-2. [Iterate Until Retrieved: Factual Nugget Optimization for Discoverable Continual Corrections in Agentic RAG](/202605/29/2605.25641v1-iterate-until-retrieved-factual-nugget-optimization-for-discoverable-continual-corrections-in-agentic-rag)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：智能体RAG中面向持续修正的迭代事实碎片优化
-3. [ICICLE: Expanding Retrieval with In-Context Documents](/202605/29/2605.26902v1-icicle-expanding-retrieval-with-in-context-documents)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：上下文检索用于扩展生成式检索
-4. [LitSeg: Narrative-Aware Document Segmentation for Literary RAG](/202605/29/2605.27156v1-litseg-narrative-aware-document-segmentation-for-literary-rag)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：面向文学RAG的叙事感知文档分割
-5. [Can Retrieval Heads See Images? Multimodal Retrieval Heads in Long-Context Vision-Language Models](/202605/29/2605.27243v1-can-retrieval-heads-see-images-multimodal-retrieval-heads-in-long-context-vision-language-models)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：长上下文视觉语言模型中的多模态检索头
-6. [Intelligence as Managed Autonomy: Failure, Escalation, and Governance for Agentic AI Systems](/202605/29/2605.27628v1-intelligence-as-managed-autonomy-failure-escalation-and-governance-for-agentic-ai-systems)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：直接探讨自主AI智能体、幻觉管理与治理
-7. [Personal Visual Memory from Explicit and Implicit Evidence](/202605/29/2605.28806v1-personal-visual-memory-from-explicit-and-implicit-evidence)  
-   标签：评分：9.0/10、query:agent
-   evidence：面向AI代理的个人视觉记忆，包含显式与隐式证据
-8. [Context Distillation as Latent Memory Management](/202605/29/2605.28889v1-context-distillation-as-latent-memory-management)  
-   标签：评分：9.0/10、query:agent
-   evidence：上下文蒸馏作为潜在记忆管理，采用模块化记忆库
-9. [OmniRetrieval: Unified Retrieval across Heterogeneous Knowledge Sources](/202605/29/2605.29250v1-omniretrieval-unified-retrieval-across-heterogeneous-knowledge-sources)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：统一检索异构知识源（文本、表格、知识图谱等）
-10. [CogniVerse: Revolutionizing Multi-Modal Retrieval-Augmented Generation with Cognitive Reflection and Geometric Reasoning](/202605/29/2605.29602v1-cogniverse-revolutionizing-multi-modal-retrieval-augmented-generation-with-cognitive-reflection-and-geometric-reasoning)  
+   evidence：为移动GUI智能体训练显式记忆
+2. [HiKEY: Hierarchical Multimodal Retrieval for Open-Domain Document Question Answering](/202605/30/2605.29606v1-hikey-hierarchical-multimodal-retrieval-for-open-domain-document-question-answering)  
    标签：评分：9.0/10、query:mmkqa
-   evidence：结合认知反思和几何推理的多模态RAG
-11. [Uncertainty Quantification for Multimodal Retrieval Augmented Generation](/202605/29/2605.29956v1-uncertainty-quantification-for-multimodal-retrieval-augmented-generation)  
-   标签：评分：9.0/10、query:mmkqa
-   evidence：多模态检索增强生成的不确定性量化
-12. [Meta-Cognitive Memory Policy Optimization for Long-Horizon LLM Agents](/202605/29/2605.30159v1-meta-cognitive-memory-policy-optimization-for-long-horizon-llm-agents)  
-   标签：评分：9.0/10、query:agent
-   evidence：利用强化学习优化LLM智能体记忆策略
-13. [GRASP: Plan-Guided Graph Retrieval with Adaptive Fusion and Reranking on Semi-Structured Knowledge Bases](/202605/29/2605.30237v1-grasp-plan-guided-graph-retrieval-with-adaptive-fusion-and-reranking-on-semi-structured-knowledge-bases)  
+   evidence：面向开放域文档问答的分层多模态检索
+3. [A Multi-Agent RAG Framework for Biomedical Literature Analysis](/202605/30/biorxiv-10-64898-2026-05-26-727050-v1-a-multi-agent-rag-framework-for-biomedical-literature-analysis)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：半结构化知识库上的计划引导检索，融合结构化与非结构化数据
-14. [NEURA: A proof-carrying framework for hallucination-resistant neuroimaging automation](/202605/29/biorxiv-10-64898-2026-04-27-721217-v2-neura-a-proof-carrying-framework-for-hallucination-resistant-neuroimaging-automation)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：基于证明的框架减少LLM代理的幻觉
+   evidence：面向生物医学文献的多智能体RAG框架，结合证据质量评分
+4. [QUEST: Training Frontier Deep Research Agents with Fully Synthetic Tasks](/202605/30/2605.24218v1-quest-training-frontier-deep-research-agents-with-fully-synthetic-tasks)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：深度研究智能体训练，结合检索、引用锚定和报告合成
+5. [ParkingWorld: End-to-End Autonomous Parking Reinforcement Learning from Corrective Experience in 3DGS Simulation](/202605/30/2605.25029v2-parkingworld-end-to-end-autonomous-parking-reinforcement-learning-from-corrective-experience-in-3dgs-simulation)  
+   标签：评分：8.0/10、query:agent
+   evidence：基于纠正体验的自主泊车强化学习
+6. [DarkForest: Less Talk, Higher Accuracy for Multi-Agent LLMs](/202605/30/2605.25188v1-darkforest-less-talk-higher-accuracy-for-multi-agent-llms)  
+   标签：评分：8.0/10、query:agent
+   evidence：受控通信的多智能体协调框架
+7. [The Importance of Out-of-Band Metadata for Safe Autonomous Agents: The Redpanda Agentic Data Plane](/202605/30/2605.29082v1-the-importance-of-out-of-band-metadata-for-safe-autonomous-agents-the-redpanda-agentic-data-plane)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：用于安全自主智能体的带外元数据
+8. [Better Later Than Sooner: Neuro-Symbolic Knowledge Graph Construction via Ontology-grounded Post-extraction Correction](/202605/30/2605.29168v1-better-later-than-sooner-neuro-symbolic-knowledge-graph-construction-via-ontology-grounded-post-extraction-correction)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：面向问答的神经符号知识图谱构建与本体校正
+9. [GAPD: Gold-Action Policy Distillation for Agentic Reinforcement Learning in Knowledge Base Question Answering](/202605/30/2605.29584v1-gapd-gold-action-policy-distillation-for-agentic-reinforcement-learning-in-knowledge-base-question-answering)  
+   标签：评分：8.0/10、query:agent
+   evidence：基于黄金动作蒸馏的强化学习知识库问答Agent
+10. [Meta-Cognitive Memory Policy Optimization for Long-Horizon LLM Agents](/202605/30/2605.30159v1-meta-cognitive-memory-policy-optimization-for-long-horizon-llm-agents)  
+   标签：评分：8.0/10、query:agent
+   evidence：利用强化学习优化长程LLM智能体的记忆策略
 
 ### 速读区论文标签
-1. [The Efficiency Frontier: A Unified Framework for Cost-Performance Optimization in LLM Context Management](/202605/29/2605.23071v1-the-efficiency-frontier-a-unified-framework-for-cost-performance-optimization-in-llm-context-management)  
+1. [CARIBOU: Computational AI Research Interface for Bioinformatics, Omics, and Unifying Agents](/202605/30/biorxiv-10-64898-2026-05-25-727730-v1-caribou-computational-ai-research-interface-for-bioinformatics-omics-and-unifying-agents)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：LLM上下文管理的成本-性能优化
-2. [Meta-Agent: From Task Descriptions to Verified Multi-Agent Systems](/202605/29/2605.25233v1-meta-agent-from-task-descriptions-to-verified-multi-agent-systems)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：从任务描述自动构建带验证的多智能体系统
-3. [Augment Engineering: A Methodology for Multi-Tool AI Orchestration Across Professional Domains](/202605/29/2605.26146v1-augment-engineering-a-methodology-for-multi-tool-ai-orchestration-across-professional-domains)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：优化代理工作流的提示词
-4. [Separating Semantic Competition from Context Length in RAG Reading](/202605/29/2605.27294v1-separating-semantic-competition-from-context-length-in-rag-reading)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：研究RAG阅读中上下文长度与语义竞争的影响
-5. [Natural Language Query to Configuration for Retrieval Agents](/202605/29/2605.27361v1-natural-language-query-to-configuration-for-retrieval-agents)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：基于LLM预测器为每个查询优化检索智能体配置
-6. [Adaptive Multimodal Agents-Based Framework for Automatic Workflow Execution](/202605/29/2605.28607v1-adaptive-multimodal-agents-based-framework-for-automatic-workflow-execution)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：自主多智能体工作流执行
-7. [Neural Router: Semantic Content Matching for Agentic AI](/202605/29/2605.25701v1-neural-router-semantic-content-matching-for-agentic-ai)  
-   标签：评分：7.0/10、query:agent
-   evidence：使用LLM为智能体AI进行语义内容匹配
-8. [From Knowing to Doing: A Memory-Controlled Benchmark for LLM Trading Agents on Stock Markets](/202605/29/2605.28359v1-from-knowing-to-doing-a-memory-controlled-benchmark-for-llm-trading-agents-on-stock-markets)  
-   标签：评分：7.0/10、query:agent
-   evidence：LLM交易智能体的记忆控制基准
-9. [Decentralized LLM-Driven Coordination of Acoustic Robots for Contactless Object Manipulation](/202605/29/2605.29378v1-decentralized-llm-driven-coordination-of-acoustic-robots-for-contactless-object-manipulation)  
+   evidence：用于自主生物信息学分析的多代理框架
+2. [No Certificate, No Execution: Certified Traces as a Foundation for Trustworthy AI Agents](/202605/30/2605.24462v1-no-certificate-no-execution-certified-traces-as-a-foundation-for-trustworthy-ai-agents)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：利用LLM驱动多机器人自主协调进行无接触操作
-10. [DocRetriever: A Plug-and-Play Framework for Multimodal Document Retrieval with Comprehensive Benchmark](/202605/29/2605.30027v1-docretriever-a-plug-and-play-framework-for-multimodal-document-retrieval-with-comprehensive-benchmark)  
-   标签：评分：7.0/10、query:mmkqa
-   evidence：多模态文档检索框架与基准测试，与多模态RAG相关
-11. [Semantic map learning and externalization in an embodied neural agent: A comparison to human behavioral and neural data](/202605/29/biorxiv-10-64898-2026-05-19-726370-v1-semantic-map-learning-and-externalization-in-an-embodied-neural-agent-a-comparison-to-human-behavioral-and-neural-data)  
+   evidence：提出认证架构以确保可信AI智能体
+3. [MemMorph: Tool Hijacking in LLM Agents via Memory Poisoning](/202605/30/2605.26154v1-memmorph-tool-hijacking-in-llm-agents-via-memory-poisoning)  
+   标签：评分：7.0/10、query:agent
+   evidence：针对LLM智能体工具选择的记忆投毒攻击
+4. [FAST-GOAL: Fast and Efficient Global-local Object Alignment Learning](/202605/30/2605.26615v1-fast-goal-fast-and-efficient-global-local-object-alignment-learning)  
+   标签：评分：7.0/10、query:cmv
+   evidence：全局-局部语义对齐用于跨模态验证
+5. [Large Language Model-Powered Query-Driven Event Timeline Summarization in Industrial Search](/202605/30/2605.27066v1-large-language-model-powered-query-driven-event-timeline-summarization-in-industrial-search)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：具身神经智能体用于空间学习和记忆
-12. [MPDocBench-Parse: Benchmarking Practical Multi-page Document Parsing](/202605/29/2605.22100v1-mpdocbench-parse-benchmarking-practical-multi-page-document-parsing)  
+   evidence：查询驱动事件时间线摘要，使用LLM和多任务微调，属于RAG应用
+6. [GraphSteal: Structural Knowledge Stealing from Graph RAG via Traversal Reconstruction](/202605/30/2605.28645v1-graphsteal-structural-knowledge-stealing-from-graph-rag-via-traversal-reconstruction)  
+   标签：评分：7.0/10、query:ma-kf
+   evidence：从图RAG中窃取结构知识
+7. [GrepSeek: Training Search Agents for Direct Corpus Interaction](/202605/30/2605.29307v1-grepseek-training-search-agents-for-direct-corpus-interaction)  
+   标签：评分：7.0/10、query:ma-kf
+   evidence：基于LLM的搜索智能体，直接交互语料库
+8. [Xetrieval: Mechanistically Explaining Dense Retrieval](/202605/30/2605.29507v1-xetrieval-mechanistically-explaining-dense-retrieval)  
+   标签：评分：7.0/10、query:ma-kf
+   evidence：解释密集检索以提升RAG准确率的框架
+9. [TaxonMatch: taxonomic integration and tree construction from heterogeneous biological databases](/202605/30/biorxiv-10-64898-2026-03-18-712418-v2-taxonmatch-taxonomic-integration-and-tree-construction-from-heterogeneous-biological-databases)  
+   标签：评分：7.0/10、query:ma-kf
+   evidence：异构数据库整合与分类学调和
+10. [SpatialClaw: A Memory-Augmented Autonomous Ecosystem for Spatial Omics Analysis](/202605/30/biorxiv-10-64898-2026-05-21-723451-v1-spatialclaw-a-memory-augmented-autonomous-ecosystem-for-spatial-omics-analysis)  
+   标签：评分：7.0/10、query:agent
+   evidence：记忆增强的自主智能体用于科学分析
+11. [SEEK: Semantic Evidence Extraction via Adaptive ChunKing for Multilingual Fact-Checking](/202605/30/2605.26755v2-seek-semantic-evidence-extraction-via-adaptive-chunking-for-multilingual-fact-checking)  
    标签：评分：6.0/10、query:ma-kf
-   evidence：多页文档解析基准，用于结构化知识表示
-13. [Infra-Bayesian Reinforcement Learning Agents Outperform Classical RL For Worst-Case Robustness](/202605/29/2605.23146v1-infra-bayesian-reinforcement-learning-agents-outperform-classical-rl-for-worst-case-robustness)  
-   标签：评分：6.0/10、query:agent
-   evidence：用于多智能体最坏情况鲁棒性的Infra-Bayesian强化学习
-14. [Escape the Language Prior: Mitigating Late-Stage Modality Collapse in Audio Reasoning via Modality-Aware Policy Optimization](/202605/29/2605.27741v1-escape-the-language-prior-mitigating-late-stage-modality-collapse-in-audio-reasoning-via-modality-aware-policy-optimization)  
+   evidence：事实核查中自适应分块进行证据抽取
+12. [Relevance as a Vulnerability: How Web Retrieval Degrades Safety Alignment in LLM Agents](/202605/30/2605.29224v1-relevance-as-a-vulnerability-how-web-retrieval-degrades-safety-alignment-in-llm-agents)  
    标签：评分：6.0/10、query:ma-kf
-   evidence：模态感知强化学习缓解多模态推理中的幻觉
-15. [MedMisBench: Measuring Epistemic Resilience of LLMs Under Misleading Medical Context](/202605/29/biorxiv-10-64898-2026-05-25-727671-v1-medmisbench-measuring-epistemic-resilience-of-llms-under-misleading-medical-context)  
+   evidence：带有网络检索的LLM智能体，安全分析框架
+13. [Interpreting Omics Data Analysis with Large Language Models for Disease Target and Drug Discovery](/202605/30/biorxiv-10-64898-2026-04-30-721768-v2-interpreting-omics-data-analysis-with-large-language-models-for-disease-target-and-drug-discovery)  
    标签：评分：6.0/10、query:ma-kf
-   evidence：在误导上下文下测量LLM认知恢复力的基准，与减少幻觉相关
+   evidence：基于LLM的框架整合结构化与非结构化知识用于靶点发现
+14. [MedMisBench: Measuring Epistemic Resilience of LLMs Under Misleading Medical Context](/202605/30/biorxiv-10-64898-2026-05-25-727671-v2-medmisbench-measuring-epistemic-resilience-of-llms-under-misleading-medical-context)  
+   标签：评分：6.0/10、query:ma-kf
+   evidence：衡量在误导性上下文下的认知韧性基准
 
 
 <div class="dpr-home-promo-card">
