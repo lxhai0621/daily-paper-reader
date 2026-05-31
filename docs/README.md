@@ -6,94 +6,71 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-30
-- 运行时间：2026-05-30 20:59:16 UTC
+- 最新运行日期：2026-05-31
+- 运行时间：2026-05-31 20:53:09 UTC
 - 运行状态：成功
-- 本次总论文数：24
-- 精读区：10
-- 速读区：14
+- 本次总论文数：17
+- 精读区：7
+- 速读区：10
 
 ### 今日简报（AI）
-今日共处理24篇论文，精读10篇，速读14篇，重点推荐两篇9.0高分工作。  
-最值得关注的方向：移动GUI代理的显式记忆训练方法（STAMP）与开放域文档问答的分层多模态检索（HiKEY）。  
-建议优先阅读这两篇精读论文，并留意CARIBOU、Certified Traces等速读文献中关于可信AI与生物信息学的新思路。
-- 详情：[/202605/30/README](/202605/30/README)
+今日精选17篇论文，重点关注前沿深度研究智能体与金融多智能体RAG框架。精读推荐《QUEST》与《MimirRAG》，分别探索合成数据训练深度研究智能体及融合元数据的金融数据检索。普通读者可优先关注多智能体协作与合成数据应用趋势。
+- 详情：[/202605/31/README](/202605/31/README)
 
 ### 精读区论文标签
-1. [STAMP: Training Explicit Memory for Mobile GUI Agents in Controllable and Scalable Virtual Environments](/202605/30/2605.29324v1-stamp-training-explicit-memory-for-mobile-gui-agents-in-controllable-and-scalable-virtual-environments)  
-   标签：评分：9.0/10、query:agent
-   evidence：为移动GUI智能体训练显式记忆
-2. [HiKEY: Hierarchical Multimodal Retrieval for Open-Domain Document Question Answering](/202605/30/2605.29606v1-hikey-hierarchical-multimodal-retrieval-for-open-domain-document-question-answering)  
-   标签：评分：9.0/10、query:mmkqa
-   evidence：面向开放域文档问答的分层多模态检索
-3. [A Multi-Agent RAG Framework for Biomedical Literature Analysis](/202605/30/biorxiv-10-64898-2026-05-26-727050-v1-a-multi-agent-rag-framework-for-biomedical-literature-analysis)  
+1. [QUEST: Training Frontier Deep Research Agents with Fully Synthetic Tasks](/202605/31/2605.24218v1-quest-training-frontier-deep-research-agents-with-fully-synthetic-tasks)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：面向生物医学文献的多智能体RAG框架，结合证据质量评分
-4. [QUEST: Training Frontier Deep Research Agents with Fully Synthetic Tasks](/202605/30/2605.24218v1-quest-training-frontier-deep-research-agents-with-fully-synthetic-tasks)  
+   evidence：使用全合成任务训练深度研究智能体，涉及自主AI智能体
+2. [MimirRAG: A Multi-Agent RAG Framework for Financial Data Retrieval with Metadata Integration](/202605/31/2605.25030v1-mimirrag-a-multi-agent-rag-framework-for-financial-data-retrieval-with-metadata-integration)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：面向金融数据检索的元数据集成多智能体RAG框架
+3. [RAGe: A Retrieval-Augmented Generation Evaluation Framework](/202605/31/2605.27445v1-rage-a-retrieval-augmented-generation-evaluation-framework)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：RAG评估框架
+4. [Beyond Inference-Only Deployment: Comparing Weight-Based Consolidation Against Cascading Compaction](/202605/31/2605.24657v1-beyond-inference-only-deployment-comparing-weight-based-consolidation-against-cascading-compaction)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：深度研究智能体训练，结合检索、引用锚定和报告合成
-5. [ParkingWorld: End-to-End Autonomous Parking Reinforcement Learning from Corrective Experience in 3DGS Simulation](/202605/30/2605.25029v2-parkingworld-end-to-end-autonomous-parking-reinforcement-learning-from-corrective-experience-in-3dgs-simulation)  
+   evidence：记忆整合、上下文窗口管理、基于权重的整合
+5. [CuriosAI Submission to the CASTLE Challenge at EgoVis 2026](/202605/31/2605.27800v1-curiosai-submission-to-the-castle-challenge-at-egovis-2026)  
+   标签：评分：8.0/10、query:mmkqa
+   evidence：多模态检索增强生成用于问答，包含防幻觉规则
+6. [Do Agents Need Semantic Metadata? A Comparative Study in Agentic Data Retrieval](/202605/31/2605.28787v1-do-agents-need-semantic-metadata-a-comparative-study-in-agentic-data-retrieval)  
    标签：评分：8.0/10、query:agent
-   evidence：基于纠正体验的自主泊车强化学习
-6. [DarkForest: Less Talk, Higher Accuracy for Multi-Agent LLMs](/202605/30/2605.25188v1-darkforest-less-talk-higher-accuracy-for-multi-agent-llms)  
+   evidence：基于LLM的代理数据检索比较研究
+7. [SpatialClaw: A Memory-Augmented Autonomous Ecosystem for Spatial Omics Analysis](/202605/31/biorxiv-10-64898-2026-05-21-723451-v1-spatialclaw-a-memory-augmented-autonomous-ecosystem-for-spatial-omics-analysis)  
    标签：评分：8.0/10、query:agent
-   evidence：受控通信的多智能体协调框架
-7. [The Importance of Out-of-Band Metadata for Safe Autonomous Agents: The Redpanda Agentic Data Plane](/202605/30/2605.29082v1-the-importance-of-out-of-band-metadata-for-safe-autonomous-agents-the-redpanda-agentic-data-plane)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：用于安全自主智能体的带外元数据
-8. [Better Later Than Sooner: Neuro-Symbolic Knowledge Graph Construction via Ontology-grounded Post-extraction Correction](/202605/30/2605.29168v1-better-later-than-sooner-neuro-symbolic-knowledge-graph-construction-via-ontology-grounded-post-extraction-correction)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：面向问答的神经符号知识图谱构建与本体校正
-9. [GAPD: Gold-Action Policy Distillation for Agentic Reinforcement Learning in Knowledge Base Question Answering](/202605/30/2605.29584v1-gapd-gold-action-policy-distillation-for-agentic-reinforcement-learning-in-knowledge-base-question-answering)  
-   标签：评分：8.0/10、query:agent
-   evidence：基于黄金动作蒸馏的强化学习知识库问答Agent
-10. [Meta-Cognitive Memory Policy Optimization for Long-Horizon LLM Agents](/202605/30/2605.30159v1-meta-cognitive-memory-policy-optimization-for-long-horizon-llm-agents)  
-   标签：评分：8.0/10、query:agent
-   evidence：利用强化学习优化长程LLM智能体的记忆策略
+   evidence：记忆增强的自主智能体，集成30种技能进行空间组学分析
 
 ### 速读区论文标签
-1. [CARIBOU: Computational AI Research Interface for Bioinformatics, Omics, and Unifying Agents](/202605/30/biorxiv-10-64898-2026-05-25-727730-v1-caribou-computational-ai-research-interface-for-bioinformatics-omics-and-unifying-agents)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：用于自主生物信息学分析的多代理框架
-2. [No Certificate, No Execution: Certified Traces as a Foundation for Trustworthy AI Agents](/202605/30/2605.24462v1-no-certificate-no-execution-certified-traces-as-a-foundation-for-trustworthy-ai-agents)  
+1. [Habermolt: Delegating Deliberation to AI Representatives](/202605/31/2605.24413v3-habermolt-delegating-deliberation-to-ai-representatives)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：提出认证架构以确保可信AI智能体
-3. [MemMorph: Tool Hijacking in LLM Agents via Memory Poisoning](/202605/30/2605.26154v1-memmorph-tool-hijacking-in-llm-agents-via-memory-poisoning)  
-   标签：评分：7.0/10、query:agent
-   evidence：针对LLM智能体工具选择的记忆投毒攻击
-4. [FAST-GOAL: Fast and Efficient Global-local Object Alignment Learning](/202605/30/2605.26615v1-fast-goal-fast-and-efficient-global-local-object-alignment-learning)  
-   标签：评分：7.0/10、query:cmv
-   evidence：全局-局部语义对齐用于跨模态验证
-5. [Large Language Model-Powered Query-Driven Event Timeline Summarization in Industrial Search](/202605/30/2605.27066v1-large-language-model-powered-query-driven-event-timeline-summarization-in-industrial-search)  
+   evidence：部署AI智能体代表人类进行协商
+2. [Resolving Ambiguity in Composed Image Retrieval via Calibrated Interaction](/202605/31/2605.24634v1-resolving-ambiguity-in-composed-image-retrieval-via-calibrated-interaction)  
+   标签：评分：7.0/10、query:mmkqa
+   evidence：解决组合图像检索中的歧义问题，涉及跨模态推理
+3. [Resolving Ambiguity in Composed Image Retrieval via Calibrated Interaction](/202605/31/2605.24634v2-resolving-ambiguity-in-composed-image-retrieval-via-calibrated-interaction)  
+   标签：评分：7.0/10、query:mmkqa
+   evidence：解决组合图像检索中的歧义问题，涉及跨模态推理
+4. [Your Embedding Model is SMARTer Than You Think](/202605/31/2605.24938v1-your-embedding-model-is-smarter-than-you-think)  
+   标签：评分：7.0/10、query:mmkqa
+   evidence：利用局部隐藏状态进行晚期交互，提高多模态检索质量，适用于多模态RAG
+5. [MinerU-Popo: Universal Post-Processing Model for Structured Document Parsing](/202605/31/2605.24973v1-mineru-popo-universal-post-processing-model-for-structured-document-parsing)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：查询驱动事件时间线摘要，使用LLM和多任务微调，属于RAG应用
-6. [GraphSteal: Structural Knowledge Stealing from Graph RAG via Traversal Reconstruction](/202605/30/2605.28645v1-graphsteal-structural-knowledge-stealing-from-graph-rag-via-traversal-reconstruction)  
+   evidence：用于RAG应用的文档级结构恢复后处理模型
+6. [Towards Localized and Disentangled Knowledge Editing for Multimodal Large Language Models](/202605/31/2605.29826v1-towards-localized-and-disentangled-knowledge-editing-for-multimodal-large-language-models)  
+   标签：评分：7.0/10、query:mmkqa
+   evidence：多模态大语言模型知识编辑
+7. [SpatialDataAgent: Autonomous Spatial Omics Data Curation at Decade Scale](/202605/31/biorxiv-10-64898-2026-05-27-727615-v1-spatialdataagent-autonomous-spatial-omics-data-curation-at-decade-scale)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：从图RAG中窃取结构知识
-7. [GrepSeek: Training Search Agents for Direct Corpus Interaction](/202605/30/2605.29307v1-grepseek-training-search-agents-for-direct-corpus-interaction)  
+   evidence：用于空间组学数据知识发现的自主智能体
+8. [Ontology-driven software engineering using LLMs for knowledge graphs in engineering biology](/202605/31/biorxiv-10-64898-2026-05-29-728869-v1-ontology-driven-software-engineering-using-llms-for-knowledge-graphs-in-engineering-biology)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：基于LLM的搜索智能体，直接交互语料库
-8. [Xetrieval: Mechanistically Explaining Dense Retrieval](/202605/30/2605.29507v1-xetrieval-mechanistically-explaining-dense-retrieval)  
-   标签：评分：7.0/10、query:ma-kf
-   evidence：解释密集检索以提升RAG准确率的框架
-9. [TaxonMatch: taxonomic integration and tree construction from heterogeneous biological databases](/202605/30/biorxiv-10-64898-2026-03-18-712418-v2-taxonmatch-taxonomic-integration-and-tree-construction-from-heterogeneous-biological-databases)  
-   标签：评分：7.0/10、query:ma-kf
-   evidence：异构数据库整合与分类学调和
-10. [SpatialClaw: A Memory-Augmented Autonomous Ecosystem for Spatial Omics Analysis](/202605/30/biorxiv-10-64898-2026-05-21-723451-v1-spatialclaw-a-memory-augmented-autonomous-ecosystem-for-spatial-omics-analysis)  
-   标签：评分：7.0/10、query:agent
-   evidence：记忆增强的自主智能体用于科学分析
-11. [SEEK: Semantic Evidence Extraction via Adaptive ChunKing for Multilingual Fact-Checking](/202605/30/2605.26755v2-seek-semantic-evidence-extraction-via-adaptive-chunking-for-multilingual-fact-checking)  
-   标签：评分：6.0/10、query:ma-kf
-   evidence：事实核查中自适应分块进行证据抽取
-12. [Relevance as a Vulnerability: How Web Retrieval Degrades Safety Alignment in LLM Agents](/202605/30/2605.29224v1-relevance-as-a-vulnerability-how-web-retrieval-degrades-safety-alignment-in-llm-agents)  
-   标签：评分：6.0/10、query:ma-kf
-   evidence：带有网络检索的LLM智能体，安全分析框架
-13. [Interpreting Omics Data Analysis with Large Language Models for Disease Target and Drug Discovery](/202605/30/biorxiv-10-64898-2026-04-30-721768-v2-interpreting-omics-data-analysis-with-large-language-models-for-disease-target-and-drug-discovery)  
-   标签：评分：6.0/10、query:ma-kf
-   evidence：基于LLM的框架整合结构化与非结构化知识用于靶点发现
-14. [MedMisBench: Measuring Epistemic Resilience of LLMs Under Misleading Medical Context](/202605/30/biorxiv-10-64898-2026-05-25-727671-v2-medmisbench-measuring-epistemic-resilience-of-llms-under-misleading-medical-context)  
-   标签：评分：6.0/10、query:ma-kf
-   evidence：衡量在误导性上下文下的认知韧性基准
+   evidence：使用LLM和本体驱动生成知识图谱库以集成结构化知识库
+9. [Analyzing Persona Effects in Generated Explanations from Multimodal LLM Agents in Urban Perception](/202605/31/2605.29064v1-analyzing-persona-effects-in-generated-explanations-from-multimodal-llm-agents-in-urban-perception)  
+   标签：评分：6.0/10、query:agent
+   evidence：研究角色提示对多模态LLM智能体生成解释的影响，涉及基于LLM的智能体行为
+10. [MuPHI: Learning Implicit Multimodal Harm Reasoning via Semantically Grounded Reward Optimization](/202605/31/2605.29951v1-muphi-learning-implicit-multimodal-harm-reasoning-via-semantically-grounded-reward-optimization)  
+   标签：评分：6.0/10、query:mmkqa
+   evidence：图像-文本对中的隐式跨模态推理，适用于多模态知识问答
 
 
 <div class="dpr-home-promo-card">
