@@ -1,0 +1,546 @@
+Title: KG-Guard: Graph-Based Hallucination Detection for Knowledge Base Question Answering
+
+URL Source: https://arxiv.org/pdf/2606.00328v1
+
+Published Time: Tue, 02 Jun 2026 00:18:01 GMT
+
+Number of Pages: 22
+
+Markdown Content:
+# KG-Guard: Graph-Based Hallucination Detection for Knowledge Base Question Answering 
+
+Albert Sawczyn 1,† Piotr Bielak 1 Tomasz Kajdanowicz 11Department of Artificial Intelligence Wrocław University of Science and Technology Wrocław, Poland 
+
+> †
+
+albert.sawczyn@pwr.edu.pl 
+
+# Abstract 
+
+Large language models (LLMs) are increasingly used for knowledge base question answering (KBQA), where answering requires selecting entities from a question-specific knowledge-graph subgraph. Yet LLMs are known to hallucinate across tasks, and KBQA is no exception: even when we provide a graph as the knowledge source, the model may rely on parametric knowledge instead of graph evidence or perform invalid reasoning over the given relations. Such hallucinated answer nodes can limit the practical deployment of KBQA systems, especially in high-stakes domains such as healthcare. We formulate hallucination detection in KBQA as an answer-node classification problem and propose a lightweight graph-based framework that treats the answering LLM as a black box. KG-Guard represents each KBQA instance as an augmented graph. It initializes node features with semantic representations of KG entities, marks topic entities and LLM-proposed answer nodes with learned vectors, and connect a virtual question node to the topic entities. A graph encoder then produces verification-oriented node represen-tations, and a small MLP classifies each proposed answer node using its graph representation together with the question embedding. Experiments on WebQSP, ComplexWebQuestions, and PUGG show that our detector achieves the highest F1 on all three benchmarks ( 82 .0, 87 .4, and 84 .3), outperforming LLM-as-judge and sampling-based baselines, while having ∼ 305 × fewer parameters than the refer-ence approaches. Beyond detection, the node-level feedback is actionable: when flagged answers are fed back to the KBQA system for iterative refinement, down-stream KBQA F1 improves by 13 .0–14 .5 points and Exact Match by 16 .9–17 .6
+
+points. 
+
+# 1 Introduction 
+
+Large language models (LLMs) are increasingly used as reasoning components in knowledge-intensive applications. One important setting is knowledge-base question answering (KBQA), where the model must return the entity nodes from a knowledge graph that answer a given question [Lan et al., 2023]. Earlier approaches queried the full graph symbolically; most LLM-based pipelines instead retrieve a question-specific subgraph and reason over it. For example, given “What is the capital of Australia?”, the system should select Canberra from a subgraph built around the topic entity 
+
+Australia . This graph structure provides an explicit grounding space whose entities and relations are easier to curate, update, and inspect than unstructured documents. Earlier KBQA systems often relied on graph-centric architectures, whereas recent pipelines increasingly use LLMs to select answer entities from retrieved subgraphs [Ma et al., 2025, Baek et al., 2023, He et al., 2024]. 
+
+> Preprint.
+> arXiv:2606.00328v1 [cs.LG] 29 May 2026
+
+LLM-based pipelines improve language understanding but also introduce hallucinations [Huang et al., 2025]. In KBQA, the LLM may rely on parametric knowledge instead of the retrieved subgraph or reason incorrectly over graph facts, leading to wrong answer nodes. To the best of our knowledge, hallucination detection for LLM-based KBQA outputs remains underexplored: prior work focuses mainly on answering KBQA or on hallucination detection in other QA settings. Existing detectors typically treat hallucination as a text-level problem: they ignore the KBQA subgraph, do not classify individual answer nodes, or require white-box access to internal LLM signals unavailable through closed APIs. We therefore treat hallucination detection in KBQA as a graph learning problem. Returned nodes leave structured signals in the retrieved subgraph: hallucinated and factual nodes may differ in their connections to topic entities and in their question-relevant local neighborhoods. We propose KG-Guard , a graph-based hallucination detector for KBQA that treats the answering LLM as a black box. Given a question, retrieved subgraph, and LLM-proposed answer nodes, 
+
+KG-Guard builds semantic node and question representations, marks topic entities and answer nodes, adds a virtual question node connected to topic entities, and runs a lightweight graph encoder. Each returned node is classified from its graph representation and the question embedding using a small MLP. Thus, KG-Guard uses only the retrieved graph and LLM outputs, without internal states or activations [Chen et al., 2024, Binkowski et al., 2025], and avoids the extra LLM calls required by judge-based [Zheng et al., 2023] or sampling-based detectors [Manakul et al., 2023]. Its node-level feedback also supports iterative answer refinement, following evidence that fine-grained hallucination feedback can improve factuality correction [Sawczyn et al., 2026].               
+
+> KBQA instance
+> (q, G, T )
+> fKBQA
+> LLM-based QA
+> candidate answer nodes
+> ˆA
+> KG-Guard
+> fθ(q, G, T, ˆa)
+> flagged set
+> H={ˆa: ˆ yˆa= 1 }
+> accepted answer set
+> ˆA
+> verify each
+> ˆa∈ˆA
+> H=∅
+> while H̸ =∅
+
+Figure 1: Role of KG-Guard in the KBQA loop. The LLM-based KBQA method maps (q, G, T ) to candidate answer nodes ˆA. KG-Guard labels returned nodes and feeds flagged hallucinations H back for targeted refinement until H = ∅ or the iteration cap is reached (see Section 4.4). Our contributions can be summarized as follows: • We formulate KBQA hallucination detection as an answer-node classification on retrieved KG subgraphs – the first dedicated method for this problem. • We propose KG-Guard , a lightweight black-box graph-based detector that overperforms LLM-based baselines while using ∼305 × fewer parameters. • We show that node-level feedback signals enable iterative answer refinement (Fig. 1), improving downstream KBQA F1 by 13 .0–14 .5 pp. and Exact Match by 16 .9–17 .6 pp. • We evaluate on WebQSP, CWQ, and PUGG against LLM-as-judge and sampling-based baselines, with ablations validating each architectural design choice. • We release all code, intermediate data, and a KBQA hallucination detection dataset. 1
+
+# 2 Related Work 
+
+Recent KBQA systems increasingly combine language models with retrieved graph evidence. KAP-ING augments prompts with relevant KG facts for zero-shot question answering [Baek et al., 2023]. Earlier graph QA models, such as GRAFT-Net, QA-GNN, and GreaseLM, study question-aware reasoning over question-specific subgraphs or joint language–graph representations [Sun et al., 2018, Yasunaga et al., 2021, Zhang et al., 2021]. A related approach, G-Retriever, targets open-ended QA over KG, applying RAG to construct query-relevant subgraphs via Prize-Collecting Steiner Tree 
+
+> 1Code: github.com/graphml-lab-pwr/KG-Guard (License: CC BY-SA 4.0); Dataset: huggingface.co/collections/graphml-lab-pwr/kg-guard-datasets (License: CC BY-SA 4.0 (WebQSP and PUGG subsets); GPL v3 (CWQ subset)).
+
+2optimization (PCST) [He et al., 2024]. More recent agentic approaches traverse or plan over KG reasoning paths iteratively to produce grounded answers [Sun et al., 2024, Luo et al., 2024]. NN-RAG feeds GNN-retrieved KG reasoning paths to LLM for answer generation [Mavromatis and Karypis, 2025]. All of these are KBQA methods: they aim to predict answer entities using graph evidence. Our goal is orthogonal: given candidate answer nodes from an external LLM-based KBQA system, we ask whether they are hallucinated — a problem, to our knowledge, not previously studied. Hallucination detection has largely been studied in free-text settings. Black-box sampling-based methods such as SelfCheckGPT estimate factuality by sampling multiple generations [Manakul et al., 2023]. Fine-grained methods verify outputs at the level of individual facts or claims [Min et al., 2023, Sawczyn et al., 2026]; our work shares this spirit by classifying individual answer nodes rather than whole generations. Another line of work exploits internal model signals such as hidden states [Azaria and Mitchell, 2023, Chen et al., 2024, Kossen et al., 2024, Farquhar et al., 2024] or attention maps [Chuang et al., 2024, Sriramanan et al., 2024, Binkowski et al., 2025]. While valuable for the general domain, these methods are not designed for KBQA, they classify whole generations rather than individual answer nodes and ignore available KG. Additionally, they require access to internal LLM states, limiting applicability to closed models. Several recent approaches apply the KG structure to hallucination detection. GraphEval [Sansford et al., 2024] extracts atomic claims from LLM output as KG triples and verifies each against the provided textual context via NLI models; FactAlign [Rashad et al., 2024] and knowledge-centric detection [Hu et al., 2024] similarly extract triples from generated text and align them with a textual reference. GraphCheck constructs KGs from both claim and source document, then applies GNNs as a soft prompt to an LLM verifier [Chen et al., 2025]. All require an external textual reference and operate on free-form generated text, whereas we classify answer nodes directly on an existing structured KG. Iterative refinement is a general strategy for correcting LLM outputs [Madaan et al., 2023, Dhuliawala et al., 2024, Sawczyn et al., 2026]. KGR uses direct triple lookup in a KG to guide revision [Guan et al., 2024]. Our correction procedure identifies hallucinated answer nodes via a trained graph-encoder classifier rather than triple-level conflict resolution. Message-passing GNNs compute node representations by repeatedly aggregating information from local neighborhoods, as in GCN, GraphSAGE, and GIN [Kipf and Welling, 2017, Hamilton et al., 2017, Xu et al., 2019]. For our task, attention-based graph encoders are especially natural because only part of the retrieved graph may be relevant. Graph Attention Networks (GAT) learn neighbor-specific attention weights [Veliˇ ckovi´ c et al., 2018], while GraphTransformer extends this with multi-head dot-product attention for expressive message passing [Shi et al., 2021]. 
+
+# 3 Method 
+
+3.1 Problem Formulation 
+
+We consider a KBQA task in which each example is associated with a natural-language question and a question-specific subgraph extracted from a knowledge graph. Formally, each instance is represented as (q, G, T, A ∗), where q is the question and G = ( V, E ) is the retrieved subgraph. Here, V is the set of nodes and each edge e = ( u, r, v ) ∈ E corresponds to a directed KG triple from node u to node 
+
+v with relation label r ∈ R , where R denotes the set of relation labels. We treat these relations as edge attributes rather than as a fixed heterogeneous graph schema, which allows relation labels to be encoded from their text. The set T ⊆ V contains the topic entities, i.e., nodes mentioned in the question, and A∗ ⊆ V contains the gold answer nodes. Given (q, G, T ), an LLM-based KBQA method fKBQA is applied to answer the question: 
+
+ˆA = fKBQA (q, G, T ), ˆA ⊆ V. 
+
+If the method abstains with a special unknown response, we set ˆA = ∅. In this work, we only consider examples for which the method returns at least one node, i.e., ˆA̸ = ∅. This restriction matches the goal of our detector, which is to verify concrete answer nodes rather than abstentions. The hallucination detection task is then formulated as a binary classification problem over individual returned nodes. If the LLM returns multiple nodes for a single question, we decompose this output 3into separate detection instances, one per predicted node. Thus, for each retained KBQA example 
+
+(q, G, T, A ∗, ˆA) and each ˆa ∈ ˆA, we create one classification instance (q, G, T, A ∗, ˆa) and define the target label y ∈ { 0, 1} as 
+
+y =
+
+0, if ˆa ∈ A∗,
+
+1, otherwise, where y = 1 denotes a hallucinated answer node and y = 0 denotes a factual one. This definition naturally handles questions with multiple valid answers: a returned node is treated as factual if it matches any gold answer node, and hallucinated otherwise. Consequently, a single KBQA example may yield multiple hallucination-detection instances, corresponding to the different nodes proposed by the LLM. In a deployed system, however, the detector can process the graph once (single forward pass) and mark which of the returned nodes are hallucinated. Our goal is to learn a detector fθ (q, G, T, ˆa) → { 0, 1} that predicts whether an individual node selected by fKBQA is factual or hallucinated. 
+
+3.2 KG-Guard (Hallucination Detector)                        
+
+> Augmented graph eG
+> vq
+> xv= [ ϕ(tv)∥MT[τv]∥MA[αv]]
+> vq: virtual question node cyan: topic entities orange: LLM-returned nodes
+> Graph encoder
+> gθ(·)
+> answer-node embedding hˆa
+> question
+> q
+> Text encoder
+> ϕ(·)question embedding zq
+> [hˆa∥zq]MLP
+> ψ(·)
+> Hallucinated ( y= 1 )or factual ( y= 0 )
+
+Figure 2: KG-Guard architecture for labeling LLM-returned nodes. Node features combine semantic node representations with topic-entity marks MT and answer-node marks MA. A virtual question node vq is connected to the topic entities with directed edges. The graph encoder gθ
+
+computes answer-node representations hˆa, which are concatenated with the question embedding zq
+
+and passed to an MLP to predict whether the returned node is hallucinated ( y = 1 ) or factual ( y = 0 ). Our method (see Figure 2) operates on top of the answer returned by the LLM-based KBQA method for a given KBQA instance (assuming ˆA̸ = ∅). We start from the retrieved subgraph and construct node features by combining semantic node information with task-specific marks. Knowledge-graph nodes typically do not come with informative numeric features, so we initialize them from text. Let tv denote the textual representation of node v,such as its label or name, and let ϕ(·) be a semantic text encoder. We then augment these semantic features with trainable mark embeddings. Let τv = I[v ∈ T ] indicate whether node v is a topic entity, and let αv = I[v ∈ ˆA] indicate whether it was returned by the LLM-based KBQA method. We use two trainable lookup tables, MT ∈ R2×dT and MA ∈ R2×dA ,for topic-entity and answer-node marks, respectively. Each table contains one embedding for the positive case and one embedding for the negative case. The initial feature vector of node v is then: 
+
+xv = [ ϕ(tv ) ∥ MT [τv ] ∥ MA[αv ]] ,
+
+where ∥ denotes concatenation. Thus, each node representation contains three parts: a semantic representation of the node text, a learnable mark indicating whether the node is a topic entity, and a learnable mark indicating whether the node was proposed as an answer. We use the same text encoder to obtain the question embedding zq = ϕ(q).To condition message passing on the question, we augment the graph with a virtual question node vq
+
+initialized with zq . This node is connected only to the topic entities T , rather than to every node in the retrieved subgraph. Let eG and eX denote the resulting augmented graph and its node features. 4The marked and augmented graph is then processed by a graph encoder gθ to obtain node-level repre-sentations H = gθ ( eG, eX), where H = {hv }v∈V . We instantiate gθ either as a GraphTransformer or as a GAT, with the GraphTransformer used as the main configuration in our experiments. For a particular returned answer node ˆa, we extract its final representation hˆa and concatenate it with the question embedding zq . The resulting vector is passed through an MLP classifier to obtain a scalar logit: 
+
+sˆa = MLP ψ ([ hˆa ∥ zq ]) ,
+
+where sˆa is a scalar logit. The final hallucination score is obtained as 
+
+ˆp(y = 1 | q, G, ˆa) = σ(sˆa),
+
+with y = 1 denoting a hallucinated answer node. Thus, the detector combines graph structure around the returned node with the semantics of the question, while remaining independent of the internal activations of the answering LLM. 
+
+# 4 Experimental Setup 
+
+The extented implementation details are provided in Appendix A. 
+
+4.1 Evaluation Data 
+
+Training and evaluation of our detector requires tuples (q, G, A ∗, ˆA) combining a question, a retrieved subgraph, gold answer nodes, and LLM-predicted answer nodes. No existing benchmark provides all four components. Therefore, we construct the evaluation data by running a full KBQA pipeline on three established benchmarks, while recording both gold and predicted answer nodes as detection instances. In practical deployment, direct hallucination annotation is an equally valid and less expensive alternative to annotating a KBQA dataset and then deriving the hallucination labels. 
+
+4.1.1 KBQA Benchmarks 
+
+We evaluate on three KBQA benchmarks that vary in question complexity, underlying knowledge graph, and language. 
+
+WebQuestionsSP (WebQSP ) [Yih et al., 2016](License: CC-BY 4.0.) is a standard single-hop factoid KBQA benchmark grounded in the Freebase knowledge graph [Bollacker et al., 2007]. Questions are naturally phrased real-world queries collected from Google Suggest [Berant et al., 2013]. Because the official validation split is small (246 questions), we supplement it with questions sampled from the training set. Our validation set size is 500 questions. 
+
+ComplexWebQuestions ( CWQ ) [Talmor and Berant, 2018](License: GPL v2+.) extends WebQSP by programmatically appending compositional constraints to WebQSP SPARQL queries, then para-phrasing the resulting questions via crowdworkers. This procedure produces questions requiring logical reasoning, making CWQ substantially harder than WebQSP. It is also grounded in Freebase and is the largest of our three benchmarks. 
+
+PUGG [Sawczyn et al., 2024](License: CC BY-SA 4.0.) is a Polish KBQA dataset grounded in the Wikidata knowledge graph [Vrandeˇ ci´ c and Krötzsch, 2014], combining naturally collected (Google Suggest) and template-based (SPARQL-paired templates and paraphrasing) questions. We choose that dataset to evaluate on a non-English language and a different KG. Because Wikidata hub nodes inflate subgraph sizes, we exclude nodes connected to more than 1000 other entities as a preprocessing step before subgraph retrieval. 
+
+4.1.2 Hallucination Dataset Construction Subgraph retrieval Both KBQA and hallucination detection require a question-relevant subgraph from the KG; we apply the same retrieval procedure for both tasks. For all three datasets, we follow the G-Retriever pipeline [He et al., 2024]: candidate neighbors are first collected by BFS expansion from topic entities, and a Prize-Collecting Steiner Tree (PCST) formulation is then solved to select a compact, question-relevant subgraph. We use the same PCST hyperparameters as in the original G-Retriever pipeline. Subgraph statistics are reported in Appendix E.1 (Table 13). 5Table 1: Dataset statistics for hallucination detection. Each KBQA question may yield multiple answer nodes proposed by the LLM ( #Answers ); each node is labeled hallucinated ( %Hallu. ), correct ( %Correct ), or abstained ( %Abstained ). Abstained responses are counted in #Answers but excluded from the classification task.                                                    
+
+> Dataset Split #Questions #Answers %Hallu. %Correct %Abstained WebQSP
+> train 2572 8420 49.6 45.0 5.5 val 500 1566 54.6 40.2 5.2 test 1628 4842 46.2 47.9 5.8
+> CWQ
+> train 27639 43795 47.6 28.3 24.2 val 3519 6001 55.1 24.1 20.8 test 3531 5840 55.1 21.7 23.1
+> PUGG
+> train 3589 6372 63.6 24.3 12.1 val 700 1078 58.6 28.9 12.4 test 1081 1884 62.9 24.9 12.2
+
+KBQA method We use KAPING [Baek et al., 2023] as the LLM-based KBQA method. Beyond the answer node, KAPING is extended to also return a textual reasoning summary and a list of reasoning triples (the KG triples cited as evidence). Our approach does not use these elements, and they are used only as additional context for the LLM-based baselines (Section 4.2). The answering LLM is constrained to return only nodes present in the retrieved subgraph via structured generation; it may also abstain with an unknown response. The full prompt template is provided in the code repository. As discussed in Section 3.1, abstaining examples are excluded from the hallucination-detection task. The statistics, including the fraction of unknown responses, are reported in Table 1. Additional statistics of KBQA answers are reported in Appendix E.2 and E.3. 
+
+4.2 Baselines 
+
+We compare against three groups of baselines covering trivial predictors, LLM-based detection, and sampling-based consistency analysis. All selected baselines are black-box methods that operate without access to model internals, enabling a direct comparison with our approach, which also mirrors the common real-world deployment setting where the LLM model is accessed as a service. 
+
+Trivial baselines Random assigns the hallucinated label uniformly at random; MostFrequent always predicts the majority class in the validation split. These establish lower bounds and quantify the effect of class imbalance on each metric. 
+
+Llama-4-Scout-17B We use Llama-4-Scout [AI, 2025] as an LLM-as-judge baseline [Zheng et al., 2023]. We evaluate three prompt variants supplying progressively richer context: (1) Graph (G): question and subgraph serialized as a triple list; (2) Graph + Reasoning Summary (G+RS): the above plus the answering LLM’s reasoning summary; (3) Graph + Reasoning Summary + Reasoning Triples (G+RS+RT): the above plus the answering LLM’s reasoning triples. While straightforward to deploy, this approach is computationally expensive: Llama-4-Scout has 109 B total parameters ( 17 Bactive in its MoE architecture), requiring substantial GPU memory per detection call. 
+
+GPT-5-mini We evaluate GPT-5-mini [Singh et al., 2026] as a judge using two configurations: G and G+RS+RT. Both outperformed G+RS by a substantial margin on average with Llama. Due to commercial API costs, we restrict evaluation to these two configurations. 
+
+SelfCheckGPT We adapt the sampling-based method of Manakul et al. [2023] to structured KBQA outputs. We draw N independent predictions from the LLM-based KBQA method with temperature 
+
+T = 1 .0. We then compute the fraction of predictions that do not include a given node as the hallucination score. We evaluate with N ∈ { 5, 10 } to assess sensitivity to sample count. This baseline represents a widely used black-box hallucination detection method and is the most expensive computationally, requiring N forward passes of the LLM-based KBQA method per example. 64.3 Evaluation 
+
+For hallucination detection, we report F1 as the primary metric, computed over predicted answer nodes only; Precision, Recall, Accuracy, and AUC-PR are reported in Appendix D.1. Each configuration is trained with 3 random seeds; we report the mean and standard deviation across seeds. For methods that rely on LLM calls, we report single-run results due to the high inference cost. 
+
+4.4 Hallucination Correction 
+
+While our primary focus is hallucination detection, we also examine its potential for answer correc-tion. KG-Guard can guide answer revision within a larger system. We investigate whether feeding 
+
+KG-Guard predictions back to the LLM enables it to revise its own hallucinated responses. Starting from the initial KAPING answers, we iterate the following steps: (1) KG-Guard scores each predicted answer node. (2) Examples with no nodes flagged as hallucinated are marked resolved, and their answers remain unchanged. (3) For each active example (i.e., with at least one flagged answer node), the LLM is re-prompted in a chat-style conversation consisting of a system instruction, the original question and subgraph, the LLM’s most recent response, and a follow-up message listing the flagged answer node names. Steps 1–3 repeat until all examples are resolved or the iteration cap (max. 5) is reached. We use Llama-4-Scout as the refinement LLM. We report downstream KBQA metrics (F1, Precision, Recall, and Exact Match) at the initial step and after refinement on all three datasets, together with the distribution of refinement iterations. 
+
+# 5 Results 
+
+Ablation studies on the graph encoder and input modalities are presented in Appendix B. 
+
+5.1 Hallucination Detection 
+
+Hallucination detection results are summarized in Table 2 and full results are in Appendix D.1. 
+
+KG-Guard (GraphTransformer) ranks first on every dataset, achieving 82 .0 on WebQSP, 87 .4 on CWQ, and 84 .3 on PUGG. The strongest non-trivial baseline is GPT-5-mini, scoring 22 .8, 3.2, and 
+
+3.1 F1 points below KG-Guard on WebQSP, CWQ, and PUGG, respectively. Table 2: Hallucination detection F1 comparing KG-Guard against baselines. Avg. Rank is the average rank of each method across the three datasets (lower is better). Values with ± denote mean ± std over 3 runs. G , RS , and RT denote the retrieved subgraph, reasoning summary, and reasoning triples provided to the LLM judge, respectively.                                                                            
+
+> Method WebQSP CWQ PUGG Avg. Rank
+> KG-Guard (GraphTransformer) 82.0 ±0.7 87.4 ±0.2 84.3 ±1.0 1.0
+> KG-Guard (GAT) 79.8 ±1.2 86.3 ±0.7 82.7 ±2.7 2.3 Most Frequent 65.9 83.5 83.5 3.0 GPT 5 Mini (G+RS+RT) 59.2 84.2 81.2 4.0 GPT 5 Mini (G) 55.9 82.6 82.6 4.7 SelfCheck (N=10) 48.7 72.2 73.8 6.3 SelfCheck (N=5) 42.1 67.1 48.3 8.7 Llama 4 Scout (G+RS+RT) 41.0 61.2 60.8 9.0 Llama 4 Scout (G) 36.7 60.2 68.8 9.0 Llama 4 Scout (G+RS) 36.5 61.3 61.3 9.0 Random 49.6 ±1.0 58.3 ±0.5 58.8 ±1.8 9.0
+
+The advantage over baselines is most visible on WebQSP. All three Llama-4-Scout judge variants fall below the Random baseline on this dataset (F1 36 .5–41 .0 vs. Random at 49 .6), and GPT-5-mini reaches only 59 .2. KG-Guard , by contrast, achieves 82 .0, a substantial margin over all baselines on this benchmark. On CWQ and PUGG, GPT-5-mini reaches 84 .2 and 82 .6 but still ranks below KG-Guard on both datasets. Among the Llama-4-Scout prompt variants, differences between configurations are visible, 7but the best variant differs per dataset, indicating that richer context does not consistently benefit judge-based detection. The class distribution on these datasets is more skewed – over 71% of answers are hallucinated (Table 1). Due to that, MostFrequent reaches 83 .5 F1 on both datasets, but its AUC-PR equals the class frequency ( 71 .7 on CWQ, 71 .6 on PUGG), compared to 94 .2 and 90 .0 for 
+
+KG-Guard (Tables 10, 11). WebQSP consists of naturally formulated user queries, whereas CWQ questions are derived program-matically from logical reasoning templates and a portion of PUGG questions share a similar structure. We hypothesize that judge-based methods benefit from the regular reasoning patterns inherent to template-derived questions; naturally phrased queries provide weaker structural regularities, mak-ing WebQSP a harder setting for LLM-based hallucination detection. KG-Guard , relying on graph topology rather than linguistic regularities, is robust to this distinction. SelfCheckGPT improves with sample count ( N =10 over N =5 ) and is the best open-source baseline, outperforming all Llama-4-Scout variants, yet remains substantially below KG-Guard while incurring higher inference cost due to requiring N forward passes of the full KBQA model per example. LLM-judges are strongly precision-skewed ( GPT-5-mini : 85 .3% precision at 45 .3% recall on We-bQSP), missing many hallucinated nodes. Contrastingly, KG-Guard is more balanced, and the F1 gap is driven primarily by higher recall. Moreover, KG-Guard ’s precision – recall trade-off can be adjusted via the classification threshold, an option unavailable to LLM-based methods (Appendix D.2). 
+
+5.2 Hallucination Correction 
+
+KBQA performance before and after hallucination-aware iterative refinement is summarized in Table 3 and full per-dataset results are in Appendix D.2. We observe consistent gains across all three datasets: mean F1 improves by +13 .8 points and Exact Match by +17 .4 points on average. The EM gain is especially notable – it requires the predicted answer set to coincide exactly with the gold set per example, so any missing or spurious answer node counts as a failure. Consistent improvement on this strict metric confirms that this method of refinement is able to fully resolve hallucinations rather than only shifting answers closer to correct. These results demonstrate that KG-Guard ’s output is actionable. By providing specific hallucinated answer nodes, the LLM can make targeted corrections. Table 3: KBQA answer quality before ( Initial ) and after ( Refined ) iterative refinement guided by 
+
+KG-Guard , measured by F1 and Exact Match (EM). ∆ is the score improvement.                          
+
+> WebQSP CWQ PUGG F1 EM F1 EM F1 EM Initial 59.5 42.8 57.2 51.1 53.1 45.3
+> Refined 72.5 60.4 71.7 68.8 67.2 62.3
+> ∆+13.0 +17.6 +14.5 +17.6 +14.0 +16.9
+
+The metrics per refinement step are shown in Figure 3. The largest gains occur after the first refinement step, after which the improvement curve flattens. The distribution of iterations per example (Figure 4) reveals how many corrections each example needed. Step 0 denotes examples already correct before any refinement. Among examples that did require refinement, the largest share resolves at the first refinement iteration, and the count drops quickly at later steps. A substantial fraction of examples reach the iteration cap without converging, indicating hallucinations that the refinement procedure could not fully resolve. This shows that a single targeted correction is remarkably effective, resolving the majority of addressable hallucinations without further iteration. Practitioners who wish to reduce inference costs can therefore cap refinement at a single step with limited loss in correction quality. 
+
+# 6 Conclusion 
+
+We formulated hallucination detection in KBQA as answer-node classification on retrieved KG subgraphs and proposed KG-Guard , a lightweight black-box graph-based detector. Our method ranks first on all three benchmarks, outperforming LLM-as-judge and sampling-based baselines while using 
+
+∼305 × fewer parameters and requiring zero LLM calls at detection time. The detector generalizes across question types and languages. 80 1 2 3 4 5              
+
+> Iteration
+> 0.5
+> 0.6
+> 0.7
+> Score
+> WebQSP
+> 012345
+> Iteration
+> 0.55
+> 0.60
+> 0.65
+> 0.70
+> CWQ
+> 012345
+> Iteration
+> 0.45
+> 0.50
+> 0.55
+> 0.60
+> 0.65
+> 0.70 PUGG
+> F1 Recall Precision Exact Match
+
+Figure 3: KBQA metrics per refinement step across three datasets. Step 0 is the initial unrefined prediction; the largest gains occur at step 1, after which the curve flattens. 0 1 2 3 4 5          
+
+> Iteration
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> % Examples
+> WebQSP
+> 012345
+> Iteration
+> 0
+> 10
+> 20
+> 30
+> 40
+> 50
+> CWQ
+> 012345
+> Iteration
+> 0
+> 10
+> 20
+> 30
+> 40
+> PUGG
+
+Figure 4: Distribution of refinement iterations per example across three datasets. Step 0 denotes examples correct before any refinement; step 5 denotes examples that reached the iteration cap without resolving. Beyond detection, the node-level output of KG-Guard is actionable: feeding flagged answer nodes back to the KBQA LLM as targeted correction signals yields consistent downstream KBQA gains across all three datasets, with most of the improvement captured in a single refinement step. Together, these results establish explicit graph-based structural verification as a practical and efficient path toward more reliable LLM-based KBQA systems. 
+
+# Limitations and Future Work 
+
+KG-Guard requires training examples with hallucination labels. These can be derived from any KBQA dataset by comparing answer nodes against gold answers or by labeling hallucinations directly. Because we perform node-level classification on the retrieved subgraph, it cannot handle cases where the LLM abstains with an unknown prediction. Such responses are not represented as nodes in the graph. However, defining what counts as a hallucinated abstention is non-trivial: LLMs are generally expected to abstain when the answer is genuinely uncertain. While KG-Guard is applicable to any LLM-based KBQA pipeline, our experiments cover a single pipeline. Sensitivity to alternative pipelines is future work. The answering LLM also produces a free-form reasoning summary and supporting triples, used by the LLM-as-judge baselines. We experimented with triples marking and incorporating the summary embedding, but neither gave consistent gains. We hypothesize that the reasoning signal is already recoverable from the subgraph. Whether more sophisticated fusion methods could exploit these signals remains open for future work. 
+
+Broader impacts KG-Guard aims to improve reliability of LLM-based KBQA systems in high-stakes domains. As any ML system can produce incorrect predictions, it should augment rather than replace human factual verification. 9References 
+
+Meta AI. Introducing LLaMA 4: Advancing multimodal intelligence. Technical report, 2025. URL 
+
+https://ai.meta.com/blog/llama-4-multimodal-intelligence/ .Amos Azaria and Tom Mitchell. The internal state of an LLM knows when it‘s lying. In Houda Bouamor, Juan Pino, and Kalika Bali, editors, Findings of the Association for Com-putational Linguistics: EMNLP 2023 , pages 967–976, Singapore, December 2023. Associa-tion for Computational Linguistics. doi: 10.18653/v1/2023.findings-emnlp.68. URL https: //aclanthology.org/2023.findings-emnlp.68/ .Jinheon Baek, Alham Fikri Aji, and Amir Saffari. Knowledge-augmented language model prompting for zero-shot knowledge graph question answering. In Bhavana Dalvi Mishra, Greg Durrett, Peter Jansen, Danilo Neves Ribeiro, and Jason Wei, editors, Proceedings of the 1st Workshop on Natural Language Reasoning and Structured Explanations (NLRSE) , pages 78–106, Toronto, Canada, June 2023. Association for Computational Linguistics. doi: 10.18653/v1/2023.nlrse-1.7. URL 
+
+https://aclanthology.org/2023.nlrse-1.7/ .Jonathan Berant, Andrew Chou, Roy Frostig, and Percy Liang. Semantic parsing on Freebase from question-answer pairs. In David Yarowsky, Timothy Baldwin, Anna Korhonen, Karen Livescu, and Steven Bethard, editors, Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing , pages 1533–1544, Seattle, Washington, USA, October 2013. Association for Computational Linguistics. URL https://aclanthology.org/D13-1160/ .Jakub Binkowski, Denis Janiak, Albert Sawczyn, Bogdan Gabrys, and Tomasz Jan Kajdanow-icz. Hallucination detection in LLMs using spectral features of attention maps. In Christos Christodoulopoulos, Tanmoy Chakraborty, Carolyn Rose, and Violet Peng, editors, Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 24354–24385, Suzhou, China, November 2025. Association for Computational Linguistics. ISBN 979-8-89176-332-6. doi: 10.18653/v1/2025.emnlp-main.1239. URL https://aclanthology.org/2025. emnlp-main.1239/ .Kurt Bollacker, Robert Cook, and Patrick Tufts. Freebase: a shared database of structured general human knowledge. In Proceedings of the 22nd National Conference on Artificial Intelligence -Volume 2 , AAAI’07, page 1962–1963. AAAI Press, 2007. ISBN 9781577353232. Chao Chen, Kai Liu, Ze Chen, Yi Gu, Yue Wu, Mingyuan Tao, Zhihang Fu, and Jieping Ye. INSIDE: LLMs’ internal states retain the power of hallucination detection, 2024. URL https: //openreview.net/forum?id=Zj12nzlQbz .Yingjian Chen, Haoran Liu, Yinhong Liu, Jinxiang Xie, Rui Yang, Han Yuan, Yanran Fu, Peng Yuan Zhou, Qingyu Chen, James Caverlee, and Irene Li. GraphCheck: Breaking long-term text barriers with extracted knowledge graph-powered fact-checking. In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar, editors, Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 14976– 14995, Vienna, Austria, July 2025. Association for Computational Linguistics. ISBN 979-8-89176-251-0. doi: 10.18653/v1/2025.acl-long.729. URL https://aclanthology.org/2025. acl-long.729/ .Yung-Sung Chuang, Linlu Qiu, Cheng-Yu Hsieh, Ranjay Krishna, Yoon Kim, and James R. Glass. Lookback lens: Detecting and mitigating contextual hallucinations in large language models using only attention maps. In Yaser Al-Onaizan, Mohit Bansal, and Yun-Nung Chen, editors, Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pages 1419–1436, Miami, Florida, USA, November 2024. Association for Computational Linguistics. doi: 10.18653/ v1/2024.emnlp-main.84. URL https://aclanthology.org/2024.emnlp-main.84/ .Slawomir Dadas, Michał Perełkiewicz, and Rafał Po´ swiata. PIRB: A comprehensive benchmark of Polish dense and hybrid text retrieval methods. In Nicoletta Calzolari, Min-Yen Kan, Veronique Hoste, Alessandro Lenci, Sakriani Sakti, and Nianwen Xue, editors, Proceedings of the 2024 Joint International Conference on Computational Linguistics, Language Resources and Evaluation (LREC-COLING 2024) , pages 12761–12774, Torino, Italia, May 2024. ELRA and ICCL. URL 
+
+https://aclanthology.org/2024.lrec-main.1117/ .10 Shehzaad Dhuliawala, Mojtaba Komeili, Jing Xu, Roberta Raileanu, Xian Li, Asli Celikyilmaz, and Jason Weston. Chain-of-verification reduces hallucination in large language models. In Lun-Wei Ku, Andre Martins, and Vivek Srikumar, editors, Findings of the Association for Computational Linguistics: ACL 2024 , pages 3563–3578, Bangkok, Thailand, August 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024.findings-acl.212. URL 
+
+https://aclanthology.org/2024.findings-acl.212/ .Vijay Prakash Dwivedi and Xavier Bresson. A generalization of transformer networks to graphs. 2021. William Falcon and The PyTorch Lightning team. PyTorch Lightning, March 2019. URL https: //github.com/Lightning-AI/lightning .Sebastian Farquhar, Jannik Kossen, Lorenz Kuhn, and Yarin Gal. Detecting hallucinations in large language models using semantic entropy. Nature , 630(8017):625–630, Jun 2024. ISSN 1476-4687. doi: 10.1038/s41586-024-07421-0. URL https://doi.org/10.1038/s41586-024-07421-0 .Matthias Fey and Jan E. Lenssen. Fast graph representation learning with PyTorch Geometric. In 
+
+ICLR Workshop on Representation Learning on Graphs and Manifolds , 2019. Xinyan Guan, Yanjiang Liu, Hongyu Lin, Yaojie Lu, Ben He, Xianpei Han, and Le Sun. Mitigating large language model hallucinations via autonomous knowledge graph-based retrofitting. In 
+
+Proceedings of the Thirty-Eighth AAAI Conference on Artificial Intelligence and Thirty-Sixth Conference on Innovative Applications of Artificial Intelligence and Fourteenth Symposium on Educational Advances in Artificial Intelligence , AAAI’24/IAAI’24/EAAI’24. AAAI Press, 2024. ISBN 978-1-57735-887-9. doi: 10.1609/aaai.v38i16.29770. URL https://doi.org/10.1609/ aaai.v38i16.29770 .William L. Hamilton, Rex Ying, and Jure Leskovec. Inductive representation learning on large graphs. In Proceedings of the 31st International Conference on Neural Information Processing Systems , NIPS’17, page 1025–1035, Red Hook, NY, USA, 2017. Curran Associates Inc. ISBN 9781510860964. Xiaoxin He, Yijun Tian, Yifei Sun, Nitesh V. Chawla, Thomas Laurent, Yann LeCun, Xavier Bresson, and Bryan Hooi. G-retriever: Retrieval-augmented generation for textual graph understanding and question answering. In A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Paquet, J. Tomczak, and C. Zhang, editors, Advances in Neural Information Process-ing Systems , volume 37, pages 132876–132907. Curran Associates, Inc., 2024. doi: 10.52202/079017-4224. URL https://proceedings.neurips.cc/paper_files/paper/ 2024/file/efaf1c9726648c8ba363a5c927440529-Paper-Conference.pdf .Xiangkun Hu, Dongyu Ru, Lin Qiu, Qipeng Guo, Tianhang Zhang, Yang Xu, Yun Luo, Pengfei Liu, Yue Zhang, and Zheng Zhang. Knowledge-centric hallucination detection. In Yaser Al-Onaizan, Mohit Bansal, and Yun-Nung Chen, editors, Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pages 6953–6975, Miami, Florida, USA, November 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024.emnlp-main.395. URL 
+
+https://aclanthology.org/2024.emnlp-main.395/ .Lei Huang, Weijiang Yu, Weitao Ma, Weihong Zhong, Zhangyin Feng, Haotian Wang, Qianglong Chen, Weihua Peng, Xiaocheng Feng, Bing Qin, and Ting Liu. A survey on hallucination in large language models: Principles, taxonomy, challenges, and open questions. ACM Trans. Inf. Syst. , 43 (2), January 2025. ISSN 1046-8188. doi: 10.1145/3703155. URL https://doi.org/10.1145/ 3703155 .Thomas N. Kipf and Max Welling. Semi-supervised classification with graph convolutional networks. In 5th International Conference on Learning Representations, ICLR 2017, Toulon, France, April 24-26, 2017, Conference Track Proceedings . OpenReview.net, 2017. URL https://openreview. net/forum?id=SJU4ayYgl .Jannik Kossen, Jiatong Han, Muhammed Razzak, Lisa Schut, Shreshth Malik, and Yarin Gal. Semantic entropy probes: Robust and cheap hallucination detection in llms, 2024. URL https: //arxiv.org/abs/2406.15927 .11 Yunshi Lan, Gaole He, Jinhao Jiang, Jing Jiang, Wayne Xin Zhao, and Ji-Rong Wen. Complex knowledge base question answering: A survey. IEEE Transactions on Knowledge and Data Engineering , 35(11):11196–11215, 2023. doi: 10.1109/TKDE.2022.3223858. Linhao Luo, Yuan-Fang Li, Gholamreza Haffari, and Shirui Pan. Reasoning on graphs: Faithful and interpretable large language model reasoning. In International Conference on Learning Representations , 2024. Chuangtao Ma, Yongrui Chen, Tianxing Wu, Arijit Khan, and Haofen Wang. Large language models meet knowledge graphs for question answering: Synthesis and opportunities. In Christos Christodoulopoulos, Tanmoy Chakraborty, Carolyn Rose, and Violet Peng, editors, Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 24578–24597, Suzhou, China, November 2025. Association for Computational Linguistics. ISBN 979-8-89176-332-6. doi: 10.18653/v1/2025.emnlp-main.1249. URL https://aclanthology.org/2025. emnlp-main.1249/ .Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, Shashank Gupta, Bodhisattwa Prasad Majumder, Katherine Hermann, Sean Welleck, Amir Yazdanbakhsh, and Peter Clark. Self-refine: iterative refinement with self-feedback. In Proceedings of the 37th International Conference on Neural Information Processing Systems , NIPS ’23, Red Hook, NY, USA, 2023. Curran Associates Inc. Potsawee Manakul, Adian Liusie, and Mark Gales. SelfCheckGPT: Zero-resource black-box halluci-nation detection for generative large language models. In Houda Bouamor, Juan Pino, and Kalika Bali, editors, Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , pages 9004–9017, Singapore, December 2023. Association for Computational Lin-guistics. doi: 10.18653/v1/2023.emnlp-main.557. URL https://aclanthology.org/2023. emnlp-main.557/ .Costas Mavromatis and George Karypis. GNN-RAG: Graph neural retrieval for efficient large language model reasoning on knowledge graphs. In Wanxiang Che, Joyce Nabende, Ekaterina Shutova, and Mohammad Taher Pilehvar, editors, Findings of the Association for Computational Linguistics: ACL 2025 , pages 16682–16699, Vienna, Austria, July 2025. Association for Compu-tational Linguistics. ISBN 979-8-89176-256-5. doi: 10.18653/v1/2025.findings-acl.856. URL 
+
+https://aclanthology.org/2025.findings-acl.856/ .Sewon Min, Kalpesh Krishna, Xinxi Lyu, Mike Lewis, Wen-tau Yih, Pang Koh, Mohit Iyyer, Luke Zettlemoyer, and Hannaneh Hajishirzi. FActScore: Fine-grained atomic evaluation of factual precision in long form text generation. In Houda Bouamor, Juan Pino, and Kalika Bali, editors, 
+
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing ,pages 12076–12100, Singapore, December 2023. Association for Computational Linguistics. doi: 10.18653/v1/2023.emnlp-main.741. URL https://aclanthology.org/2023.emnlp-main. 741/ .Mohamed Rashad, Ahmed Zahran, Abanoub Amin, Amr Abdelaal, and Mohamed Altantawy. FactAl-ign: Fact-level hallucination detection and classification through knowledge graph alignment. In Anaelia Ovalle, Kai-Wei Chang, Yang Trista Cao, Ninareh Mehrabi, Jieyu Zhao, Aram Galstyan, Jwala Dhamala, Anoop Kumar, and Rahul Gupta, editors, Proceedings of the 4th Workshop on Trustworthy Natural Language Processing (TrustNLP 2024) , pages 79–84, Mexico City, Mexico, June 2024. Association for Computational Linguistics. doi: 10.18653/v1/2024.trustnlp-1.8. URL 
+
+https://aclanthology.org/2024.trustnlp-1.8/ .Nils Reimers and Iryna Gurevych. Sentence-BERT: Sentence embeddings using Siamese BERT-networks. In Kentaro Inui, Jing Jiang, Vincent Ng, and Xiaojun Wan, editors, Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing and the 9th International Joint Conference on Natural Language Processing (EMNLP-IJCNLP) , pages 3982– 3992, Hong Kong, China, November 2019. Association for Computational Linguistics. doi: 10.18653/v1/D19-1410. URL https://aclanthology.org/D19-1410/ .Hannah Sansford, Nicholas Richardson, Hermina Petric Maretic, and Juba Nait Saada. Grapheval: A knowledge-graph based LLM hallucination evaluation framework. In Manas Gaur, Efthymia Tsamoura, Edward Raff, Nikhita Vedula, and Srinivasan Parthasarathy, editors, Proceedings of 
+
+12 the Workshop on Knowledge-infused Learning co-located with 30th ACM SIGKDD Conference on Knowledge Discovery and Data Mining (KDD), Barcelona, Spain, August 26, 2024 , CEUR Workshop Proceedings, pages 20–31. CEUR-WS.org, 2024. URL https://ceur-ws.org/ Vol-3894/paper5.pdf .Albert Sawczyn, Katsiaryna Viarenich, Konrad Wojtasik, Aleksandra Domogała, Marcin Oleksy, Maciej Piasecki, and Tomasz Kajdanowicz. Developing PUGG for Polish: A modern approach to KBQA, MRC, and IR dataset construction. In Lun-Wei Ku, Andre Martins, and Vivek Srikumar, editors, Findings of the Association for Computational Linguistics: ACL 2024 , pages 10978–10996, Bangkok, Thailand, August 2024. Association for Computational Linguistics. doi: 10.18653/v1/ 2024.findings-acl.652. URL https://aclanthology.org/2024.findings-acl.652/ .Albert Sawczyn, Jakub Binkowski, Denis Janiak, Bogdan Gabrys, and Tomasz Jan Kajdanowicz. FactSelfCheck: Fact-level black-box hallucination detection for LLMs. In Vera Demberg, Kentaro Inui, and Lluís Marquez, editors, Findings of the Association for Computational Linguistics: EACL 2026 , pages 5603–5621, Rabat, Morocco, March 2026. Association for Computational Linguistics. ISBN 979-8-89176-386-9. doi: 10.18653/v1/2026.findings-eacl.296. URL https: //aclanthology.org/2026.findings-eacl.296/ .Yunsheng Shi, Zhengjie Huang, Shikun Feng, Hui Zhong, Wenjing Wang, and Yu Sun. Masked label prediction: Unified message passing model for semi-supervised classification. In Zhi-Hua Zhou, editor, Proceedings of the Thirtieth International Joint Conference on Artificial Intelligence, IJCAI-21 , pages 1548–1554. International Joint Conferences on Artificial Intelligence Organization, 8 2021. doi: 10.24963/ijcai.2021/214. URL https://doi.org/10.24963/ijcai.2021/214 .Main Track. Aaditya Singh, Adam Fry, Adam Perelman, Adam Tart, Adi Ganesh, Ahmed El-Kishky, Aidan McLaughlin, Aiden Low, AJ Ostrow, Akhila Ananthram, Akshay Nathan, Alan Luo, Alec Helyar, Aleksander Madry, Aleksandr Efremov, Aleksandra Spyra, Alex Baker-Whitcomb, Alex Beutel, Alex Karpenko, Alex Makelov, Alex Neitz, Alex Wei, Alexandra Barr, Alexandre Kirchmeyer, Alexey Ivanov, Alexi Christakis, Alistair Gillespie, Allison Tam, Ally Bennett, Alvin Wan, Alyssa Huang, Amy McDonald Sandjideh, Amy Yang, Ananya Kumar, Andre Saraiva, Andrea Vallone, Andrei Gheorghe, Andres Garcia Garcia, Andrew Braunstein, Andrew Liu, Andrew Schmidt, An-drey Mereskin, Andrey Mishchenko, Andy Applebaum, Andy Rogerson, Ann Rajan, Annie Wei, Anoop Kotha, Anubha Srivastava, Anushree Agrawal, Arun Vijayvergiya, Ashley Tyra, Ashvin Nair, Avi Nayak, Ben Eggers, Bessie Ji, Beth Hoover, Bill Chen, Blair Chen, Boaz Barak, Borys Minaiev, Botao Hao, Bowen Baker, Brad Lightcap, Brandon McKinzie, Brandon Wang, Brendan Quinn, Brian Fioca, Brian Hsu, Brian Yang, Brian Yu, Brian Zhang, Brittany Brenner, Callie Rig-gins Zetino, Cameron Raymond, Camillo Lugaresi, Carolina Paz, Cary Hudson, Cedric Whitney, Chak Li, Charles Chen, Charlotte Cole, Chelsea Voss, Chen Ding, Chen Shen, Chengdu Huang, Chris Colby, Chris Hallacy, Chris Koch, Chris Lu, Christina Kaplan, Christina Kim, CJ Minott-Henriques, Cliff Frey, Cody Yu, Coley Czarnecki, Colin Reid, Colin Wei, Cory Decareaux, Cristina Scheau, Cyril Zhang, Cyrus Forbes, Da Tang, Dakota Goldberg, Dan Roberts, Dana Palmie, Daniel Kappler, Daniel Levine, Daniel Wright, Dave Leo, David Lin, David Robinson, Declan Grabb, Derek Chen, Derek Lim, Derek Salama, Dibya Bhattacharjee, Dimitris Tsipras, Dinghua Li, Dingli Yu, DJ Strouse, Drew Williams, Dylan Hunn, Ed Bayes, Edwin Arbus, Ekin Akyurek, Elaine Ya Le, Elana Widmann, Eli Yani, Elizabeth Proehl, Enis Sert, Enoch Cheung, Eri Schwartz, Eric Han, Eric Jiang, Eric Mitchell, Eric Sigler, Eric Wallace, Erik Ritter, Erin Kavanaugh, Evan Mays, Evgenii Nikishin, Fangyuan Li, Felipe Petroski Such, Filipe de Avila Belbute Peres, Filippo Raso, Florent Bekerman, Foivos Tsimpourlas, Fotis Chantzis, Francis Song, Francis Zhang, Gaby Raila, Garrett McGrath, Gary Briggs, Gary Yang, Giambattista Parascandolo, Gildas Chabot, Grace Kim, Grace Zhao, Gregory Valiant, Guillaume Leclerc, Hadi Salman, Hanson Wang, Hao Sheng, Haoming Jiang, Haoyu Wang, Haozhun Jin, Harshit Sikchi, Heather Schmidt, Henry Aspegren, Honglin Chen, Huida Qiu, Hunter Lightman, Ian Covert, Ian Kivlichan, Ian Silber, Ian Sohl, Ibrahim Hammoud, Ignasi Clavera, Ikai Lan, Ilge Akkaya, Ilya Kostrikov, Irina Kofman, Isak Etinger, Ishaan Singal, Jackie Hehir, Jacob Huh, Jacqueline Pan, Jake Wilczynski, Jakub Pachocki, James Lee, James Quinn, Jamie Kiros, Janvi Kalra, Jasmyn Samaroo, Jason Wang, Jason Wolfe, Jay Chen, Jay Wang, Jean Harb, Jeffrey Han, Jeffrey Wang, Jennifer Zhao, Jeremy Chen, Jerene Yang, Jerry Tworek, Jesse Chand, Jessica Landon, Jessica Liang, Ji Lin, Jiancheng Liu, Jianfeng Wang, Jie Tang, Jihan Yin, Joanne Jang, Joel Morris, Joey Flynn, Johannes Ferstad, Johannes Heidecke, John 13 Fishbein, John Hallman, Jonah Grant, Jonathan Chien, Jonathan Gordon, Jongsoo Park, Jordan Liss, Jos Kraaijeveld, Joseph Guay, Joseph Mo, Josh Lawson, Josh McGrath, Joshua Vendrow, Joy Jiao, Julian Lee, Julie Steele, Julie Wang, Junhua Mao, Kai Chen, Kai Hayashi, Kai Xiao, Kamyar Salahi, Kan Wu, Karan Sekhri, Karan Sharma, Karan Singhal, Karen Li, Kenny Nguyen, Keren Gu-Lemberg, Kevin King, Kevin Liu, Kevin Stone, Kevin Yu, Kristen Ying, Kristian Georgiev, Kristie Lim, Kushal Tirumala, Kyle Miller, Lama Ahmad, Larry Lv, Laura Clare, Laurance Fau-connet, Lauren Itow, Lauren Yang, Laurentia Romaniuk, Leah Anise, Lee Byron, Leher Pathak, Leon Maksin, Leyan Lo, Leyton Ho, Li Jing, Liang Wu, Liang Xiong, Lien Mamitsuka, Lin Yang, Lindsay McCallum, Lindsey Held, Liz Bourgeois, Logan Engstrom, Lorenz Kuhn, Louis Feuvrier, Lu Zhang, Lucas Switzer, Lukas Kondraciuk, Lukasz Kaiser, Manas Joglekar, Mandeep Singh, Mandip Shah, Manuka Stratta, Marcus Williams, Mark Chen, Mark Sun, Marselus Cayton, Martin Li, Marvin Zhang, Marwan Aljubeh, Matt Nichols, Matthew Haines, Max Schwarzer, Mayank Gupta, Meghan Shah, Melody Y. Guan, Melody Huang, Meng Dong, Mengqing Wang, Mia Glaese, Micah Carroll, Michael Lampe, Michael Malek, Michael Sharman, Michael Zhang, Michele Wang, Michelle Pokrass, Mihai Florian, Mikhail Pavlov, Miles Wang, Ming Chen, Mingxuan Wang, Minnia Feng, Mo Bavarian, Molly Lin, Moose Abdool, Mostafa Rohaninejad, Nacho Soto, Natalie Staudacher, Natan LaFontaine, Nathan Marwell, Nelson Liu, Nick Preston, Nick Turley, Nicklas Ansman, Nicole Blades, Nikil Pancha, Nikita Mikhaylin, Niko Felix, Nikunj Handa, Nishant Rai, Nitish Keskar, Noam Brown, Ofir Nachum, Oleg Boiko, Oleg Murk, Olivia Watkins, Oona Gleeson, Pamela Mishkin, Patryk Lesiewicz, Paul Baltescu, Pavel Belov, Peter Zhokhov, Philip Pronin, Phillip Guo, Phoebe Thacker, Qi Liu, Qiming Yuan, Qinghua Liu, Rachel Dias, Rachel Puckett, Rahul Arora, Ravi Teja Mullapudi, Raz Gaon, Reah Miyara, Rennie Song, Rishabh Aggarwal, RJ Marsan, Robel Yemiru, Robert Xiong, Rohan Kshirsagar, Rohan Nuttall, Roman Tsiupa, Ronen Eldan, Rose Wang, Roshan James, Roy Ziv, Rui Shu, Ruslan Nigmatullin, Saachi Jain, Saam Talaie, Sam Altman, Sam Arnesen, Sam Toizer, Sam Toyer, Samuel Miserendino, Sand-hini Agarwal, Sarah Yoo, Savannah Heon, Scott Ethersmith, Sean Grove, Sean Taylor, Sebastien Bubeck, Sever Banesiu, Shaokyi Amdo, Shengjia Zhao, Sherwin Wu, Shibani Santurkar, Shiyu Zhao, Shraman Ray Chaudhuri, Shreyas Krishnaswamy, Shuaiqi, Xia, Shuyang Cheng, Shyamal Anadkat, Simón Posada Fishman, Simon Tobin, Siyuan Fu, Somay Jain, Song Mei, Sonya Egoian, Spencer Kim, Spug Golden, SQ Mah, Steph Lin, Stephen Imm, Steve Sharpe, Steve Yadlowsky, Sulman Choudhry, Sungwon Eum, Suvansh Sanjeev, Tabarak Khan, Tal Stramer, Tao Wang, Tao Xin, Tarun Gogineni, Taya Christianson, Ted Sanders, Tejal Patwardhan, Thomas Degry, Thomas Shadwell, Tianfu Fu, Tianshi Gao, Timur Garipov, Tina Sriskandarajah, Toki Sherbakov, Tomek Korbak, Tomer Kaftan, Tomo Hiratsuka, Tongzhou Wang, Tony Song, Tony Zhao, Troy Peterson, Val Kharitonov, Victoria Chernova, Vineet Kosaraju, Vishal Kuo, Vitchyr Pong, Vivek Verma, Vlad Petrov, Wanning Jiang, Weixing Zhang, Wenda Zhou, Wenlei Xie, Wenting Zhan, Wes McCabe, Will DePue, Will Ellsworth, Wulfie Bain, Wyatt Thompson, Xiangning Chen, Xiangyu Qi, Xin Xiang, Xinwei Shi, Yann Dubois, Yaodong Yu, Yara Khakbaz, Yifan Wu, Yilei Qian, Yin Tat Lee, Yinbo Chen, Yizhen Zhang, Yizhong Xiong, Yonglong Tian, Young Cha, Yu Bai, Yu Yang, Yuan Yuan, Yuanzhi Li, Yufeng Zhang, Yuguang Yang, Yujia Jin, Yun Jiang, Yunyun Wang, Yushi Wang, Yutian Liu, Zach Stubenvoll, Zehao Dou, Zheng Wu, and Zhigang Wang. Openai gpt-5 system card. Technical report, 2026. URL https://arxiv.org/abs/2601.03267 .Gaurang Sriramanan, Siddhant Bharti, Vinu Sankar Sadasivan, Shoumik Saha, Priyatham Kattakinda, and Soheil Feizi. Llm-check: Investigating detection of hallucinations in large language models. In A. Globerson, L. Mackey, D. Belgrave, A. Fan, U. Pa-quet, J. Tomczak, and C. Zhang, editors, Advances in Neural Information Process-ing Systems , volume 37, pages 34188–34216. Curran Associates, Inc., 2024. doi: 10.52202/079017-1077. URL https://proceedings.neurips.cc/paper_files/paper/ 2024/file/3c1e1fdf305195cd620c118aaa9717ad-Paper-Conference.pdf .Haitian Sun, Bhuwan Dhingra, Manzil Zaheer, Kathryn Mazaitis, Ruslan Salakhutdinov, and William Cohen. Open domain question answering using early fusion of knowledge bases and text. In Ellen Riloff, David Chiang, Julia Hockenmaier, and Jun’ichi Tsujii, editors, Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing , pages 4231–4242, Brussels, Belgium, October-November 2018. Association for Computational Linguistics. doi: 10.18653/v1/D18-1455. URL https://aclanthology.org/D18-1455/ .Jiashuo Sun, Chengjin Xu, Lumingyuan Tang, Saizhuo Wang, Chen Lin, Yeyun Gong, Lionel Ni, Heung-Yeung Shum, and Jian Guo. Think-on-graph: Deep and responsible reasoning of large 14 language model on knowledge graph. In The Twelfth International Conference on Learning Representations , 2024. URL https://openreview.net/forum?id=nnVO1PvbTv .Alon Talmor and Jonathan Berant. The web as a knowledge-base for answering complex ques-tions. In Marilyn Walker, Heng Ji, and Amanda Stent, editors, Proceedings of the 2018 Confer-ence of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies, Volume 1 (Long Papers) , pages 641–651, New Orleans, Louisiana, June 2018. Association for Computational Linguistics. doi: 10.18653/v1/N18-1059. URL 
+
+https://aclanthology.org/N18-1059/ .Petar Veliˇ ckovi´ c, Guillem Cucurull, Arantxa Casanova, Adriana Romero, Pietro Liò, and Yoshua Bengio. Graph attention networks. In International Conference on Learning Representations ,2018. URL https://openreview.net/forum?id=rJXMpikCZ .Denny Vrandeˇ ci´ c and Markus Krötzsch. Wikidata: A free collaborative knowledgebase. Commun. ACM , 57(10):78–85, September 2014. ISSN 0001-0782. doi: 10.1145/2629489. URL http: //doi.acm.org/10.1145/2629489 .Keyulu Xu, Weihua Hu, Jure Leskovec, and Stefanie Jegelka. How powerful are graph neural networks? In International Conference on Learning Representations , 2019. URL https:// openreview.net/forum?id=ryGs6iA5Km .Michihiro Yasunaga, Hongyu Ren, Antoine Bosselut, Percy Liang, and Jure Leskovec. QA-GNN: Rea-soning with language models and knowledge graphs for question answering. In Kristina Toutanova, Anna Rumshisky, Luke Zettlemoyer, Dilek Hakkani-Tur, Iz Beltagy, Steven Bethard, Ryan Cot-terell, Tanmoy Chakraborty, and Yichao Zhou, editors, Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Tech-nologies , pages 535–546, Online, June 2021. Association for Computational Linguistics. doi: 10. 18653/v1/2021.naacl-main.45. URL https://aclanthology.org/2021.naacl-main.45/ .Wen-tau Yih, Matthew Richardson, Chris Meek, Ming-Wei Chang, and Jina Suh. The value of semantic parse labeling for knowledge base question answering. In Katrin Erk and Noah A. Smith, editors, Proceedings of the 54th Annual Meeting of the Association for Computational Linguistics (Volume 2: Short Papers) , pages 201–206, Berlin, Germany, August 2016. Association for Computational Linguistics. doi: 10.18653/v1/P16-2033. URL https://aclanthology. org/P16-2033/ .Xikun Zhang, Antoine Bosselut, Michihiro Yasunaga, Hongyu Ren, Percy Liang, Christopher D Man-ning, and Jure Leskovec. Greaselm: Graph reasoning enhanced language models. In International Conference on Learning Representations , 2021. URL https://arxiv.org/abs/2201.08860 .Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric Xing, Hao Zhang, Joseph Gonzalez, and Ion Stoica. Judging llm-as-a-judge with mt-bench and chatbot arena. In A. Oh, T. Nau-mann, A. Globerson, K. Saenko, M. Hardt, and S. Levine, editors, Advances in Neu-ral Information Processing Systems , volume 36, pages 46595–46623. Curran Associates, Inc., 2023. URL https://proceedings.neurips.cc/paper_files/paper/2023/file/ 91f18a1287b398d378ef22505bf41832-Paper-Datasets_and_Benchmarks.pdf .15 Appendix 
+
+This appendix provides supplementary material organized as follows: 
+
+Appendix A: Implementation details. 
+
+Appendix B: Ablation studies on graph encoder components, input modalities, and the effect of training with KBQA-derived labels. 
+
+Appendix C: Model size comparison and computation demands across methods. 
+
+Appendix D: Full F1, precision, recall, accuracy, and AUC-PR results for hallucination detection and correction. 
+
+Appendix E: Dataset and subgraph statistics, including subgraph structure, answer count distributions, and LLM abstention and hallucination patterns. 
+
+# A Implementation Details 
+
+LLM settings Llama-4-Scout-17B is used for KAPING, the LLM-as-judge baseline, and answer refinement, with temperature 0.1 to favor the most probable outputs while allowing retries on output-parsing errors. The SelfCheckGPT baseline draws samples from the same model with temperature 
+
+1.0 for diversity. GPT-5-mini is queried with temperature 1 and default reasoning effort ( medium ); temperature 1 is the only value permitted by the API when reasoning is enabled. 
+
+KG-Guard training Node, edge, and question embeddings are produced by a frozen Sentence Trans-former [Reimers and Gurevych, 2019]: all-roberta-large-v1 [Reimers and Gurevych, 2019] for WebQuestionsSP and ComplexWebQuestions, and multilingual mmlw-retrieval-roberta-large 
+
+[Dadas et al., 2024] for PUGG; (in both cases d = 1024 ). Node features are obtained by encoding the node label, and edge features by encoding the relation label. Dimensions of marking embeddings for topic entities and answer nodes are set to dT = dA = 20 . The learnable embeddings for edges between the virtual question node are sized to 1024 . The graph encoder is instantiated as either a GraphTransformer [Dwivedi and Bresson, 2021] or a GAT [Veliˇ ckovi´ c et al., 2018]. Both use 2
+
+layers, 8 attention heads, and 256 -dimensional hidden representations. We train with Adam ( lr =10 −3,weight decay 10 −4), batch size 32 , for up to 300 epochs with early stopping (patience 50 ). All hyperparameter values were chosen empirically. The implementation uses PyTorch Geometric [Fey and Lenssen, 2019] and PyTorch Lightning [Falcon and The PyTorch Lightning team, 2019]. 
+
+Compute resources Llama-4-Scout inference was performed using vLLM on 4 × H100 GPUs. 
+
+KG-Guard training was conducted on a NVIDIA A40 GPU (see Appendix C for details). 
+
+# B Additional Experiments 
+
+B.1 Effect of Graph Encoder Components 
+
+Table 4: Ablation of graph encoder components on hallucination detection F1. ∆ is the F1 change in percentage points relative to the full KG-Guard model; negative values indicate performance loss from removing the component. Mean ± std over 3 runs.                                         
+
+> Variant WebQSP ∆CWQ ∆PUGG ∆Avg. ∆
+> full 82.0 ± 0.7 87.4 ± 0.2 84.3 ± 1.0 +0.0 w/o marking 80.1 ± 0.9 -1.9 87.9 ± 0.3 +0.5 83.4 ± 1.3 -0.9 -0.8 w/o virtual q. node 81.6 ± 0.2 -0.5 86.6 ± 1.0 -0.8 83.9 ± 0.4 -0.4 -0.5 w/o marking & virtual q. node 77.8 ± 0.9 -4.2 86.5 ± 0.5 -0.9 82.7 ± 0.8 -1.6 -2.2 w/o all 77.4 ± 0.6 -4.6 86.2 ± 1.0 -1.3 82.3 ± 0.5 -2.1 -2.6
+
+To justify the proposed graph-encoder design, we ablate node marking and the virtual question node independently and in combination. Table 4 presents the results. Removing node marking (topic entity and answer node trainable embeddings) costs −0.8 pp on average, while removing the virtual 16 question node costs −0.5 pp; their combined removal drops performance by −2.2 pp, exceeding the sum of the individual effects, indicating the two are mutually reinforcing. CWQ is notably more robust across variants, whereas WebQSP shows the largest sensitivity to ablation. 
+
+B.2 Effect of Input Modalities 
+
+Table 5: Ablation of input modalities on hallucination detection F1. ∆ is the F1 change in percentage points relative to the full KG-Guard model (graph + question text); negative values indicate perfor-mance loss from removing the modality. RS is the reasoning summary produced by the answering LLM and was not used in KG-Guard . Mean ± std over 3 runs.                                  
+
+> Variant WebQSP ∆CWQ ∆PUGG ∆avg ∆
+> full (graph + text) 82.1 ± 0.4 87.6 ± 0.5 83.7 ± 0.6 +0.0 graph only 80.6 ± 0.6 -1.5 86.3 ± 0.1 -1.3 83.1 ± 0.6 -0.6 -1.1 question only 70.8 ± 2.3 -11.4 83.0 ± 0.5 -4.6 81.7 ± 0.3 -2.0 -6.0 question+RS 70.6 ± 2.0 -11.5 83.3 ± 0.6 -4.3 81.2 ± 0.3 -2.5 -6.1
+
+We investigate how much each input modality contributes to detection and whether the LLM’s reasoning summary (RS) (not used by KG-Guard ) can substitute for graph structure. Table 5 reports the results. Ablating text features (graph only) costs −1.1 pp on average, while ablating the graph encoder (question only) reduces F1 by −6.0 pp, confirming that graph structure is the primary discriminative signal and question embeddings provide a complementary but secondary gain. Adding the reasoning summary to the text input (Q+RS) yields no improvement over question text alone (−6.1 vs. −6.0 pp), indicating that textual reasoning paths do not encode the relational evidence the KG graph provides. WebQSP is the most sensitive dataset for this ablation. 
+
+B.3 Training with KBQA Dataset 
+
+A natural alternative to our approach is to train the same model to predict correct answer nodes using KBQA gold labels, then flag LLM-proposed answers as hallucinated whenever the model judges them to be incorrect. Since the KBQA datasets are considerably larger than our hallucination detection dataset, we subsample each KBQA split to match its size and class balance. We repeat the procedure with three random seeds for each training run (Table 7). Table 6: Hallucination detection F1 when training KG-Guard on hallucination labels ( Hall. Det. )versus KBQA-derived labels (KBQA). Mean ± std over 3 runs.                                        
+
+> Dataset Train. Data F1 Precision Recall Accuracy AUC-PR WebQSP Hall. Det. 82.0 ± 0.7 84.9 ± 2.2 81.3 ± 2.9 85.9 ± 0.1 91.4 ± 0.1
+> KBQA 81.4 ± 0.9 81.6 ± 1.9 83.2 ± 1.0 85.1 ± 0.8 90.6 ± 0.2
+> CWQ Hall. Det. 87.4 ± 0.2 85.8 ± 0.2 90.2 ± 0.5 83.5 ± 0.2 94.2 ± 0.3
+> KBQA 81.7 ± 0.7 88.1 ± 0.2 77.7 ± 1.0 78.8 ± 0.5 92.5 ± 0.1
+> PUGG Hall. Det. 84.3 ± 1.0 78.1 ± 3.4 93.5 ± 4.8 78.8 ± 1.9 90.0 ± 0.6
+> KBQA 71.3 ± 5.7 84.1 ± 2.0 65.3 ± 9.3 69.8 ± 3.7 85.4 ± 0.2
+
+Table 6 shows our method outperforms the KBQA-supervised model on all three datasets despite identical training set sizes, indicating that hallucination-specific labels provide a stronger training signal than KBQA gold labels for this task. Moreover, hallucination annotations are also cheaper to collect than KBQA annotations. Rather than asking annotators to answer each question against the knowledge base, it reduces to verifying whether the proposed answer node is supported by triples in the retrieved subgraph — a local check with no domain prerequisite. Additionally, each label is a simple binary judgment, whereas KBQA annotation requires identifying one or more correct answers from the full KG. 17 Table 7: Training set statistics for hallucination-specific ( Hall. Det. ) and KBQA-derived supervision ( KBQA-original : original split; KBQA-sampled : subsampled to match Hall. Det. size for fair comparison). #Instances : total labeled nodes; #Pos. / #Neg. : hallucinated/correct instances; %Pos. :class imbalance; #Graphs: unique subgraphs. Mean ± std over sampling runs.                                                    
+
+> Dataset Variant #Instances #Pos. #Neg. %Pos. #Graphs WebQSP
+> Hall. Det. 8677 4592 4085 52.9 2332 KBQA-original 43768 38115 5653 87.1 2826 KBQA-sampled 8677 4592 4085 52.9 2387 ±8.7
+> CWQ
+> Hall. Det. 33206 20833 12373 62.7 17223 KBQA-original 456141 438020 18121 96.0 27631 KBQA-sampled 33206 20833 12373 62.7 16154 ±46 .9
+> PUGG
+> Hall. Det. 5467 3916 1551 71.6 2777 KBQA-original 350208 348000 2208 99.4 3589 KBQA-sampled 5467 3916 1551 71.6 1683 ±5.9
+
+# C Model Size and Computation Demands 
+
+Table 8 compares model sizes and query-time LLM call counts across methods. KG-Guard adds only 2.52 M trainable parameters on top of a frozen sentence encoder ( ∼358 M total), whereas LLM-based baseline (Llama-4-Scout) operates at 109 B parameters— 305 × larger; at fp16 precision this corresponds to ∼0.7 GB for our full inference stack versus ∼218 GB for Llama-4-Scout , exceeding the capacity of a single high-end GPU. Each LLM call requires autoregressive generation: while the final answer spans only several tokens, thinking enabled in GPT-5-mini can consume hundreds of additional tokens per query. SelfCheck further multiplies this cost by applying an LLM-based KBQA pipeline N =5 or N =10 times per query. KG-Guard makes zero LLM calls at detection time: classification is a single feed-forward pass through the graph encoder and a small MLP. In practical deployment over a fixed knowledge graph, node and relation embeddings can be pre-computed and stored offline. During inference, only the question sentence requires encoding, after which a single graph-encoder forward pass, and one MLP evaluation yields the hallucination score. This lightweight design makes KG-Guard deployable on commodity hardware, with no multi-GPU infrastructure or external API access required. Table 8: Model size and per-query LLM calls at detection time. Encoder : frozen SentenceTransformer (all-roberta-large-v1 ≈355 M for WebQSP/CWQ; mmlw-retrieval-roberta-large 
+
+≈435 M for PUGG). Detector : trainable classifier parameters. Total : Encoder + Detector. × ours :total parameter ratio relative to KG-Guard . Llama 4 Scout has 109B total, but 17B active parameters (MoE); SelfCheck also uses Llama but in a sampling-based paradigm ( N calls per query). GPT 5 Mini parameter count is undisclosed.                                               
+
+> Method Encoder Detector LLM calls Total ×ours
+> KG-Guard (GraphTransformer) all-roberta-large-v1 2.52M 0358M —
+> KG-Guard (GraphTransformer) mmlw-retrieval-roberta-large 2.52M 0437M —
+> KG-Guard (GAT) all-roberta-large-v1 1.84M 0357M —
+> KG-Guard (GAT) mmlw-retrieval-roberta-large 1.84M 0437M —Llama 4 Scout ——1109B 305× SelfCheck (N=10) ——10 109B 305× SelfCheck (N=5) ——5109B 305× GPT 5 Mini ——1n/a —
+
+# D Additional Results 
+
+D.1 Hallucination Detection 
+
+Tables 9, 10, and 11 extend the results reported in Section 5.1 with the full precision, recall, accuracy, and AUC-PR breakdown. A consistent pattern emerges: LLM-based judges are strongly precision-18 Table 9: Full hallucination detection results on WebQSP (F1, Precision, Recall, Accuracy, AUC-PR). G , RS , and RT denote the retrieved subgraph, reasoning summary, and reasoning triples provided to the LLM judge. Values with ± denote mean ± std over 3 runs. 
+
+Method F1 Precision Recall Accuracy AUC-PR 
+
+KG-Guard (GraphTransformer) 82.0 ± 0.7 84.9 ± 2.2 81.3 ± 2.9 85.9 ± 0.1 91.4 ± 0.1 
+
+KG-Guard (GAT) 79.8 ± 1.2 82.1 ± 1.3 79.8 ± 1.6 83.9 ± 1.0 90.7 ± 0.2 Most Frequent 65.9 49.1 100.0 49.1 49.1 GPT 5 Mini (G+RS+RT) 59.2 85.3 45.3 69.3 65.5 GPT 5 Mini (G) 55.9 85.5 41.6 67.9 64.2 Random 49.6 ± 1.0 49.4 ± 0.9 49.9 ± 1.1 50.3 ± 0.9 49.2 ± 0.5 SelfCheck (N=10) 48.7 68.0 38.0 60.8 56.3 SelfCheck (N=5) 42.1 68.7 30.4 59.0 55.0 Llama 4 Scout (G+RS+RT) 41.0 79.6 27.6 61.0 57.5 Llama 4 Scout (G) 36.7 66.7 25.3 57.1 53.5 Llama 4 Scout (G+RS) 36.5 73.4 24.3 58.5 55.0 
+
+Table 10: Full hallucination detection results on CWQ (F1, Precision, Recall, Accuracy, AUC-PR). G , RS , and RT denote the retrieved subgraph, reasoning summary, and reasoning triples provided to the LLM judge. Values with ± denote mean ± std over 3 runs. 
+
+Method F1 Precision Recall Accuracy AUC-PR 
+
+KG-Guard (GraphTransformer) 87.4 ± 0.2 85.8 ± 0.2 90.2 ± 0.5 83.5 ± 0.2 94.2 ± 0.3 
+
+KG-Guard (GAT) 86.3 ± 0.7 84.5 ± 0.3 89.6 ± 1.4 81.7 ± 0.9 93.1 ± 0.2 GPT 5 Mini (G+RS+RT) 84.2 93.5 76.7 79.4 88.4 Most Frequent 83.5 71.7 100.0 71.7 71.7 GPT 5 Mini (G) 82.6 90.2 76.2 77.0 85.8 SelfCheck (N=10) 72.2 90.4 60.2 66.9 83.0 SelfCheck (N=5) 67.1 91.0 53.1 62.6 81.9 Llama 4 Scout (G+RS) 61.3 94.0 45.4 58.8 81.8 Llama 4 Scout (G+RS+RT) 61.2 94.4 45.3 58.8 82.0 Llama 4 Scout (G) 60.2 91.6 44.8 57.5 80.7 Random 58.3 ± 0.5 71.4 ± 0.3 49.3 ± 0.5 49.4 ± 0.4 71.6 ± 0.1 
+
+Table 11: Full hallucination detection results on PUGG (F1, Precision, Recall, Accuracy, AUC-PR). G , RS , and RT denote the retrieved subgraph, reasoning summary, and reasoning triples provided to the LLM judge. Values with ± denote mean ± std over 3 runs. 
+
+Method F1 Precision Recall Accuracy AUC-PR 
+
+KG-Guard (GraphTransformer) 84.3 ± 1.0 78.1 ± 3.4 93.5 ± 4.8 78.8 ± 1.9 90.0 ± 0.6 
+
+Most Frequent 83.5 71.6 100.0 71.6 71.6 
+
+KG-Guard (GAT) 82.7 ± 2.7 79.6 ± 2.0 88.1 ± 7.7 77.4 ± 3.2 88.7 ± 0.7 GPT 5 Mini (G) 82.6 96.3 72.3 78.2 89.5 GPT 5 Mini (G+RS+RT) 81.2 95.1 70.9 76.6 88.3 SelfCheck (N=10) 73.8 91.9 61.7 68.7 84.2 Llama 4 Scout (G) 68.8 93.5 54.4 64.7 83.5 Llama 4 Scout (G+RS) 61.3 96.0 45.1 59.3 82.6 Llama 4 Scout (G+RS+RT) 60.8 96.7 44.3 59.0 82.7 Random 58.8 ± 1.8 71.8 ± 1.6 49.8 ± 1.8 50.1 ± 1.9 71.7 ± 0.8 SelfCheck (N=5) 48.3 87.8 33.3 48.9 77.0 
+
+skewed. GPT-5-mini (G+RS+RT) reaches 85 .3% precision on WebQSP but only 45 .3% recall; Llama-4-Scout variants reach up to 96 .7% precision on PUGG at recalls near 44% . KG-Guard 
+
+achieves a more balanced trade-off: 84 .9% precision and 81 .3% recall on WebQSP ( F1 = 82 .0), showing that the F1 advantage over LLM judges is driven primarily by higher recall. KG-Guard also leads in AUC-PR on all three datasets ( 91 .4 on WebQSP, 94 .2 on CWQ, 90 .0 on PUGG), versus the strongest non-trivial baseline (GPT-5-mini) at 65 .5, 88 .4, and 89 .5 respectively. 19 Table 12: KBQA answer quality before ( Initial ) and after ( Refined ) iterative refinement guided by 
+
+KG-Guard hallucination flags. ∆ is the score improvement.                                                         
+
+> Dataset F1 Precision Recall Accuracy Exact Match WebQSP
+> Initial 59.5 60.2 63.2 68.6 42.8 Refined 72.5 75.8 72.7 79.1 60.4
+> ∆+13.0 +15.6 +9.5 +10.5 +17.6
+> CWQ
+> Initial 57.2 56.8 59.9 61.3 51.1 Refined 71.7 72.3 72.2 73.7 68.8
+> ∆+14.5 +15.5 +12.3 +12.4 +17.6
+> PUGG
+> Initial 53.1 52.4 56.5 58.0 45.3 Refined 67.2 67.2 68.9 70.2 62.3
+> ∆+14.0 +14.8 +12.4 +12.2 +16.9 Mean ∆+13.8 +15.3 +11.4 +11.7 +17.4
+
+D.2 Hallucination Correction 
+
+Table 12 extends the F1 and Exact Match results reported in Section 5.2 with Precision, Recall, and Accuracy. Gains are consistent across all five metrics and all three datasets. Precision improves by 
+
+14 .8–15 .6 pp, while recall improves by 9.5–12 .4 pp; precision gains exceeding recall gains indicate that refinement primarily eliminates incorrect answer nodes rather than recovering missing ones. 
+
+# E Additional Statistics 
+
+E.1 Knowledge Graph Subgraphs 
+
+Table 13: Statistics of the retrieved question-specific subgraphs by PCST used as input to KG-Guard .Avg./Max #Nodes and Avg./Max #Triples report node and edge statistics per subgraph, respectively.                                          
+
+> Dataset Split Avg. #Nodes Max #Nodes Avg. #Triples Max #Triples WebQSP
+> train 15.5 307 17.4 848 val 16.2 302 20.7 1792 test 16.4 282 19.9 1699
+> CWQ
+> train 16.5 530 18.6 1783 val 17.2 851 19.9 2691 test 16.3 441 17.6 497
+> PUGG
+> train 97.6 13614 120.5 16765 val 72.2 13574 83.2 16702 test 87.8 13575 108.0 16703
+
+Table 13 reports subgraph sizes across datasets. WebQSP and CWQ subgraphs are compact (avg. 
+
+15 –17 nodes, 18 –20 triples), owing to Freebase’s sparser entity neighborhood compared to Wikidata. PUGG subgraphs are an order of magnitude larger (avg. 72 –98 nodes, 83 –121 triples) due to Wikidata’s denser structure with many hub nodes, even after filtering nodes connected to more than 
+
+1000 entities. Maximum subgraph sizes reach thousands of triples across all datasets, requiring the graph encoder to handle substantial structural variability. These subgraphs also could exceed the practical context limits of LLMs, motivating a graph-based approach. The full subgraph size distributions are shown in Figure 5. All three datasets are heavy-tailed. 
+
+E.2 Answer Statistics 
+
+Table 14 reports the average number of gold and LLM-predicted answer nodes per question. WebQSP contains substantially more gold answers per question (avg. 10 .2–11 .5) than CWQ ( 1.9–2.3) or PUGG (≈1.8), reflecting that WebQSP questions admit multiple valid answer entities. The LLM consistently under-predicts on WebQSP, returning 3.0–3.3 nodes on average against 10+ gold answers. On CWQ and PUGG the LLM returns a similar number of nodes to the gold count. 20 0 100 200 300               
+
+> # nodes
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> count (log)
+> WebQSP
+> 0200 400 600 800
+> # nodes
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> count (log)
+> CWQ
+> 05000 10000
+> # nodes
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> count (log)
+> PUGG
+> 0500 1000 1500
+> # triples
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> count (log)
+> 01000 2000
+> # triples
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> 10 4
+> count (log)
+> 05000 10000 15000
+> # triples
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> count (log)
+
+Figure 5: Subgraph size distributions across the three datasets. Top row: number of nodes; bottom row: number of triples. Counts are on a log scale. Table 14: Average answer count per question. #GT Ans./Q : gold (ground truth) answer nodes; #LLM Ans./Q: nodes returned by the LLM-based KBQA. 
+
+Dataset Split #GT Ans./Q #LLM Ans./Q WebQSP 
+
+train 11.5 3.3 val 10.4 3.1 test 10.2 3.0 
+
+CWQ 
+
+train 2.2 1.6 val 2.3 1.7 test 1.9 1.7 
+
+PUGG 
+
+train 1.8 1.8 val 1.8 1.5 test 1.8 1.7 
+
+E.3 LLM Abstention and Hallucination Patterns 
+
+Table 15: LLM abstention rate ( %Unknown ) and gold answer coverage ( %Answer in Graph : fraction of examples where at least one gold answer node appears in the retrieved subgraph). 
+
+Dataset Split %Unknown %Answer in Graph WebQSP 
+
+train 17.6 62.9 val 16.2 60.6 test 16.8 63.0 
+
+CWQ 
+
+train 37.7 41.4 val 34.8 42.4 test 37.8 39.9 
+
+PUGG 
+
+train 21.5 46.6 val 19.1 48.9 test 21.2 47.7 
+
+Table 15 shows that a substantial fraction of LLM responses are abstentions ( unknown ): 16 –18% on WebQSP, 19 –21% on PUGG, and 35 –38% on CWQ. In all cases the gold answer is present in the retrieved subgraph for fewer than two thirds of examples, reflecting the inherent difficulty of subgraph retrieval. Larger subgraphs increase answer coverage but add noise and exceed LLM context limits, while smaller subgraphs are more tractable but risk omitting the correct evidence. Tables 16 and 17 show how abstention and hallucination rates vary with answer presence. When the gold answer is 21 Table 16: LLM-based KBQA abstention rate ( unknown answers) conditioned on gold answer presence in the retrieved subgraph. %Answer absent /%Answer present : abstention rate when the gold answer is absent from or present in the subgraph, respectively.                      
+
+> Dataset Split %Answer absent %Answer present WebQSP
+> test 39.1 3.6 train 40.0 4.4 val 37.6 2.3
+> CWQ
+> test 55.4 11.2 train 56.6 10.9 val 52.5 10.8
+> PUGG
+> test 39.6 1.0 train 37.8 2.9 val 35.8 1.8
+
+Table 17: Hallucination rate among non-abstained LLM-based KBQA answers, conditioned on gold answer presence in the retrieved subgraph. %Answer absent / %Answer present : hallucination rate when the gold answer is absent from or present in the subgraph, respectively. %Answer absent is always 100% by definition: if the gold answer is not in the subgraph, any non-abstained node returned by the system is hallucinated.                      
+
+> Dataset Split %Answer absent %Answer present WebQSP
+> test 100.0 38.7 train 100.0 39.8 val 100.0 39.2
+> CWQ
+> test 100.0 42.4 train 100.0 42.5 val 100.0 46.9
+> PUGG
+> test 100.0 42.5 train 100.0 41.8 val 100.0 45.2
+
+absent from the subgraph, the LLM abstains at rates of 35 –57% depending on the dataset. When the gold answer is present, abstention rates drop to 1–11% and hallucination among non-abstaining responses falls to 38 –47% .These patterns confirm that hallucination in this setting is tightly coupled to whether the answer evidence is accessible in the retrieved subgraph. When the gold answer is absent, the LLM has no graph evidence to ground its response and is prone to hallucinate, underlining the need for a dedicated hallucination detection step. 22
