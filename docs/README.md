@@ -6,95 +6,94 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-06
-- 运行时间：2026-06-06 21:47:30 UTC
+- 最新运行日期：2026-06-07
+- 运行时间：2026-06-07 21:38:54 UTC
 - 运行状态：成功
-- 本次总论文数：25
+- 本次总论文数：24
 - 精读区：10
-- 速读区：15
+- 速读区：14
 
 ### 今日简报（AI）
-今日研究聚焦无训练混合智能体框架与多模态检索挑战赛，精读两篇高分论文关注多文档摘要和检索基准。最值得看的是无需训练的MoA+知识图谱框架实现多文档摘要，以及EReL@MIR多模态文档检索挑战赛概述。建议关注无训练方法的实际应用，或尝试复现挑战赛中的检索方案。
-- 详情：[/202606/06/README](/202606/06/README)
+今日精选10篇精读与14篇速读，核心聚焦大模型长期记忆表征与幻觉检测两大前沿方向。  
+最值得关注的是《Agent Memory》对状态化长时任务系统的量化分析，以及《TriLens》提出的白盒幻觉检测新方法，分别斩获10.0和9.0高分。  
+建议普通读者优先深入上述两篇精读论文，并辅以《MemoryDocDataSet》等8分速读基准，以理解记忆与幻觉的关联挑战。
+- 详情：[/202606/07/README](/202606/07/README)
 
 ### 精读区论文标签
-1. [A Training-Free Mixture-of-Agents Framework for Multi-Document Summarization using LLMs and Knowledge Graphs](/202606/06/2606.03867v1-a-training-free-mixture-of-agents-framework-for-multi-document-summarization-using-llms-and-knowledge-graphs)  
+1. [Agent Memory: Characterization and System Implications of Stateful Long-Horizon Workloads](/202606/07/2606.06448v1-agent-memory-characterization-and-system-implications-of-stateful-long-horizon-workloads)  
+   标签：评分：10.0/10、query:agent
+   evidence：面向长时任务的智能体记忆系统表征
+2. [TriLens: Per-Layer Logit-Lens Entropy for White-Box Hallucination Detection](/202606/07/2606.01033v1-trilens-per-layer-logit-lens-entropy-for-white-box-hallucination-detection)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：提出结合LLM和知识图谱的多智能体框架，用于类似RAG的摘要
-2. [Overview of the EReL@MIR 2025 Multimodal Document Retrieval Challenge (Track 1)](/202606/06/2606.04240v1-overview-of-the-erelmir-2025-multimodal-document-retrieval-challenge-track-1)  
-   标签：评分：9.0/10、query:mmkqa
-   evidence：多模态检索增强生成的基准测试
-3. [Cascading Hallucination in Agentic RAG: The CHARM Framework for Detection and Mitigation](/202606/06/2606.04435v1-cascading-hallucination-in-agentic-rag-the-charm-framework-for-detection-and-mitigation)  
+   evidence：使用逐层对数透镜熵进行白盒幻觉检测
+3. [QCFuse: Query-Aware Cache Fusion via Compressed View for Efficient RAG Serving](/202606/07/2606.05875v1-qcfuse-query-aware-cache-fusion-via-compressed-view-for-efficient-rag-serving)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：代理RAG中级联幻觉的检测与缓解
-4. [Temporal Order Matters for Agentic Memory: Segment Trees for Long-Horizon Agents](/202606/06/2606.04555v1-temporal-order-matters-for-agentic-memory-segment-trees-for-long-horizon-agents)  
+   evidence：通过查询感知的缓存融合实现高效的RAG服务
+4. [Beyond Vector Similarity: A Structural Analysis of Graph-Augmented Retrieval for Industrial Knowledge Graphs](/202606/07/2606.06003v1-beyond-vector-similarity-a-structural-analysis-of-graph-augmented-retrieval-for-industrial-knowledge-graphs)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：针对结构查询失败的图增强RAG分析
+5. [Beyond Similarity: Trustworthy Memory Search for Personal AI Agents](/202606/07/2606.06054v1-beyond-similarity-trustworthy-memory-search-for-personal-ai-agents)  
    标签：评分：9.0/10、query:agent
-   evidence：用于代理记忆的时间段树
-5. [Agent-Orchestrated Adaptive RAG: A Comparative Study on Structured and Multi-Hop Retrieval](/202606/06/2606.05658v1-agent-orchestrated-adaptive-rag-a-comparative-study-on-structured-and-multi-hop-retrieval)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：智能体编排的自适应RAG框架，包含动态查询分解和迭代检索
-6. [MARDoc: A Memory-Aware Refinement Agent Framework for Multimodal Long Document QA](/202606/06/2606.05749v1-mardoc-a-memory-aware-refinement-agent-framework-for-multimodal-long-document-qa)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：面向多模态长文档问答的记忆感知智能体框架
-7. [Reducing Hallucinations in Complex Question Answering using Simple Graph-based Retrieval-Augmented Generation (long version)](/202606/06/2606.05901v1-reducing-hallucinations-in-complex-question-answering-using-simple-graph-based-retrieval-augmented-generation-long-version)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：使用简单图结构RAG减少复杂问答中的幻觉
-8. [IA-RAG: Interval-Algebra-Driven Temporal Reasoning for Dynamic Knowledge Retrieval](/202606/06/2606.06044v1-ia-rag-interval-algebra-driven-temporal-reasoning-for-dynamic-knowledge-retrieval)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：基于区间代数的时间感知分层RAG框架
-9. [Beyond Semantic Organization: Memory as Execution State Management for Long-Horizon Agents](/202606/06/2606.06090v1-beyond-semantic-organization-memory-as-execution-state-management-for-long-horizon-agents)  
-   标签：评分：9.0/10、query:agent
-   evidence：基于层级状态树的LLM智能体记忆管理方法
-10. [Episodic Memory Temporal Consistency for Cooperative Multi-Agent Reinforcement Learning](/202606/06/2606.04492v1-episodic-memory-temporal-consistency-for-cooperative-multi-agent-reinforcement-learning)  
+   evidence：面向个人AI代理的可信记忆搜索，解决长期记忆检索问题
+6. [Vision-Language Model Ensembles Achieve Human-Expert Accuracy for Galaxy Merger Classification](/202606/07/2606.00415v1-vision-language-model-ensembles-achieve-human-expert-accuracy-for-galaxy-merger-classification)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：对多种视觉语言模型配置进行系统性提示工程策略测试，达到人类专家水平
+7. [Section-Weighted Hybrid Approach for Legal Case Retrieval](/202606/07/2606.03138v1-section-weighted-hybrid-approach-for-legal-case-retrieval)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：利用LLM分段的章节感知混合检索方法，融合BM25和稠密检索并学习权重提高准确性
+8. [Towards Persistent Case-Based Memory for Autonomous Data Science: A CBR-Augmented R&D-Agent with a Locally Deployable Small Language Model](/202606/07/2606.05250v1-towards-persistent-case-based-memory-for-autonomous-data-science-a-cbr-augmented-rd-agent-with-a-locally-deployable-small-language-model)  
    标签：评分：8.0/10、query:agent
-   evidence：多智能体强化学习中结合时间一致性和对比学习的情节记忆机制
+   evidence：面向自主数据科学智能体的持久化案例记忆
+9. [Enhancing Software Engineering Through Closed-Loop Memory Optimization](/202606/07/2606.05646v1-enhancing-software-engineering-through-closed-loop-memory-optimization)  
+   标签：评分：8.0/10、query:agent
+   evidence：面向软件工程代理的闭环记忆优化，解决记忆保持和重用问题
+10. [Statistical Priors for Implicit Preferences: Decoupling Skill Selection as a Local Harness in Personal Agents](/202606/07/2606.05828v1-statistical-priors-for-implicit-preferences-decoupling-skill-selection-as-a-local-harness-in-personal-agents)  
+   标签：评分：8.0/10、query:agent
+   evidence：基于LLM的个人智能体与技能选择
 
 ### 速读区论文标签
-1. [NBQ: Next-Best-Question for Dynamic Profiling](/202606/06/2606.00809v2-nbq-next-best-question-for-dynamic-profiling)  
+1. [MemoryDocDataSet: A Benchmark for Joint Conversational Memory and Long Document Reasoning](/202606/07/2606.04442v1-memorydocdataset-a-benchmark-for-joint-conversational-memory-and-long-document-reasoning)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：自主智能体动态画像
-2. [Stepwise Reasoning Enhancement for LLMs via External Subgraph Generation](/202606/06/2606.04454v1-stepwise-reasoning-enhancement-for-llms-via-external-subgraph-generation)  
+   evidence：联合对话记忆与长文档推理基准，直接测试长上下文管理
+2. [KBase Research Agent: Automated Multi-Agent Workflow Construction for Reproducible Genome Analysis](/202606/07/biorxiv-10-64898-2026-06-01-729336-v1-kbase-research-agent-automated-multi-agent-workflow-construction-for-reproducible-genome-analysis)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：通过外部子图生成增强逐步推理以减少幻觉
-3. [QueryAgent-R1: Bridging Query Generation and Product Retrieval for E-Commerce Query Recommendation](/202606/06/2606.05671v1-queryagent-r1-bridging-query-generation-and-product-retrieval-for-e-commerce-query-recommendation)  
+   evidence：自动多智能体工作流构建用于基因组分析知识发现
+3. [Ignet 2.0 and Vignet: An Ontology-Driven Web Platform for Biomedical Gene Interaction Discovery and Visualization](/202606/07/biorxiv-10-64898-2026-06-02-729682-v1-ignet-20-and-vignet-an-ontology-driven-web-platform-for-biomedical-gene-interaction-discovery-and-visualization)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：记忆增强的智能体框架用于查询推荐
-4. [Rethinking LoRA Memory Through the Lens of KV Cache Compression](/202606/06/2606.05698v1-rethinking-lora-memory-through-the-lens-of-kv-cache-compression)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：KV缓存压缩与参数检索增强交互
-5. [SubtleMemory: A Benchmark for Fine-Grained Relational Memory Discrimination in Long-Horizon AI Agents](/202606/06/2606.05761v1-subtlememory-a-benchmark-for-fine-grained-relational-memory-discrimination-in-long-horizon-ai-agents)  
-   标签：评分：8.0/10、query:agent
-   evidence：面向长期AI代理的精细关系记忆区分基准；测试代理对记忆关系的保留与利用
-6. [Inference-Free Multimodal Learned Sparse Retrieval for Production-Scale Visual Document Search](/202606/06/2605.30917v1-inference-free-multimodal-learned-sparse-retrieval-for-production-scale-visual-document-search)  
-   标签：评分：7.0/10、query:mmkqa
-   evidence：面向视觉文档的多模态学习稀疏检索
-7. [TextFake: Benchmarking AI-Generated Image Detection on Text-Rich Images](/202606/06/2606.01050v1-textfake-benchmarking-ai-generated-image-detection-on-text-rich-images)  
-   标签：评分：7.0/10、query:cmv
-   evidence：图文事实验证基准
-8. [Construction of Historical Knowledge Graphs Based on BERT and Graph Neural Networks](/202606/06/2606.01747v1-construction-of-historical-knowledge-graphs-based-on-bert-and-graph-neural-networks)  
-   标签：评分：7.0/10、query:ancient-text
-   evidence：使用BERT和图神经网络从历史文本构建知识图谱
-9. [A New Framework for Cybersecurity Refusals in AI Agents](/202606/06/2606.02644v1-a-new-framework-for-cybersecurity-refusals-in-ai-agents)  
+   evidence：本体驱动的知识发现平台
+4. [Segment-driven Structural Induction and Semantic Alignment for Heterogeneous Tabular Representation](/202606/07/2606.01890v1-segment-driven-structural-induction-and-semantic-alignment-for-heterogeneous-tabular-representation)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：提出AI代理在网络安全中的拒绝边界
-10. [VistaHop: Benchmarking Multi-hop Visual Reasoning for Visual DeepSearch](/202606/06/2606.03273v1-vistahop-benchmarking-multi-hop-visual-reasoning-for-visual-deepsearch)  
+   evidence：异构表格表示用于结构化知识
+5. [Visual Graph Scaffolds for Structural Reasoning in Large Language Models](/202606/07/2606.02673v1-visual-graph-scaffolds-for-structural-reasoning-in-large-language-models)  
+   标签：评分：7.0/10、query:ma-kf
+   evidence：基于图的结构化推理用于知识整合
+6. [EntSQL: A Benchmark for Grounding Text-to-SQL in Long-Context Enterprise Knowledge](/202606/07/2606.03363v1-entsql-a-benchmark-for-grounding-text-to-sql-in-long-context-enterprise-knowledge)  
+   标签：评分：7.0/10、query:ma-kf
+   evidence：面向长上下文企业知识的文本到SQL基准，需要从专有文档中检索信息
+7. [Argus-Retriever: Vision-LLM Late-Interaction Retrieval with Region-Aware Query-Conditioned MoE for Visual Document Retrieval](/202606/07/2606.04300v1-argus-retriever-vision-llm-late-interaction-retrieval-with-region-aware-query-conditioned-moe-for-visual-document-retrieval)  
    标签：评分：7.0/10、query:mmkqa
-   evidence：面向视觉深度搜索的多跳视觉推理基准
-11. [Revisiting Parameter-Based Knowledge Editing in Large Language Models: Theoretical Limits and Empirical Evidence](/202606/06/2606.00570v1-revisiting-parameter-based-knowledge-editing-in-large-language-models-theoretical-limits-and-empirical-evidence)  
-   标签：评分：6.0/10、query:ma-kf
-   evidence：知识编辑与幻觉减少
-12. [ChartArena: Benchmarking Chart Parsing across Languages, Scenarios, and Formats](/202606/06/2606.01348v1-chartarena-benchmarking-chart-parsing-across-languages-scenarios-and-formats)  
-   标签：评分：6.0/10、query:mmkqa
-   evidence：多模态图表解析基准
-13. [Selectivity Estimation for Semantic Filters on Image Data](/202606/06/2606.04610v1-selectivity-estimation-for-semantic-filters-on-image-data)  
-   标签：评分：6.0/10、query:mmkqa
-   evidence：利用共享嵌入对图像数据进行语义选择性估计；支持多模态数据的高效查询
-14. [Mechanistic Insights into Functional Sparsity in Multimodal LLMs via CoRe Heads](/202606/06/2606.05843v1-mechanistic-insights-into-functional-sparsity-in-multimodal-llms-via-core-heads)  
-   标签：评分：6.0/10、query:cmv
-   evidence：通过CoRe头和检索注意力质量实现跨模态检索
-15. [ChatSpatial: Schema-Enforced Agentic Orchestration for Reproducible and Cross-Platform Spatial Transcriptomics](/202606/06/biorxiv-10-64898-2026-02-26-708361-v3-chatspatial-schema-enforced-agentic-orchestration-for-reproducible-and-cross-platform-spatial-transcriptomics)  
-   标签：评分：6.0/10、query:ma-kf
-   evidence：通过MCP协调生物信息学工具的LLM智能体
+   evidence：多模态检索增强生成用于视觉文档检索
+8. [Fine-grained Fragment Retrieval in Multi-modal Long-form Dialogues](/202606/07/2606.04591v1-fine-grained-fragment-retrieval-in-multi-modal-long-form-dialogues)  
+   标签：评分：7.0/10、query:mmkqa
+   evidence：多模态长对话中的细粒度片段检索用于问答
+9. [SentinelBench: A Benchmark for Long-Running Monitoring Agents](/202606/07/2606.05342v1-sentinelbench-a-benchmark-for-long-running-monitoring-agents)  
+   标签：评分：7.0/10、query:ma-kf
+   evidence：面向长期监控智能体的基准，关注持续注意力而非连续动作
+10. [LLM-Guided ANN Index Optimization for Human-Object Interaction Retrieval](/202606/07/2606.05489v1-llm-guided-ann-index-optimization-for-human-object-interaction-retrieval)  
+   标签：评分：7.0/10、query:ma-kf
+   evidence：LLM智能体优化检索系统的ANN索引参数
+11. [FORTE: FOL-guided Optimal Refinement for Text-audio rEtrieval](/202606/07/2606.05812v1-forte-fol-guided-optimal-refinement-for-text-audio-retrieval)  
+   标签：评分：7.0/10、query:mmkqa
+   evidence：一阶逻辑引导的跨模态检索精炼，结合谓词感知重排序实现细粒度语义对齐
+12. [Harnessing Structural Context for Entity Alignment Foundation Models](/202606/07/2606.06109v1-harnessing-structural-context-for-entity-alignment-foundation-models)  
+   标签：评分：7.0/10、query:ma-kf
+   evidence：利用结构上下文的实体对齐基础模型融合知识图谱
+13. [GRAMformer: Any-Order Modality Interactions via Volumetric Multimodal Cross-Attention](/202606/07/2606.06249v1-gramformer-any-order-modality-interactions-via-volumetric-multimodal-cross-attention)  
+   标签：评分：7.0/10、query:mmkqa
+   evidence：用于任意顺序模态交互的体素多模态交叉注意力
+14. [Where Should Knowledge Enter? A Layered Framework for Knowledge Infusion in Multimodal Iterative Generative Mo](/202606/07/2606.06356v1-where-should-knowledge-enter-a-layered-framework-for-knowledge-infusion-in-multimodal-iterative-generative-mo)  
+   标签：评分：7.0/10、query:mmkqa
+   evidence：多模态生成模型中的分层知识注入框架
 
 
 <div class="dpr-home-promo-card">
