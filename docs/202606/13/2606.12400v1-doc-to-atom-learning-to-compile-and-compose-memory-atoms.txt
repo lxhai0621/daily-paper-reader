@@ -1,0 +1,1094 @@
+Title: Doc-to-Atom: Learning to Compile and Compose Memory Atoms
+
+URL Source: https://arxiv.org/pdf/2606.12400v1
+
+Published Time: Thu, 11 Jun 2026 01:25:18 GMT
+
+Number of Pages: 20
+
+Markdown Content:
+# Doc-to-Atom: Learning to Compile and Compose Memory Atoms 
+
+Xingjian Diao 1,2†, Wenbo Li 1, Yashas Malur Saidutta 1, Avinash Amballa 1,Lazar Valkov 1, Srinivas Chappidi 11AI Center-Mountain View, Samsung Electronics 
+
+> 2
+
+Dartmouth College 
+
+xingjian.diao.gr@dartmouth.edu wenbo.li1@samsung.com 
+
+Abstract 
+
+Long input sequences are central to docu-ment understanding and multi-step reasoning in Large Language Models, yet the quadratic cost of attention makes inference both memory-intensive and slow. Context distillation miti-gates this by compressing contextual informa-tion into model parameters, and recent work such as Doc-to-LoRA amortizes context dis-tillation into a single forward pass that gener-ates one LoRA adapter per document. How-ever, producing a single monolithic adapter for all queries leads to irrelevant-query interfer-ence, limited compositional recall, and poor scalability to long-document reasoning. To address these challenges, we propose Doc-to-Atom ( Doc2Atom ), a compositional paramet-ric memory framework that decomposes each document into semantically typed knowledge atoms. Each atom is compiled into an in-dependent micro-LoRA adapter and a prove-nance retrieval key. At inference time, a lightweight query router selects and assembles only the relevant atoms into a query-specific adapter, which is then injected into a frozen base model. The entire system is trained end-to-end through a multi-objective distillation framework. Experiments on six diverse QA benchmarks demonstrate that Doc2Atom outper-forms Doc-to-LoRA baselines while reducing the memory cost of document internalization. 
+
+1 Introduction 
+
+Large Language Models have achieved remark-able success across natural language understand-ing tasks by leveraging in-context learning (ICL), where relevant information is placed directly into the model’s context window at inference time (Brown et al., 2020). This paradigm allows the 
+
+> †
+
+Work done during an internship at AI Center-Mountain View, Samsung Electronics Doc -to -LoRA  
+
+> (Sakana AI, ICML 2026)
+> monolithic LoRA
+> (rank -concat over chunks)
+> Frozen Base LLM
+> Q₁
+> fact lookup
+> Q₂
+> multi -hop
+> Q₃
+> off -topic
+
+Doc -to -Atom       
+
+> (ours)
+> a₁ a₂ a₃ a₄ a₅ Frozen Base LLM
+> ✓protected
+> Q₁
+> fact lookup
+> Q₂
+> multi -hop
+> Q₃
+> off -topic
+> ✗
+
+Figure 1: Doc-to-LoRA vs. Doc-to-Atom. Top: Doc-to-LoRA rank-concatenates fixed-size token chunks into a single document-level LoRA that is applied to all queries, without semantic structure or a per-chunk in-dex. Bottom: Doc2Atom decomposes the document into typed semantic atoms; each ai carries a key, a micro-LoRA, and an optional micro-KV. A two-stage router uses the keys as a per-atom index and assembles only the relevant atoms into a query-specific adapter, with support for refusing queries outside the document. 
+
+model to condition its outputs on arbitrary tex-tual evidence without parameter updates. However, in-context learning suffers from scalability bottle-necks: the quadratic attention complexity causes both latency and memory consumption to grow rapidly with input length (Liu et al., 2024), and generation quality degrades under longer context lengths due to attention dilution (Hsieh et al., 2024). These limitations motivate an alternative paradigm known as context distillation, which compresses contextual information into model parameters so that the model can reproduce context-conditioned behavior without retaining the original text at infer-ence time (Askell et al., 2021; Snell et al., 2022). While context distillation (CD) eliminates the runtime cost of long contexts, its standard formu-lation requires per-prompt supervised fine-tuning, which is prohibitively expensive when informa-1
+
+> arXiv:2606.12400v1 [cs.CL] 10 Jun 2026
+
+tion sources change frequently (Zhang et al., 2023). To overcome this limitation, Doc-to-LoRA (D2L) (Charakorn et al., 2026) proposes to meta-learn the context distillation process by training a hyper-network (Ha et al., 2016) that maps any unseen document to a LoRA adapter (Hu et al., 2022) in a single forward pass. This amortizes CD across doc-uments, enabling fast, parameter-efficient knowl-edge updates without any per-document training. Nevertheless, D2L inherits a fundamental architec-tural constraint: it produces a single monolithic adapter per document that is applied uniformly to all downstream queries. This design introduces three interrelated problems. 1 When a query is unrelated to the internalized content, the adapter still modifies the model’s hidden states, causing irrelevant-query interference. 2 For documents containing dozens of heterogeneous facts, a flat low-rank adapter lacks the capacity to selectively surface the evidence required by each query, re-sulting in limited compositional recall. 3 As doc-ument length grows, the fixed-rank adapter must compress increasingly more content into the same parameter budget, which limits scalability on long-document reasoning where the relevant evidence spans many regions of the text. To address these challenges, we propose Doc-to-Atom ( Doc2Atom ), a framework that fundamentally restructures the document internalization pipeline from one document to one adapter into one docu-ment to many composable atoms (as shown in Fig-ure 1). Our key insight is that documents should be decomposed into semantically typed knowledge atoms, which are minimal and self-contained units of information . Each atom is independently com-piled into a micro-LoRA adapter, a provenance re-trieval key, and an optional compact KV prototype. At query time, a learned two-stage router identifies the small subset of atoms relevant to the current question and assembles their micro-adapters into a query-specific composite LoRA, which is then injected into the frozen base model’s designated memory layers. For queries unrelated to the inter-nalized document, the router produces near-zero routing weights, allowing the model to fall back without interference. Concretely, the Doc2Atom pipeline operates in two phases. In the offline memory compilation phase, each input document is decomposed into atoms via an LLM-driven semantic annotation pro-cess, and then a shared text encoder followed by an atom-level memory compiler produces per-atom micro-LoRA factors, provenance keys, and sparse memory masks. In the online query-conditioned assembly phase, given a query, a query encoder pro-duces a query embedding that is matched against provenance keys via a two-stage router. The top-ranked atoms are selected, their micro-LoRA fac-tors are composed via routing-weight-based sum-mation and gated by sparse masks, and the resulting assembled adapter is injected into the base model for answer generation. Our main contributions are summarized as follows: • We introduce atom-level document decomposi-tion for parametric memory, replacing mono-lithic document-to-adapter compression with fine-grained, semantically typed knowledge units that enable selective retrieval and composition. • We design a compositional memory compilation and query-conditioned assembly architecture that produces per-atom micro-LoRA adapters, routes queries to relevant atoms, and assembles query-specific adapters dynamically. • We propose a comprehensive multi-objective training framework with curriculum-based scheduling that jointly optimizes memory gener-ation, routing accuracy, irrelevant-query robust-ness, knowledge protection of the base LLM, and multi-atom composition consistency. • Experiments on six diverse QA benchmarks demonstrate the effectiveness of Doc2Atom over in-parameter knowledge baselines, offering a step toward compositional parametric memory. 
+
+2 Related Work 
+
+Hypernetworks for Language Model Adapta-tion. Hypernetworks (Ha et al., 2016) generate the parameters of a target network conditioned on some input, and have been increasingly applied to efficient LLM adaptation. HyperDecoders (Ivi-son and Peters, 2022) produce instance-specific de-coder parameters for multi-task NLP, while HINT (Ivison et al., 2023) extends hypernetwork instruc-tion tuning for few-shot generalization. Hyper-LoRA (Lv et al., 2024) uses constrained low-rank adapter generation for cross-task transfer. More recently, Text-to-LoRA (Charakorn et al., 2025) trains a hypernetwork that directly maps con-text strings to LoRA parameters. Doc-to-LoRA (Charakorn et al., 2026) builds upon this line by 2meta-training a hypernetwork with the context dis-tillation objective, enabling zero-shot internaliza-tion of unseen documents. While these methods demonstrate the promise of hypernetwork-based adaptation, they all produce monolithic adapters that cannot selectively respond to different queries over the same internalized content. We find that this leads to both degraded long-context recall (Ta-ble 1) and irrelevant-query interference (Table 2). 
+
+Context Distillation and Compression. Context distillation trains a model to reproduce context-conditioned behavior without the original context at inference time (Askell et al., 2021; Snell et al., 2022). The core idea of compressing a larger model’s knowledge into a smaller one traces back to model compression (Bucilu ˇa et al., 2006) and knowledge distillation (Hinton et al., 2015). Sev-eral recent works extend this paradigm: Caccia et al. (2025) train plug-and-play knowledge modules via deep context distillation; Cartridges (Eyuboglu et al., 2025) leverage sleep-time compute for prefix-tuning-based context distillation; and Generative Adapter (Chen et al., 2025) optimizes a hypernet-work using next-token prediction. Complementary approaches focus on prompt compression: Gisting (Mu et al., 2024) trains gist tokens that compress task instructions via a prefix-tuning (Li and Liang, 2021) parameterization, while LLMLingua-2 (Pan et al., 2024) performs task-agnostic prompt com-pression via data distillation. MEND (Li et al., 2024) meta-learns demonstration distillation for ef-ficient in-context learning. Our work differs from all these approaches by decomposing documents into atom-level units before compilation, enabling query-conditioned selective assembly rather than monolithic compression. 
+
+Knowledge Editing and Protection. Paramet-ric knowledge internalization risks overwriting the base model’s existing capabilities. AlphaEdit (Fang et al., 2025) proposes null-space constrained knowl-edge editing that restricts parameter updates to sub-spaces orthogonal to previously used directions. Sparse memory finetuning (Lin et al., 2025) en-courages different knowledge to be written into different parameter subregions, reducing inter-task interference. Our framework incorporates both L2-based (Kirkpatrick et al., 2017) and null-space (Fang et al., 2025) knowledge protection mech-anisms, combined with learned sparse memory masks that route different atom types to different layer-module combinations, thereby minimizing cross-atom interference during composition. 
+
+Long-Context Understanding. Handling long documents remains challenging for LLMs due to attention complexity and positional encoding limi-tations. Lost-in-the-middle phenomena (Liu et al., 2024) and attention noise (Ye et al., 2025) degrade performance on long inputs. Approaches such as activation beacons (Zhang et al., 2025) and infinite ICL (Cao et al., 2025) attempt to extend effective context length, while continual learning with hy-pernetworks (von Oswald et al., 2020) addresses sequential knowledge accumulation. Doc2Atom 
+
+sidesteps these challenges entirely by compiling documents into parametric memory offline, elim-inating the need to process long contexts at in-ference time while preserving fine-grained access through atom-level routing. 
+
+3 Method 
+
+We now present Doc2Atom in detail. Our goal is to internalize a document into compositional para-metric memory in a way that supports selective retrieval and query-conditioned composition. To this end, Doc2Atom consists of three components: a data atomization pipeline that decomposes doc-uments into structured knowledge atoms (§3.1); a compositional memory framework that com-piles atoms and assembles query-specific adapters (§3.2); and a multi-objective training scheme that optimizes the system end-to-end (§3.3). 
+
+3.1 Data Atomization and Processing 
+
+The data atomization and processing pipeline, il-lustrated in Figure 2, transforms raw QA datasets into structured training records through three se-quential stages: document-to-atom decomposition, irrelevant probe generation, and question-to-atom annotation. 
+
+Document-to-Atom Decomposition. Unlike previous methods which segment documents into fixed-size token chunks regardless of semantic boundaries, Doc2Atom requires an LLM to explic-itly decompose each context document D into a set of non-overlapping, semantically self-contained knowledge atoms A = {a1, a 2, . . . , a N }. Each atom ai represents the minimal independently retrievable and writable knowledge unit within the document, drawn from five semantic types: fact claims, entity attributes, event relations, process steps, and evidence fragments. Beyond the seman-tic type, each atom carries the following metadata: 3Raw Context          
+
+> Document
+> Original QA
+> Example
+> Document -to -Atom
+> Decomposition
+> Irrelevant Probe
+> Generation
+> Shared Atom Library
+> 1Fact claim
+> 2Entity attribute
+> 3Event relation
+> 4Process step
+> 5Evidence fragment
+> Atom Metadata
+> • Content
+> • Source span
+> • Retrieval text
+> • Answer bearing
+> •Abstraction level
+> • Conflict group
+> • Confidence
+> • Relations
+> Shared Question Pool
+> Real question
+> Irrelevant probe
+> Question -to -Atom
+> Annotation
+> a1Q1
+> a2Q2
+> a3
+> Gold atom
+> Supporting atom
+> Distractor atom
+> Irrelevant
+> Structured
+> Training Record
+> Context
+> Atoms
+> QA pairs
+> Q3
+
+Figure 2: Doc2Atom data atomization and processing pipeline. Raw context documents are decomposed into semantically typed atoms stored in a shared atom library with rich metadata (e.g., semantic type, retrieval text, and inter-atom relations). Original QA examples are augmented with irrelevant probes to form a shared question pool. The question-to-atom annotation stage aligns each question to relevant atoms, producing structured training records containing context, atoms, and QA pairs with gold, supporting, and distractor labels. 
+
+(i) content , a self-contained text preserving critical qualifiers; (ii) source span , strictly extracted from the original document; (iii) retrieval text , used as the indexing anchor; (iv) an answer-bearing flag indicating whether the atom can directly carry an answer; (v) an abstraction level distinguishing abstract, evidence, and hybrid atoms; (vi) a conflict group identifier marking mutually exclusive atoms; (vii) a continuous confidence score in [0 , 1] ; and (viii) a set of inter-atom relations .
+
+Irrelevant Probe Generation. To train the query router to remain silent on queries unrelated to the in-ternalized content, we synthesize irrelevant probes for each document. These probes are surface-similar questions that mention entities or topics that appear in the document, but whose answers cannot be derived from its content. This forces the router to learn fine-grained boundaries of answer-ability that go beyond superficial lexical overlap, ensuring that the system falls back to base-model behavior when no relevant atoms exist. 
+
+Question-to-Atom Annotation. Given the atom library A and the augmented question pool contain-ing real questions and irrelevant probes, an LLM aligns each question q to atoms by producing a normalized question type, a set of gold atom IDs 
+
+Agold that constitute the minimal atom set required to answer the question, supporting atom IDs Asupp 
+
+that aid reasoning but are not strictly necessary, and distractor atom IDs Adist that are surface-similar and most likely to be falsely activated. Boolean flags for irrelevance and conflict are also generated. 
+
+3.2 Compositional Memory Framework 
+
+The Doc2Atom training pipeline, depicted in Fig-ure 3, operates through offline memory compilation and online query-conditioned assembly, connected by a teacher–student training objective. 
+
+Shared Text Encoder. Rather than introducing a separate encoding model, Doc2Atom reuses the first 
+
+Lenc layers of the frozen base model as a shared text encoder for both atoms and queries. Each atom’s textual content is tokenized and fed through these layers, with an early-exit mechanism that extracts hidden states at a designated intermediate layer. A learned projection head maps the pooled hidden state to a d-dimensional atom embedding ei ∈ Rd.This design avoids introducing additional model parameters for encoding while leveraging the base model’s pre-trained representations. 
+
+Atom-Level Memory Compiler. The memory compiler takes atom embeddings ei as input and produces four types of outputs through a shared trunk MLP (LayerNorm followed by two linear layers with a GELU activation in between) and four parallel heads. First, a provenance key head (LayerNorm followed by a linear projection) maps each atom to a retrieval anchor vector ki ∈ Rdk
+
+that serves as the index for routing. Second, micro-LoRA heads produce per-atom low-rank factors 
+
+A(ℓ) 
+
+> m,i
+
+∈ Rr×din and B(ℓ) 
+
+> m,i
+
+∈ Rdout ×r for each tar-get module m and each designated memory layer 
+
+ℓ, with B initialized to zero to ensure the mem-ory produces no perturbation at the start of train-ing. Third, an optional micro-KV head gener-4(a) Memory Build · offline 
+
+> atomize
+
+a₁ a₂ a₃ a₄ a₅ Atom Encoder Memory 
+
+Compiler 
+
+Memory Bank each aᵢ includes a (key, micro -LoRA, optional micro -KV and sparse mask )
+
+a₁ 
+
+> key
+> micro -LoRA
+> micro -KV
+
+a₂ 
+
+> key
+> micro -LoRA
+> micro -KV
+
+a₃ 
+
+> key
+> micro -LoRA
+> micro -KV
+
+a₄ 
+
+> key
+> micro -LoRA
+> micro -KV
+
+a₅ 
+
+> key
+> micro -LoRA
+> micro -KV
+
+!frozen trainable     
+
+> sparse mask sparse mask sparse mask sparse mask sparse mask
+> (b) Inference · online, per query
+
+Q Two -Stage 
+
+Router a₁ a₃ a₅ 
+
+> selected (top -K)
+
+Memory 
+
+Composer 
+
+> inject
+
+Base LLM   
+
+> ✓protected
+
+answer 
+
+> lookup
+
+Query 
+
+Encoder 
+
+!Figure 3: Doc2Atom pipeline. (a) Memory build (offline). The input document is decomposed into typed semantic atoms a1, . . . , a n. A shared Atom Encoder embeds every atom, and a Memory Compiler produces a per-atom provenance key, a micro-LoRA factor, an optional micro-KV prototype and sparse mask, which together populate the Memory Bank. (b) Inference (online, per query). A Query Encoder (sharing weights with the Atom Encoder) embeds the query. A two-stage router consults the provenance keys to retrieve the top-K relevant atoms from the bank; the Memory Composer assembles their micro-LoRA factors into a query-specific adapter, which is injected into the frozen base LLM (together with the micro-KV prototypes when available) to produce the answer. 
+
+ates compact key-value prototypes per atom for preserving local evidence and sequential informa-tion. Fourth, an optional sparse mask head outputs per-atom logits that, after aggregation via routing weights and sigmoid activation, form a sparse gate 
+
+g ∈ [0 , 1] nL×nM controlling which layer-module combinations each atom’s knowledge is written to. 
+
+Two-Stage Query Router. Given a query embed-ding eq ∈ Rd, the router identifies relevant atoms through two stages. In the first stage, the query is projected and L2-normalized to obtain kq ∈ Rdk ,then matched against all provenance keys ki via cosine maximum inner product search to retrieve the top candidates. In the optional second stage, these candidates are reranked by a frozen cross-encoder that scores the query and atom text pairs. A learned metadata bias incorporating atom confi-dence, answer-bearing status, conflict group mem-bership, and semantic type is added to inject struc-tural priors from the annotation stage. The final score si combines the similarity, optional reranking, and metadata bias, from which the top-K atoms are selected and their scores are softmax-normalized into sparse routing weights wi.
+
+Memory Composer and Injection. The memory composer assembles per-atom parameters into a query-specific adapter. For each layer ℓ and module 
+
+m, micro-LoRA factors are combined via routing-weight-based summation: 
+
+A(ℓ,m ) 
+
+> c
+
+=
+
+> K
+
+X
+
+> i=1
+
+wiA(ℓ)
+
+> m,i
+
+, B(ℓ,m ) 
+
+> c
+
+=
+
+> K
+
+X
+
+> i=1
+
+wiB(ℓ)
+
+> m,i
+
+.
+
+(1) The composed factors are then element-wise multiplied by the aggregated sparse gate g to en-force selective writing. When micro-KV is en-abled, selected atoms’ KV slots are scaled by rout-ing weights and concatenated along the sequence dimension as a compact prefix. All writes are re-stricted to the last nL decoder layers, following the principle that memory should be injected close to the output to minimize interference with lower-level linguistic processing. 
+
+3.3 Training Objective 
+
+The training follows a teacher–student paradigm. The teacher forward pass feeds the frozen base model with the full context D concatenated with the query q, producing full-context reference log-its yteacher . The student forward pass feeds the same frozen model with only the query q, but with the assembled composite LoRA injected into the designated memory layers, producing student logits ystudent . The total training loss Ltotal is a weighted sum of several objectives designed to jointly optimize memory generation, routing accu-racy, irrelevant-query robustness, and multi-atom 5composition consistency. 
+
+Language Modeling and Distillation. The fun-damental objective is to reproduce the teacher’s answer distribution purely through the parametric memory assembled from selected atoms. We apply standard cross-entropy loss on the answer tokens: 
+
+LLM = − X
+
+> t
+
+log Pstudent (yt | y<t , q, A). (2) We also apply a temperature-scaled Kullback-Leibler divergence between student and teacher logits at answer positions to distill the teacher’s knowledge: 
+
+Ldistill = KL (σ(yteacher /τ ) ∥ σ(ystudent /τ )) , (3) where σ denotes the softmax function and τ is the temperature parameter. 
+
+Routing Supervision. To train the router to select the correct atoms, we apply a per-atom weighted binary cross-entropy loss between the routing scores si and the gold atom masks mi ∈{0, 1}:
+
+Lroute = − X
+
+> i
+
+αi
+
+mi log( σ(si)) + (1 − mi) log(1 − σ(si)) , (4) where αi takes values {0.5, 1.0, 1.5} for negative, gold, and distractor atoms respectively, so distrac-tor false positives are penalized more heavily than ordinary negatives. When the second stage is en-abled, we apply a listwise softmax cross-entropy loss Lrerank for the reranking scores. 
+
+Irrelevant Query Suppression. For queries that are unrelated to the internalized document, the router should produce near-zero routing weights, and the composed adapter should not perturb the base model. We enforce this via a norm penalty on the composed LoRA factors for irrelevant queries: 
+
+Lirrel = Eq∼Q irrel 
+
+X
+
+> ℓ,m
+
+
+
+∥A(ℓ,m ) 
+
+> c
+
+∥22 + ∥B(ℓ,m ) 
+
+> c
+
+∥22
+
+
+
+.
+
+(5) 
+
+Knowledge Protection. To prevent the assem-bled adapter from overwriting the base model’s existing capabilities, we apply an L2 constraint on the composed deltas: 
+
+Lprotect = X
+
+> ℓ,m
+
+∥∆W (ℓ,m )∥2 
+
+> F
+
+, (6) where ∆W (ℓ,m ) = B(ℓ,m ) 
+
+> c
+
+A(ℓ,m ) 
+
+> c
+
+. Alternatively, a null-space projection penalty can be used to restrict updates to directions orthogonal to the base model’s principal components. 
+
+Sparse Regularization. We encourage the sparse gates g to activate only a subset of layer-module combinations, pushing activation rates toward a target density ρ:
+
+Lsparse = X
+
+> ℓ,m
+
+(E[gℓ,m ] − ρ)2 , (7) where E[gℓ,m ] is the mean gate value at (ℓ, m ) av-eraged over valid atoms in the batch. 
+
+Composition Consistency. To ensure that com-bining multiple atoms does not degrade perfor-mance compared to using single atoms, we enforce a symmetric KL divergence between the main for-ward pass and a forced-routing forward pass using gold masks: 
+
+Lcomposition = KL sym (ystudent ∥ yforced ) . (8) Additional robustness losses include Lconflict , an intra-group listwise cross-entropy requiring the router to activate only the gold atom within each conflict group, and Lconfidence , which aligns routing weights with annotation-side confidence priors. Training proceeds through a multi-stage curricu-lum to reduce early coupling conflicts. The cur-riculum progressively increases the number of re-trieved atoms K, activates robustness and consis-tency losses, and strengthens sparse writing regu-larization. The detailed configuration of the hyper-parameters and curriculum stages is provided in the Appendix §C and §D. 
+
+4 Experiments 
+
+Doc2Atom addresses limitations of monolithic document-to-adapter internalization that prior para-metric methods do not handle (§1). First, we com-pare Doc2Atom against three Doc-to-LoRA (D2L) baselines for accuracy and long-context general-ization (Table 1). Second, we evaluate refusal on out-of-document queries (Table 2). We then assess per-update compile latency and memory (Table 3). 
+
+4.1 Experimental Setup Models. We evaluate Doc2Atom on two frozen instruction-tuned base LLMs from the Doc-to-LoRA setting: Gemma-2-2B-It (Team et al., 2024) 6Gemma-2-2B-It Qwen3-4B-Instruct 
+
+Dataset Base +ctx D2L ckpt D2L raw D2L atom Doc2Atom Base +ctx D2L ckpt D2L raw D2L atom Doc2Atom 
+
+F1 
+
+2WikiMultiHopQA (Ho et al., 2020) 37.69 36.08 49.84 50.39 39.62 45.31 11.25 46.06 47.43 31.74 DROP (Dua et al., 2019) 42.61 29.62 26.98 29.52 28.31 45.18 10.07 27.12 30.66 27.05 QASPER (Dasigi et al., 2021) 48.62 26.34 16.46 18.39 30.78 52.76 27.03 19.17 20.07 31.03 ROPES (Lin et al., 2019) 71.90 65.90 52.94 53.93 53.52 77.63 15.26 53.06 51.95 58.08 SQuAD (Rajpurkar et al., 2016) 86.35 73.20 18.67 19.36 59.71 78.15 29.60 15.88 18.71 59.82 LongBench-2WikiMQA 32.27 27.93 34.63 36.48 29.63 37.47 9.09 34.87 36.14 26.35 LongBench-HotpotQA 41.00 26.79 22.30 19.49 27.96 52.15 11.04 25.88 25.43 24.77 LongBench-MFQA-en 39.41 20.92 7.14 4.68 26.00 47.18 26.69 10.70 9.73 34.29 LongBench-MFQA-zh 7.73 2.05 1.57 0.41 8.57 14.79 5.17 0.70 0.54 9.27 LongBench-MuSiQue 21.62 9.14 6.95 7.39 20.86 18.14 5.24 12.25 6.41 22.32 LongBench-NarrativeQA 22.67 13.31 4.64 6.21 20.58 27.40 11.67 2.83 3.46 17.87 LongBench-QASPER 37.05 19.81 12.29 17.10 29.85 45.14 21.71 14.84 14.56 31.80 LongBench-TriviaQA 86.67 82.14 83.27 83.48 79.54 85.16 50.81 85.99 85.85 47.77 
+
+Overall 48.79 37.93 28.55 29.41 37.99 52.22 18.70 28.85 29.30 35.72 
+
+ROUGE-L 
+
+2WikiMultiHopQA (Ho et al., 2020) 37.69 36.08 49.79 50.25 39.62 45.27 11.17 46.03 47.43 31.74 DROP (Dua et al., 2019) 42.61 29.55 26.98 29.52 28.31 45.18 10.02 27.12 30.66 27.05 QASPER (Dasigi et al., 2021) 47.26 25.39 16.25 18.19 30.44 50.72 25.39 18.91 19.83 30.70 ROPES (Lin et al., 2019) 71.90 65.85 52.94 53.93 53.52 77.63 15.25 52.98 51.95 58.08 SQuAD (Rajpurkar et al., 2016) 86.20 72.96 18.57 19.21 59.71 77.89 29.04 15.67 18.48 59.66 LongBench-2WikiMQA 32.27 27.86 34.57 36.48 29.63 37.47 8.92 34.87 36.08 26.24 LongBench-HotpotQA 40.78 26.37 22.21 19.49 27.82 51.78 10.50 25.88 25.24 24.67 LongBench-MFQA-en 38.31 19.70 6.91 4.68 25.83 45.60 24.31 9.92 8.94 33.31 LongBench-MFQA-zh 7.73 2.05 1.37 0.41 8.57 14.79 5.17 0.70 0.54 9.27 LongBench-MuSiQue 21.62 9.14 6.95 7.39 20.86 18.05 5.00 12.25 6.41 22.27 LongBench-NarrativeQA 22.37 13.27 4.64 6.15 20.27 26.56 11.20 2.83 3.46 17.82 LongBench-QASPER 35.58 18.87 11.89 16.68 29.26 42.93 20.35 14.64 14.12 31.46 LongBench-TriviaQA 86.67 82.14 83.27 83.48 79.54 85.14 50.53 85.99 85.85 47.74 
+
+Overall 48.43 37.62 28.45 29.32 37.88 51.65 18.13 28.74 29.17 35.58 
+
+Table 1: Per-dataset F1 and ROUGE-L scores (%). We compare Doc2Atom against three D2L baselines on two frozen base LLMs. D2L ckpt uses the official checkpoint released by Sakana AI (Charakorn et al., 2026) (trained on FineWeb-Edu (Lozhkov et al., 2024), PwC (Chevalier et al., 2023), SQuAD, ROPES, and DROP); D2L raw retrains D2L on our five source datasets; and D2L atom retrains D2L on the atomized version of these datasets. Base +ctx is an ICL reference with full document access at inference time. The first five datasets are in-domain; the LongBench datasets (Bai et al., 2024) are evaluated zero-shot for all methods. Green marks cases where Doc2Atom beats 
+
+D2L raw . Bold in the Overall row marks the best parameterized method. 
+
+and Qwen3-4B-Instruct-2507 (Yang et al., 2025). Atomization is performed offline by MiniMax-M2.5 (MiniMax AI, 2026). 
+
+Baselines. On each base LLM, we compare 
+
+Doc2Atom against three D2L baselines and an in-context reference. D2L ckpt uses the official Doc-to-LoRA checkpoint (Charakorn et al., 2026) as-is. 
+
+D2L raw retrains Doc-to-LoRA from scratch on our source datasets. D2L atom retrains the same archi-tecture on the atomized version of these datasets, isolating atom-level decomposition. Base +ctx 
+
+feeds the full document to the frozen base LLM at inference, serving as an ICL upper bound. 
+
+Tasks and Benchmarks. We evaluate on six QA benchmarks across three task categories: short-context reading comprehension (SQuAD (Ra-jpurkar et al., 2016), DROP (Dua et al., 2019), ROPES (Lin et al., 2019)), long-document and multi-hop QA (2WikiMultiHopQA (Ho et al., 2020), QASPER (Dasigi et al., 2021)), and long-context understanding via eight LongBench (Bai et al., 2024) subsets. The first two categories are used for both training and in-distribution test-ing; LongBench is evaluated zero-shot for long-context generalization. We report word-level F1 and ROUGE-L as primary metrics. 
+
+Configuration. All other details are in Appendix. 
+
+4.2 Main Results 
+
+Doc2Atom achieves the best overall accuracy. 
+
+On Gemma-2-2B-It, Doc2Atom attains the best overall accuracy among all parametric methods. 
+
+Doc2Atom reaches 37 .99 F1 and 37 .88 ROUGE-L 7overall, outperforming the D2L baseline (D2L atom )by 8.58 and 8.56 points. On Qwen3-4B-Instruct, 
+
+Doc2Atom reaches 35 .72 F1 and 35 .58 ROUGE-L, exceeding D2L atom by 6.42 and 6.41 points. The gains are most pronounced on the eight Long-Bench subsets, evaluated zero-shot for all methods: 
+
+Doc2Atom achieves up to 6× higher F1 than D2L raw 
+
+on MFQA, MuSiQue, NarrativeQA, and QASPER, substantially narrowing the gap to the ICL upper bound (Base +ctx) on tasks unseen during training. 
+
+Atomization alone improves D2L. Training the same D2L architecture on atomized documents in-stead of raw documents (D2L raw →D2L atom ) yields consistent overall gains on both base LLMs ( +0 .86 
+
+on Gemma, +0 .45 on Qwen3), confirming the ef-fectiveness of our atomization pipeline.                                                                                                             
+
+> Dataset D2L ckpt D2L raw D2L atom Doc2Atom
+> Gemma-2-2B-It
+> 2WikiMultiHopQA 8.53 11.31 16.40 90.01
+> DROP 3.14 4.48 4.04 92.03
+> QASPER 1.20 23.49 25.67 58.05
+> ROPES 11.19 5.24 5.48 94.66
+> SQuAD 7.61 1.52 0.87 85.25
+> LongBench-2WikiMQA 8.50 15.83 22.00 97.50
+> LongBench-HotpotQA 8.00 16.00 15.83 90.17
+> LongBench-MFQA-en 2.67 18.00 11.33 95.22
+> LongBench-MFQA-zh 14.50 40.50 11.50 95.95
+> LongBench-MuSiQue 3.00 8.50 12.50 95.33
+> LongBench-NarrativeQA 1.00 7.00 24.50 84.33
+> LongBench-QASPER 1.50 21.15 22.33 61.50
+> LongBench-TriviaQA 1.00 8.50 5.50 64.00 Qwen3-4B-Instruct
+> 2WikiMultiHopQA 17.26 10.12 2.98 18.88
+> DROP 34.80 4.93 1.79 54.71
+> QASPER 43.06 54.93 39.59 90.68
+> ROPES 50.07 12.14 5.48 76.94
+> SQuAD 42.60 2.83 0.65 54.13
+> LongBench-2WikiMQA 13.20 11.00 7.50 17.64
+> LongBench-HotpotQA 15.28 10.50 10.50 19.08
+> LongBench-MFQA-en 17.96 17.33 20.67 64.00
+> LongBench-MFQA-zh 21.47 33.00 21.00 95.00
+> LongBench-MuSiQue 14.38 6.50 6.50 28.58
+> LongBench-NarrativeQA 75.04 5.50 7.00 92.50
+> LongBench-QASPER 38.35 50.50 40.33 93.25
+> LongBench-TriviaQA 6.54 4.00 3.00 20.00
+
+Table 2: F1 scores (%) of refusal on irrelevant queries. 
+
+Each document is paired with unrelated questions and the model is prompted to reply unanswerable when the answer cannot be grounded in the context; we report F1 against this target, so higher means more reliable refusal. The first five datasets are in-domain; LongBench rows are held out at training time. Best per row in bold .
+
+4.3 Refusal on Irrelevant Queries 
+
+For each document we pair it with unre-lated questions and prompt the model to reply 
+
+unanswerable ; Table 2 reports the F1 score against this refusal target. On Gemma-2-2B-It, 
+
+Doc2Atom consistently outperforms all three D2L baselines on every benchmark, with refusal F1 typically above 85% and peaking at 97 .50 on LongBench-2WikiMQA, while D2L baselines stay below 40% on most benchmarks. On Qwen3-4B-Instruct, absolute refusal is harder for every method (Qwen3 tends to attempt an answer even when un-supported), yet Doc2Atom still wins every bench-mark, reaching QASPER ( 90 .68 ), and ROPES (76 .94 ). This advantage carries over to the eight held-out LongBench subsets, where Doc2Atom 
+
+wins every subset under both base LLMs, confirm-ing that the learned refusal generalizes beyond the training distribution. 
+
+4.4 Efficiency Analysis 
+
+Table 3 reports the mean per-update compile cost across the same six benchmarks as Table 1. 
+
+Gemma-2-2B-It Qwen3-4B-Instruct 
+
+Method Latency Memory Latency Memory D2L ckpt 0.31 24.02 0.51 34.62 
+
+Doc2Atom 2.10 13.43 1.10 5.02 
+
+Table 3: Efficiency. Mean update latency (s) and mean additional GPU memory (GB) of the compile / inter-nalization step, averaged across the same datasets as Table 1. Lower is better ( ↓); best per column in bold .
+
+Additional Memory. Doc2Atom requires sub-stantially less additional GPU memory than D2L: 
+
+13 .43 GB vs. 24 .02 GB on Gemma-2-2B-It (a 44% 
+
+reduction) and 5.02 GB vs. 34 .62 GB on Qwen3-4B (an 85% reduction). The top-K atom budget bounds the activation footprint by the number of selected atoms, independent of document length, whereas D2L’s monolithic adapter must accommo-date every chunk and scales with document size. 
+
+Update Latency. Doc2Atom is slower per update than D2L ( 2.10 s vs. 0.31 s on Gemma-2-2B-It; 
+
+1.10 s vs. 0.51 s on Qwen3-4B-Instruct) because the atom encoder, memory compiler, and two-stage router each add a sequential pass. Since this update is performed offline at document internalization time and decoupled from per-query inference, up-date latency is not a primary efficiency bottleneck. 
+
+5 Conclusion 
+
+We presented Doc2Atom , a framework that inter-nalizes each document as a compositional library of memory atoms and retrieves and composes the relevant atoms into a query-specific memory for 8each query. This design addresses three limita-tions of monolithic document-to-adapter compres-sion: (i) irrelevant-query interference, (ii) limited compositional recall, and (iii) poor scalability to long-document reasoning. Across six diverse QA benchmarks, Doc2Atom achieves higher accuracy than Doc-to-LoRA baselines, more reliably refuses irrelevant queries, and incurs lower internalization memory, offering a step toward scalable, composi-tional, and selective parametric memory. 
+
+6 Broader Outlook 
+
+We view Doc2Atom as a step toward treating doc-ument internalization as a core mechanism for knowledge acquisition. Today, LLMs absorb knowledge by repeatedly processing raw text, ei-ther through large-scale pretraining or long-context inference, which scales poorly as knowledge grows. If documents can instead be reliably internalized into compact, composable parametric memory, knowledge is compiled once and offline rather than re-processed on every forward pass. This decoupling could reshape the economics of scale. A model that faithfully internalizes exter-nal documents need not spend its context window or pretraining budget memorizing facts that can be compiled on demand, freeing resources for rea-soning and generalization. Realizing this vision still requires closing the gap to in-context learning and scaling to far larger models, but compositional parametric memory offers a concrete path forward. 
+
+Limitations 
+
+While Doc2Atom demonstrates the effectiveness of internalizing documents into compositional para-metric memory across a wide range of QA and long-context benchmarks, by decomposing each document into typed knowledge atoms and compos-ing the relevant ones into a query-specific adapter, several limitations remain. First, our current implementation relies on a fixed semantic taxonomy and a predefined decom-position strategy when atomizing each document. While this design produces stable and interpretable memory units across datasets, different tasks or domains may require finer or coarser atom granu-larities, or altogether more flexible decomposition schemes. Investigating adaptive, task-specific atom structures is a promising avenue for future work. Second, our experiments center on relatively small frozen base language models, consistent with recent context distillation studies such as Doc-to-LoRA. Scaling to substantially larger models would demand far greater computational resources than the 8-GPU setup used in this work. While this setting already demonstrates the effectiveness and efficiency of compositional parametric mem-ory under a constrained compute budget, extend-ing Doc2Atom to frontier-scale models and broader multimodal settings is left for future work. Third, although Doc2Atom outperforms the existing state-of-the-art document-internalization method Doc-to-LoRA on a range of datasets, a non-trivial gap to in-context learning still remains. Our work is intended to advance this direction rather than to close the gap entirely, and we believe substantial headroom can be unlocked through better-designed atom content, more effective rout-ing strategies, and a more principled choice of what information should be internalized into the micro-KV memory. We leave a deeper exploration of these directions to future work. 
+
+Ethical Considerations 
+
+All experiments presented in this study were con-ducted using publicly available datasets and models licensed for academic research purposes. To the best of our knowledge, this work does not present any ethical concerns. 
+
+References             
+
+> Amanda Askell, Yuntao Bai, Anna Chen, Dawn Drain, Deep Ganguli, Tom Henighan, Andy Jones, Nicholas Joseph, Ben Mann, Nova DasSarma, and 1 others. 2021. A general language assistant as a laboratory for alignment. arXiv preprint arXiv:2112.00861 . Avail-able: https://arxiv.org/pdf/2112.00861 .Yushi Bai, Xin Lv, Jiajie Zhang, Hongchang Lyu, Jiankai Tang, Zhidian Huang, Zhengxiao Du, Xiao Liu, Aohan Zeng, Lei Hou, and 1 others. 2024. Long-bench: A bilingual, multitask benchmark for long context understanding. In Annual Meeting of the As-sociation for Computational Linguistics . Available:
+> https://arxiv.org/pdf/2308.14508 .Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, and 1 others. 2020. Language models are few-shot learners. In Advances in Neural Information Pro-cessing Systems . Available: https://arxiv.org/ pdf/2005.14165 .Cristian Bucilu ˇa, Rich Caruana, and Alexandru Niculescu-Mizil. 2006. Model compression. In ACM SIGKDD International Conference on Knowledge
+
+9Discovery and Data Mining . Available: https://dl. acm.org/doi/pdf/10.1145/1150402.1150464 .Lucas Caccia, Alan Ansell, Edoardo Ponti, Ivan Vuli´ c, and Alessandro Sordoni. 2025. Training plug-and-play knowledge modules with deep context distilla-tion. In Second Conference on Language Modeling .Available: https://arxiv.org/pdf/2503.08727 .Bowen Cao, Deng Cai, and Wai Lam. 2025. Infinite-icl: Breaking the limit of context window size via long short-term memory transformation. In Findings of the Association for Computational Linguistics: ACL 2025 . Available: https://aclanthology. org/2025.findings-acl.595.pdf .Rujikorn Charakorn, Edoardo Cetin, Yujin Tang, and Robert T. Lange. 2025. Text-to-lora: Instant trans-former adaptation. In International Conference on Machine Learning . Available: https://arxiv. org/pdf/2506.06105 .Rujikorn Charakorn, Edoardo Cetin, Shinnosuke Ue-saka, and Robert Tjarko Lange. 2026. Doc-to-lora: Learning to instantly internalize contexts. arXiv preprint arXiv:2602.15902 . Available: https:// arxiv.org/pdf/2602.15902 .Tong Chen, Hao Fang, Patrick Xia, Xiaodong Liu, Ben Van Durme, Luke Zettlemoyer, Jianfeng Gao, and Hao Cheng. 2025. Generative adapter: Con-textualizing language models in parameters with a single forward pass. In International Conference on Learning Representations . Available: https: //arxiv.org/pdf/2411.05877 .Alexis Chevalier, Alexander Wettig, Anirudh Ajith, and Danqi Chen. 2023. Adapting language mod-els to compress contexts. In Conference on Em-pirical Methods in Natural Language Process-ing . Available: https://aclanthology.org/2023. emnlp-main.232.pdf .Pradeep Dasigi, Kyle Lo, Iz Beltagy, Arman Cohan, Noah A Smith, and Matt Gardner. 2021. A dataset of information-seeking questions and answers anchored in research papers. In Conference of the North Amer-ican Chapter of the Association for Computational Linguistics: Human Language Technologies . Avail-able: https://arxiv.org/pdf/2105.03011 .Dheeru Dua, Yizhong Wang, Pradeep Dasigi, Gabriel Stanovsky, Sameer Singh, and Matt Gardner. 2019. Drop: A reading comprehension benchmark requir-ing discrete reasoning over paragraphs. In Confer-ence of the North American Chapter of the Associ-ation for Computational Linguistics: Human Lan-guage Technologies . Available: https://arxiv. org/pdf/1903.00161 .Sabri Eyuboglu, Ryan Ehrlich, Simran Arora, Neel Guha, Dylan Zinsley, Emily Liu, Will Tennien, Atri Rudra, James Zou, Azalia Mirhoseini, and 1 oth-ers. 2025. Cartridges: Lightweight and general-purpose long context representations via self-study. 
+
+arXiv preprint arXiv:2506.06266 . Available: https: //arxiv.org/pdf/2506.06266 .Junfeng Fang, Houcheng Jiang, Kun Wang, Yunshan Ma, Jie Shi, Xiang Wang, Xiangnan He, and Tat-Seng Chua. 2025. Alphaedit: Null-space constrained model editing for language models. In International Conference on Learning Representations . Available: 
+
+https://arxiv.org/pdf/2410.02355 .David Ha, Andrew Dai, and Quoc V Le. 2016. Hyper-networks. arXiv preprint arXiv:1609.09106 . Avail-able: https://arxiv.org/pdf/1609.09106 .Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. 2015. Distilling the knowledge in a neural network. arXiv preprint arXiv:1503.02531 . Available: https:// arxiv.org/pdf/1503.02531 .Xanh Ho, Anh-Khoa Duong Nguyen, Saku Sugawara, and Akiko Aizawa. 2020. Constructing a multi-hop qa dataset for comprehensive evaluation of reasoning steps. In International Conference on Computational Linguistics . Available: https://arxiv.org/pdf/ 2011.01060 .Cheng-Ping Hsieh, Simeng Sun, Samuel Kriman, Shan-tanu Acharya, Dima Rekesh, Fei Jia, Yang Zhang, and Boris Ginsburg. 2024. Ruler: What’s the real context size of your long-context language mod-els? arXiv preprint arXiv:2404.06654 . Available: 
+
+https://arxiv.org/pdf/2404.06654 .Edward J Hu, yelong shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. 2022. Lora: Low-rank adaptation of large language models. In International Con-ference on Learning Representations . Available: 
+
+https://arxiv.org/pdf/2106.09685 .Hamish Ivison, Akshita Bhagia, Yizhong Wang, Han-naneh Hajishirzi, and Matthew E Peters. 2023. Hint: Hypernetwork instruction tuning for effi-cient zero-and few-shot generalisation. In Annual Meeting of the Association for Computational Lin-guistics . Available: https://aclanthology.org/ 2023.acl-long.631.pdf .Hamish Ivison and Matthew E Peters. 2022. Hy-perdecoders: Instance-specific decoders for multi-task nlp. In Findings of the Association for Computational Linguistics: EMNLP 2022 .Available: https://aclanthology.org/2022. findings-emnlp.124.pdf .James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel Veness, Guillaume Desjardins, Andrei A Rusu, Kieran Milan, John Quan, Tiago Ramalho, Ag-nieszka Grabska-Barwinska, and 1 others. 2017. Overcoming catastrophic forgetting in neural net-works. Proceedings of the National Academy of Sci-ences . Available: https://arxiv.org/pdf/1612. 00796 .Xiang Lisa Li and Percy Liang. 2021. Prefix-tuning: Optimizing continuous prompts for generation. In 
+
+Annual Meeting of the Association for Computational Linguistics . Available: https://aclanthology. org/2021.acl-long.353.pdf .
+
+10 Yuyang Li, Xinyao Ma, Shuhe Lu, K Lee, X Liu, and C Guo. 2024. Mend: Meta demonstration distillation for efficient and effective in-context learning. In In-ternational Conference on Learning Representations .Available: https://arxiv.org/pdf/2403.06914 .Jessy Lin, Luke Zettlemoyer, Gargi Ghosh, Wen-Tau Yih, Aram Markosyan, Vincent-Pierre Berges, and Barlas O˘ guz. 2025. Continual learning via sparse memory finetuning. arXiv preprint arXiv:2510.15103 . Available: https://arxiv. org/pdf/2510.15103 .Kevin Lin, Oyvind Tafjord, Peter Clark, and Matt Gardner. 2019. Reasoning over paragraph effects in situations. In 2nd Workshop on Machine Read-ing for Question Answering . Available: https: //arxiv.org/pdf/1908.05852 .Nelson F Liu, Kevin Lin, John Hewitt, Ashwin Paran-jape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2024. Lost in the middle: How language models use long contexts. In Transactions of the Association for Computational Linguistics . Avail-able: https://aclanthology.org/2024.tacl-1. 9.pdf .Anton Lozhkov, Loubna Ben Allal, Leandro von Werra, and Thomas Wolf. 2024. Fineweb-edu: the finest collection of educational content. Chenghao Lv, Lei Li, Shuo Zhang, Gang Chen, Fei Qi, Ningyu Zhang, and Hai-Tao Zheng. 2024. Hy-perlora: Efficient cross-task generalization via con-strained low-rank adapters generation. In Findings of the Association for Computational Linguistics: ACL 2024 . Available: https://aclanthology. org/2024.findings-emnlp.956.pdf .MiniMax AI. 2026. Minimax-m2.5. Jesse Mu, Xiang Lisa Li, and Noah Goodman. 2024. Learning to compress prompts with gist tokens. In 
+
+Advances in Neural Information Processing Systems .Available: https://arxiv.org/pdf/2304.08467 .Zhuoshi Pan, Qianhui Wu, Huiqiang Jiang, Menglin Xia, Xufang Luo, Jue Zhang, Qingwei Lin, Vic-tor Ruhle, Yuqing Yang, Chin-Yew Lin, and 1 oth-ers. 2024. Llmlingua-2: Data distillation for ef-ficient and faithful task-agnostic prompt compres-sion. In Findings of the Association for Computa-tional Linguistics: ACL 2024 . Available: https:// aclanthology.org/2024.findings-acl.57.pdf .Pranav Rajpurkar, Jian Zhang, Konstantin Lopyrev, and Percy Liang. 2016. Squad: 100,000+ questions for machine comprehension of text. In Conference on Empirical Methods in Natural Language Pro-cessing . Available: https://aclanthology.org/ D16-1264.pdf .Charlie Snell, Dan Klein, and Ruiqi Zhong. 2022. Learning by distilling context. arXiv preprint arXiv:2209.15189 . Available: https://arxiv. org/pdf/2209.15189 .Gemma Team, Morgane Riviere, Shreya Pathak, Pier Giuseppe Sessa, Cassidy Hardin, Surya Bhupati-raju, Léonard Hussenot, Thomas Mesnard, Bobak Shahriari, Alexandre Ramé, and 1 others. 2024. Gemma 2: Improving open language models at a practical size. arXiv preprint arXiv:2408.00118 .Available: https://arxiv.org/pdf/2408.00118 .Johannes von Oswald, Christian Henning, Benjamin F Grewe, and João Sacramento. 2020. Continual learning with hypernetworks. In International Con-ference on Learning Representations . Available: 
+
+https://arxiv.org/pdf/1906.00695 .An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, and 1 others. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 . Available: https://arxiv. org/pdf/2505.09388 .Tianzhu Ye, Li Dong, Yuqing Xia, Yutao Sun, Yi Zhu, Gao Huang, and Furu Wei. 2025. Differential trans-former. In International Conference on Learning Representations . Available: https://arxiv.org/ pdf/2410.05258 .Peitian Zhang, Zheng Liu, Shitao Xiao, Ninglu Shao, Qiwei Ye, and Zheng Dou. 2025. Long context com-pression with activation beacon. In International Conference on Learning Representations . Available: 
+
+https://arxiv.org/pdf/2401.03462 .Shengyu Zhang, Linfeng Dong, Xiaoya Li, Sen Zhang, Xiaowei Sun, Shuhe Wang, Jiwei Li, Runqi Hu, Tianwei Zhang, Fei Wu, and 1 others. 2023. In-struction tuning for large language models: A sur-vey. In arXiv preprint arXiv:2308.10792 . Available: 
+
+https://arxiv.org/pdf/2308.10792 .
+
+Contents of Appendix 
+
+A Benchmarks 12 B Atomization Pipeline 12 
+
+B.1 Context Decomposition . . . . . . 12 B.2 Irrelevant Probe Generation . . . . 13 B.3 Question-to-Atom Annotation . . 13 B.4 Failure Handling and Quality Log-ging . . . . . . . . . . . . . . . . 14 
+
+C Implementation Details 14 D Curriculum 15 E Atom Memory Complements In-Context Access 15 F Atomization Example 16 
+
+11 A Benchmarks 
+
+• SQuAD (Rajpurkar et al., 2016): SQuAD is a large-scale reading comprehension benchmark constructed from Wikipedia articles. Each exam-ple consists of a paragraph, a question written by crowdworkers, and an answer that appears as a contiguous span in the corresponding passage. The dataset evaluates whether models can locate and extract the correct answer from a given con-text rather than selecting from predefined answer choices. • DROP (Dua et al., 2019): DROP is a reading comprehension benchmark requiring discrete rea-soning over paragraphs. It contains over 96K questions crowdsourced from Wikipedia, where models must perform operations such as addition, counting, sorting, and comparison, going beyond span extraction to test numerical and composi-tional reasoning abilities. • ROPES (Lin et al., 2019): ROPES is a reading comprehension benchmark focusing on reason-ing over paragraph effects in situations. It pro-vides a background passage describing causal relationships, a novel situation, and questions that require applying the inferred cause–effect re-lations to the new context, testing models’ ability to transfer knowledge beyond the original text. • 2WikiMultihop (Ho et al., 2020): 2WikiMulti-hop is a multi-hop question answering dataset constructed from Wikipedia and Wikidata, de-signed to require reasoning over multiple para-graphs. Each example includes not only the an-swer and supporting sentences, but also struc-tured evidence in the form of triples that explic-itly capture the reasoning path from the question to the answer, enabling more comprehensive eval-uation of multi-hop reasoning. • QASPER (Dasigi et al., 2021): QASPER is an information-seeking question answering bench-mark built on full-text NLP research papers. Questions are written after annotators read only the title and abstract, while answers are derived from the full paper with supporting evidence. This setting requires document-level understand-ing and often involves reasoning over multiple paragraphs, tables, or figures. • LongBench (Bai et al., 2024): LongBench is a bilingual, multi-task benchmark designed to evaluate long-context understanding in large lan-guage models. It consists of diverse datasets and task categories, including single-document QA, multi-document QA, summarization, few-shot learning, synthetic tasks, and code completion, with context lengths extending to thousands of tokens, enabling comprehensive evaluation of long-range reasoning and comprehension. 
+
+B Atomization Pipeline 
+
+This section provides the implementation details of the annotation pipeline introduced in §3.1, focusing on three aspects deferred from the main text: (i) the prompt and parsing format, (ii) the deterministic post-processing rules applied after each annotator call, and (iii) the failure-handling policy. The op-erational flow is illustrated in Fig. 4, and output schema is summarized in Table 4. 
+
+Annotator and prompt format. All atom anno-tations are generated using MiniMax-M2.5 (Mini-Max AI, 2026) with structured XML prompts. Ev-ery post-processing step downstream of the anno-tator is deterministic, so a fixed annotator output always yields the same final record. We adopt XML rather than JSON for both input and output for three reasons. First, XML is robust to partial output: a single malformed tag does not invalidate the surrounding document, whereas a single JSON syntax error typically discards the entire record. Second, XML supports per-tag validation, so we can selectively retain or repair well-formed sub-trees even when other parts of the response are corrupted. Third, XML degrades gracefully un-der mid-response truncation, preserving every well-formed tag emitted before the cutoff. On a held-out calibration set, XML parsing recovers a larger frac-tion of usable samples than JSON parsing under matched decoding budgets. 
+
+B.1 Context Decomposition 
+
+Given a context c, the annotator emits an XML-tagged list of atoms, each a self-contained, mini-mally redundant unit of knowledge. The five se-mantic types and eight metadata fields attached to every atom are introduced in §3.1 and tabulated in Table 4. In addition to these per-atom fields, atoms are linked to one another through nine typed 
+
+relations that encode bridge entities, supporting evidence, contradictions, and procedural ordering. The decomposition prompt consists of a base system prompt and a dataset-specific adapter that 12 Inputs 
+
+> QA corpora
+> (short / long -doc /
+> multi -hop)
+> (c, Q, a)
+> context
+> + questions
+> + answers
+
+Decompose context  
+
+> LLM (XML prompt)
+> + dataset adapter
+> Parse XML
+> ✓Validate source_span
+> substring check vs. context
+> N typed atoms
+> {key, content, span, …}
+
+Question annotation  
+
+> LLM (batched)
+> atoms + Q's → XML
+> Parse XML
+> ✓Cross -validate
+> drop unknown ids · re -derive
+> flags
+> per -Q labels
+> {gold, supporting, distractor,
+> …}
+
+Output 
+
+> Final JSON record
+> atoms[]
+> • semantic_type
+> • content / span
+> • retrieval_text
+> • confidence
+> • abstraction_level
+> • conflict_group · relations[]
+> qa_pairs[]
+> • question_type
+> • gold_atom_ids
+> • supporting / distractor
+> • is_irrelevant · has_conflict
+
+Figure 4: Atom annotation pipeline. An XML-driven annotator first decomposes each context into typed atoms, guided by a dataset-specific adapter; we then parse the output and verify every source_span against the original context. A second batched annotator call labels each question over the validated atom bank with per-question role fields, after which we apply deterministic cross-validation (e.g., dropping unknown atom_id s). The merged record is serialised as JSON with atoms[] and qa_pairs[] arrays; the full field schema is given in Table 4. 
+
+captures the structural priors of the source corpus. For multi-hop corpora, the adapter instructs the an-notator to surface bridge entities and to link parallel mentions of the same referent via same_entity re-lations. For numeric-reasoning corpora, it requires every comparable quantity to be placed in its own atom whose source_span is the verbatim charac-ter sequence from the document. 
+
+Source-span validation. Every atom must carry a source_span field: a contiguous substring of the original context that grounds the atom. Im-mediately after parsing, we run a substring search (optionally fuzzy with whitespace normalisation) of each span against c. Atoms whose span cannot be located receive a span_valid =FALSE flag and are surfaced to the downstream filter. This single guard rule eliminates the most common annotator hallucination, fabricated quotations, and we find it sufficient in practice without a separate verification call to a second annotator. 
+
+B.2 Irrelevant Probe Generation 
+
+To support the irrelevant-suppression objective 
+
+Lirrel (§3.3), we augment each context with synthesised irrelevant probes : questions that mention entities or topics from the context but cannot be answered from it. A separate prompt, conditioned on the same context, asks the annotator to produce n such plausible-but-unanswerable questions. Generated probes carry 
+
+is_generated_irrelevant=true , and the subse-quent question-to-atom annotation step forces their 
+
+gold_atom_ids to be empty. 
+
+B.3 Question-to-Atom Annotation 
+
+Given the validated atom bank and the augmented question list Q (the original questions plus the ir-relevant probes generated above), the annotator labels each question with the role fields listed in Table 4 (bottom half). The two most consequen-tial roles are gold_atom_ids , the minimal atom set strictly necessary to answer the question, and 
+
+distractor_atom_ids , the atoms a router would most plausibly mis-activate. The dataset-specific adapter again shapes what counts as a hard dis-tractor: on multi-hop corpora, atoms that bind the right attribute to the wrong entity; on field-lookup corpora, atoms with the same entity but a different field, or the same field but a different entity. 
+
+Cross-validation. Rather than accepting the annotator’s question-level output as is, we apply three deterministic checks: (i) drop any atom_id that does not appear in the validated atom bank; (ii) recompute 
+
+relevant_atom_ids =gold ∪supporting 
+
+from the surviving lists; and (iii) re-derive has_conflict from the atoms’ own 
+
+conflict_group fields rather than the 13 Field Description                                                        
+
+> Atom-level
+> atom_id Stable identifier ( atom_0 ,atom_1 , . . . ) used for cross-referencing within the sample.
+> semantic_type One of the five types { fact_claim ,entity_attribute ,event_relation ,process_step ,
+> evidence_fragment }.
+> content Self-contained natural-language statement of the atom.
+> source_span Verbatim contiguous substring of the original context, validated post-hoc (§B).
+> retrieval_text Query-friendly form (entity, attribute, and key qualifiers), used as the indexing anchor for routing.
+> is_answer_bearing Whether the atom can directly carry an answer, as opposed to only providing context.
+> abstraction_level One of { abstract ,evidence ,hybrid }, used by the router’s metadata bias.
+> conflict_group Cluster identifier shared by mutually inconsistent atoms; null otherwise.
+> confidence Annotator’s calibrated confidence in [0 ,1] .
+> relations Typed edges to other atoms; one of nine types ( supports ,elaborates ,causes ,precedes ,
+> follows ,contradicts ,same_entity ,same_event ,part_of ).
+> Question-level
+> question_type One of ten types ( single_hop ,multi_hop ,comparison ,temporal ,causal ,procedural ,
+> aggregation ,field_lookup ,evidence_grounded ,irrelevant ).
+> gold_atom_ids Minimal set of atoms strictly required to answer the question.
+> supporting_atom_ids Atoms that aid reasoning but are not strictly required.
+> distractor_atom_ids Hard negatives: atoms a router would most plausibly mis-activate.
+> relevant_atom_ids Convenience union gold ∪supporting , re-derived after validation.
+> is_irrelevant True iff the document does not contain the answer; forces gold_atom_ids =∅.
+> has_conflict True iff any gold or supporting atom shares a conflict_group with another; re-derived from the atoms.
+> is_generated_irrelevant True iff the question was synthesised by the irrelevant-probe generator rather than drawn from the source corpus.
+
+Table 4: Output schema produced by our annotation pipeline. Atom-level fields are emitted once per atom during context decomposition; question-level fields are emitted once per question during question-to-atom annotation. 
+
+annotator-emitted flag. Whenever the anno-tator marks a question is_irrelevant , we additionally clear its gold_atom_ids and set 
+
+question_type=irrelevant so that the two flags remain consistent. 
+
+B.4 Failure Handling and Quality Logging 
+
+We handle annotator failures by graceful degrada-tion. A failure during context decomposition dis-cards the whole sample, as all downstream stages need a valid atom bank. A failure during question-to-atom annotation retains the atom bank but emits empty question annotations, leaving an atom-only training record. A failure during irrelevant-probe generation is logged and ignored, since the probes are auxiliary. Per-sample warnings (e.g., invalid semantic types, dropped relation targets, span mis-matches, unknown atom IDs) are accumulated into an annotation_meta field, letting downstream consumers filter on annotation quality without re-running the annotator. 
+
+C Implementation Details 
+
+Hardware and precision. All experiments are conducted on a cluster of 8 NVIDIA A100 80 GB GPUs interconnected via NVLink, using PyTorch 2.1 with DeepSpeed ZeRO-2 for distributed train-ing. We use FlashAttention-2 for efficient atten-tion throughout both training and inference. Both base models are kept entirely frozen in bfloat16, while all trainable modules, including the atom en-coder projection head, the memory compiler trunk and heads, and the query router, are maintained in float32 for optimization stability. 
+
+Memory compiler and router. For the memory compiler, we set the latent dimension d = 256 and use LoRA rank r = 8 with scaling factor α = 16 
+
+and zero dropout, targeting the query, value, output, and down-projection modules in the last nL = 4 
+
+decoder layers. The shared text encoder extracts hidden states from the first Lenc = 4 layers of the frozen base LLM for both models. The two-stage router uses high-recall retrieval with K1 = 32 
+
+followed by a final selection of K = 8 atoms. The learned 4-dimensional metadata bias is enabled by default, and the second-stage reranker follows the configuration in Table 6. 
+
+Optimization. We optimize with AdamW ( β1 =0.9, β2 = 0 .999 ) at a learning rate of 1 × 10 −4
+
+on Gemma-2-2B-It and 8 × 10 −5 on Qwen3-4B-Instruct-2507, with cosine scheduling, 500 warm-14 up steps, weight decay 0.01 , and gradient clipping at 1.0. The effective global batch size is 128, and the distillation temperature is τ = 1 .5.
+
+Data and decoding. The maximum context length is 8192 tokens, with atom texts truncated to 96 tokens and answers to 128 tokens; each sample contains at most 64 atoms and 8 questions. Eval-uation uses greedy decoding with up to 128 new tokens. The full curriculum schedule (loss-weight transitions, top-K ramps, and stage boundaries) is given in §D, and the complete per-LLM hyperpa-rameter configuration is listed in Table 6. 
+
+D Curriculum 
+
+Training proceeds through a four-stage curriculum that gradually increases task difficulty and activates losses in dependency order. Each stage is specified by a step range, the top-K atom budget passed to the router, and the set of active losses. 
+
+Stage 1. Single-atom memory (steps 0–2000, 
+
+K=1 ). The router selects exactly one atom per query. Only the core losses are active: LLM , Ldistill , Lroute , Lirrel , and 
+
+Lprotect .
+
+Stage 2. Multi-atom composition (steps 2000– 6000, K=4 ). The router selects four atoms; Lcomposition and Lsparse become ac-tive. 
+
+Stage 3. Robustness (steps 6000–9000, K=8 ). The router selects eight atoms; the auxiliary robustness losses Lconflict and 
+
+Lconfidence are added, and the weight on 
+
+Lirrel is increased. 
+
+Stage 4. Full composition (steps 9000 +, K=8 ). All losses remain active and the weight on Lsparse is strengthened to push the gate density closer to the target ρ.Training runs for up to 50 epochs with early stopping on the validation language-modeling loss. 
+
+E Atom Memory Complements In-Context Access 
+
+Doc2Atom is designed to answer without the source document in the prompt. Here we test whether its compiled atom memory still helps when the docu-ment is available, i.e. whether the atoms add signal beyond what the model can already read. We com-pare the base LLM with the document in context                                                           
+
+> Dataset Base+ctx Doc2Atom +ctx
+> F1
+> 2WikiMultiHopQA 37.69 40.44
+> DROP 42.61 49.13
+> QASPER 48.62 46.90 ROPES 71.90 73.07
+> SQuAD 86.35 90.10
+> LongBench-2WikiMQA 32.27 33.57
+> LongBench-HotpotQA 41.00 39.07 LongBench-MFQA-en 39.41 46.55
+> LongBench-MFQA-zh 7.73 12.91
+> LongBench-MuSiQue 21.62 30.73
+> LongBench-NarrativeQA 22.67 27.23
+> LongBench-QASPER 37.05 41.46
+> LongBench-TriviaQA 86.67 78.83
+> Overall 48.79 51.05
+> ROUGE-L
+> 2WikiMultiHopQA 37.69 40.44
+> DROP 42.61 49.13
+> QASPER 47.26 45.69 ROPES 71.90 73.07
+> SQuAD 86.20 90.02
+> LongBench-2WikiMQA 32.27 33.57
+> LongBench-HotpotQA 40.78 38.99 LongBench-MFQA-en 38.31 45.60
+> LongBench-MFQA-zh 7.73 12.71
+> LongBench-MuSiQue 21.62 30.73
+> LongBench-NarrativeQA 22.37 27.08
+> LongBench-QASPER 35.58 40.29
+> LongBench-TriviaQA 86.67 78.83
+> Overall 48.43 50.74
+
+Table 5: In-context comparison on Gemma-2-2B-It. 
+
+Both models receive the full document in the prompt: the base model (Base+ctx) versus Doc2Atom +ctx, which additionally conditions on its compiled atom memory. We report F1 and ROUGE-L (%), respectively; the bet-ter score in each row is in bold .
+
+(Base+ctx) against Doc2Atom given the same doc-ument plus its atom memory ( Doc2Atom +ctx). All other settings match the main experiments. As shown in Table 5 on Gemma-2-2B-It, adding the atom memory raises Overall F1 from 48 .79 to 
+
+51 .05 (+2 .26 ), with gains on most datasets and the same trend under ROUGE-L. The improve-ments are largest on aggregation and multi-hop tasks (LongBench-MuSiQue +9 .11 , LongBench-MFQA-en +7 .14 , DROP +6 .52 ), where a struc-tured, pre-decomposed view of the document is most useful. The atom memory does not help ev-erywhere: on a few datasets (e.g., TriviaQA, a short-answer factoid task whose answers are al-ready easy to locate in the context) it brings little or no gain. Overall, these results suggest that the atom 15 memory is largely complementary to in-context ac-cess, adding useful structure in the cases where reading raw text alone falls short. 
+
+F Atomization Example 
+
+To illustrate the pipeline of §B, Fig. 5 walks through an uncurated, randomly selected atomiza-tion example from 2WikiMultiHopQA benchmark (Ho et al., 2020): Part 1 shows the raw 10-passage document; Parts 2–3 list the 17 extracted atoms with their metadata; and Part 3 adds the questions with their gold/supporting/distractor labels. 16 Atomization Example (Part 1 of 3) — 2WikiMultiHopQA, id 2wiki_000b2e3d098711ebbdb0ac1f6bf848b6 , type 
+
+comparison , 17 atoms / 3 questions 
+
+(a) Input document (10 Wikipedia stub passages, full text) passages relevant to q0 and q1 are highlighted in soft yellow 
+
+Passage [Telephone numbers in Ascension Island]: Country Code:+ 247 <br> International Call Prefix: 00 Ascension Island does not share the same country code( +290) with the rest of St Helena. 
+
+Passage [Satellite tournament]: A satellite tournament is either a minor tournament or event on a competitive sporting tour or one of a group of such tournaments that form a series played in the same country or region. 
+
+Passage [Qaserdalu]: Qaserdalu( also Romanized as Qa s. erd ¯al ¯u) is a village in Tolbozan Rural District, Golgir District, Masjed Soleyman County, Khuzestan Province, Iran. At the 2006 census, its population was 97, in 23 families. 
+
+Passage [Lubnowy]: Lubnowy is part of the name of two villages, both located in Gmina Susz, within Iława County, Warmian- Masurian Voivodeship, Poland: 
+
+Passage [Radzice]: Radzice is part of the name of two villages, both located in Gmina Drzewica, within Opoczno County, Łód´ z Voivodeship, Poland: 
+
+Passage [Limestone Coast]: The Limestone Coast is a name used since the early twenty- first century for a South Australian government region located in the south east of South Australia which immediately adjoins the continental coastline and the Victorian border. The name is also used for a tourist region and a wine zone both located in the same part of South Australia. 
+
+Passage [Tunstall, Virginia]: Tunstall is an unincorporated community in New Kent County, Virginia, United States. Foster’s Castle and Hampstead, both located in Tunstall, are listed on the National Register of Historic Places. 
+
+Passage [Quyujoq]: Quyujoq( also Romanized as Q ¯uy ¯ujoq; also known as K ¯uj ¯ıkh and Q ¯uj ¯uq) is a village in Anzal -e Jonubi Rural District, Anzal District, Urmia County, West Azerbaijan Province, Iran. At the 2006 census, its population was 93, in 14 families. 
+
+Passage [Jawty]: Jawty is part of the name of two villages, both located in Gmina Susz, within Iława County, Warmian- Masurian Voivodeship, Poland: 
+
+Passage [Greenbury Point Light]: Greenbury Point Light was the name of two lighthouses in the Chesapeake Bay, both located at the mouth of the Severn River in Annapolis, Maryland. 
+
+Figure 5: An Atomization Example (Part 1 of 3). 
+
+17 Atomization Example (Part 2 of 3) — 17 annotated atoms, first half ( a0–a9)
+
+(b) 17 annotated atoms — first half ( a0–a9) semantic types in this example: entity_attribute fact_claim 
+
+a0 entity_attribute 
+
+conf=0.95 | span [49,67] ✓ | evidence | answer-bearing ✓
+
+content: Ascension Island has country code +247. 
+
+source_span: “Country Code:+ 247” 
+
+retrieval: Ascension Island country code 
+
+relations: (none) conflict_group: (none) 
+
+a2 fact_claim 
+
+conf=0.95 | span [103,191] ✓ | evidence | answer-bearing ✓
+
+content: Ascension Island does not share the same country code (+290) with the rest of St Helena. 
+
+source_span: “Ascension Island does not share the same country code( +290) with the rest of St Helena.” 
+
+retrieval: Ascension Island different country code from St Helena 
+
+relations: (none) conflict_group: (none) 
+
+a4 entity_attribute 
+
+conf=0.95 | span [434,581] ✓ | evidence | answer-bearing ✓
+
+content: Qaserdalu is a village in Tolbozan Rural District, Golgir Dis-trict, Masjed Soleyman County, Khuzestan Province, Iran. 
+
+source_span: “Qaserdalu( also Romanized as Qa s. erd ¯al ¯u) is a village in Tolbozan Rural District, Golgir District, Masjed Soleyman County, Khuzestan Province, Iran.” 
+
+retrieval: Qaserdalu location 
+
+relations: (none) conflict_group: (none) 
+
+a6 entity_attribute 
+
+conf=0.95 | span [661,793] ✓ | evidence | answer-bearing ✓
+
+content: Lubnowy is part of the name of two villages in Gmina Susz, Iława County, Warmian-Masurian Voivodeship, Poland. 
+
+source_span: “Lubnowy is part of the name of two villages, both located in Gmina Susz, within Iława County, Warmian- Masurian Voivodeship, Poland:” 
+
+retrieval: Lubnowy villages location 
+
+relations: (none) conflict_group: (none) 
+
+a8 entity_attribute 
+
+conf=0.95 | span [968,1126] ✓ | evidence | answer-bearing ✓
+
+content: The Limestone Coast is a South Australian government region in the south east of South Australia. 
+
+source_span: “The Limestone Coast is a name used since the early twenty- first century for a South Australian government region located in the south east of South Australia” 
+
+retrieval: Limestone Coast location and name origin 
+
+relations: (none) conflict_group: (none) 
+
+a1 entity_attribute 
+
+conf=0.95 | span [73,102] ✓ | evidence | answer-bearing ✓
+
+content: International Call Prefix for Ascension Island is 00. 
+
+source_span: “International Call Prefix: 00” 
+
+retrieval: Ascension Island international call prefix 
+
+relations: (none) conflict_group: (none) 
+
+a3 fact_claim 
+
+conf=0.90 | span [225,411] ✓ | abstract | answer-bearing ✓
+
+content: A satellite tournament is a minor tournament on a competitive sporting tour or one of a group of tournaments in the same country or region. 
+
+source_span: “A satellite tournament is either a minor tournament or event on a competitive sporting tour or one of a group of such tourna-ments that form a series played in the same country or region.” 
+
+retrieval: satellite tournament definition 
+
+relations: (none) conflict_group: (none) 
+
+a5 entity_attribute 
+
+conf=0.95 | span [582,640] ✓ | evidence | answer-bearing ✓
+
+content: Qaserdalu had population of 97 in 23 families in 2006. 
+
+source_span: “At the 2006 census, its population was 97, in 23 fami-lies.” 
+
+retrieval: Qaserdalu 2006 census population 
+
+relations: (none) conflict_group: (none) 
+
+a7 entity_attribute 
+
+conf=0.95 | span [814,939] ✓ | evidence | answer-bearing ✓
+
+content: Radzice is part of the name of two villages in Gmina Drzewica, Opoczno County, Łód´ z Voivodeship, Poland. 
+
+source_span: “Radzice is part of the name of two villages, both lo-cated in Gmina Drzewica, within Opoczno County, Łód´ z Voivodeship, Poland:” 
+
+retrieval: Radzice villages location 
+
+relations: (none) conflict_group: (none) 
+
+a9 entity_attribute 
+
+conf=0.95 | span [1127,1204] ✓ | evidence | answer-bearing ✓
+
+content: The Limestone Coast adjoins the continental coastline and the Victorian border. 
+
+source_span: “which immediately adjoins the continental coastline and the Victorian border.” 
+
+retrieval: Limestone Coast geographical boundaries 
+
+relations: (none) conflict_group: (none) 
+
+Figure 5: An Atomization Example (continued, Part 2 of 3). 
+
+18 Atomization Example (Part 3 of 3) — atoms a10 –a16 , 3 annotated questions, annotation meta 
+
+(b) 17 annotated atoms — second half ( a10 –a16 ) types: entity_attribute fact_claim 
+
+a10 entity_attribute 
+
+conf=0.95 | span [1205,1313] ✓ | evidence | answer-bearing ✓
+
+content: The Limestone Coast name is also used for a tourist region and wine zone in the same part of South Australia. 
+
+source_span: “The name is also used for a tourist region and a wine zone both located in the same part of South Australia.” 
+
+retrieval: Limestone Coast tourist and wine zone usage 
+
+relations: (none) conflict_group: (none) 
+
+a12 entity_attribute 
+
+conf=0.95 | span [1430,1542] ✓ | evidence | answer-bearing ✓
+
+content: Foster’s Castle and Hampstead are both located in Tunstall, Virginia and listed on the National Register of Historic Places. 
+
+source_span: “Foster’s Castle and Hampstead, both located in Tunstall, are listed on the National Register of Historic Places.” 
+
+retrieval: Historic places in Tunstall Virginia 
+
+relations: (none) conflict_group: (none) 
+
+a14 entity_attribute 
+
+conf=0.95 | span [1741,1799] ✓ | evidence | answer-bearing ✓
+
+content: Quyujoq had population of 93 in 14 families in 2006. 
+
+source_span: “At the 2006 census, its population was 93, in 14 fami-lies.” 
+
+retrieval: Quyujoq 2006 census population 
+
+relations: (none) conflict_group: (none) 
+
+a16 entity_attribute 
+
+conf=0.95 | span [1983,2129] ✓ | evidence | answer-bearing ✓
+
+content: Greenbury Point Light refers to two lighthouses at the mouth of the Severn River in Annapolis, Maryland. 
+
+source_span: “Greenbury Point Light was the name of two lighthouses in the Chesapeake Bay, both located at the mouth of the Severn River in Annapolis, Maryland.” 
+
+retrieval: Greenbury Point Light location 
+
+relations: (none) conflict_group: (none) 
+
+a11 entity_attribute 
+
+conf=0.95 | span [1345,1429] ✓ | evidence | answer-bearing ✓
+
+content: Tunstall is an unincorporated community in New Kent County, Virginia, United States. 
+
+source_span: “Tunstall is an unincorporated community in New Kent County, Virginia, United States.” 
+
+retrieval: Tunstall Virginia location 
+
+relations: (none) conflict_group: (none) 
+
+a13 entity_attribute 
+
+conf=0.95 | span [1563,1740] ✓ | evidence | answer-bearing ✓
+
+content: Quyujoq is a village in Anzal-e Jonubi Rural District, Anzal District, Urmia County, West Azerbaijan Province, Iran. 
+
+source_span: “Quyujoq( also Romanized as Q ¯uy ¯ujoq; also known as K ¯uj ¯ıkh and Q ¯uj ¯uq) is a village in Anzal -e Jonubi Rural District, Anzal District, Urmia County, West Azerbaijan Province, Iran.” 
+
+retrieval: Quyujoq location 
+
+relations: (none) conflict_group: (none) 
+
+a15 entity_attribute 
+
+conf=0.95 | span [1818,1948] ✓ | evidence | answer-bearing ✓
+
+content: Jawty is part of the name of two villages in Gmina Susz, Iława County, Warmian-Masurian Voivodeship, Poland. 
+
+source_span: “Jawty is part of the name of two villages, both located in Gmina Susz, within Iława County, Warmian- Masurian Voivodeship, Poland:” 
+
+retrieval: Jawty villages location 
+
+relations: (none) conflict_group: (none) 
+
+(c) 3 annotated questions legend: gold support distractor 
+
+q_0 comparison | is_irrelevant: × | has_conflict: × | is_generated_irrelevant: ×
+
+Q: Are Quyujoq and Qaserdalu both located in the same country? 
+
+gold_atom_ids : a4, a13 supporting_atom_ids : — distractor_atom_ids : a6, a7, a15 
+
+relevant_atom_ids: a4, a13 annotation_warnings: (none) 
+
+q_1 field_lookup | is_irrelevant: × | has_conflict: × | is_generated_irrelevant: ✓ (generated as decoy, then rescued by Stage-2 )
+
+Q: What is the local area code used for telephone numbers within Ascension Island? 
+
+gold_atom_ids : a0 supporting_atom_ids : a1 distractor_atom_ids : a2
+
+relevant_atom_ids: a0, a1 annotation_warnings: (none) 
+
+q_2 irrelevant | is_irrelevant: ✓ | has_conflict: × | is_generated_irrelevant: ✓
+
+Q: What are the names of specific wineries located in the Limestone Coast wine region? 
+
+gold_atom_ids : — supporting_atom_ids : — distractor_atom_ids : — 
+
+relevant_atom_ids: — annotation_warnings: (none) 
+
+annotation_meta: mode= batch2step , decomposition_parse_status= ok , question_parse_status= ok , num_atoms=17, num_questions=3, num_irrelevant_generated=2, warnings= (none) — all atom spans pass the substring check and no Stage-2 question is reclassified. 
+
+Figure 5: An Atomization Example (continued, Part 3 of 3). 
+
+19 Component Gemma-2-2B-It Qwen3-4B-Instruct-2507 
+
+Base model (frozen) 
+
+Identifier google/gemma-2-2b-it Qwen/Qwen3-4B-Instruct-2507 
+
+Hidden size d 2304 2560 
+
+Decoder layers 26 36 
+
+Attention / KV heads 8 / 4 32 / 8
+
+Head dim 256 128 
+
+Position cap 8192 32768 
+
+Weight dtype bfloat16 bfloat16 
+
+Attention impl. FlashAttention-2 FlashAttention-2 
+
+Atom encoder (shared between atom and query) 
+
+Backbone (frozen) first 4 layers of base LLM first 4 layers of base LLM Encoder dtype bfloat16 bfloat16 
+
+Pooling mean over attended tokens mean over attended tokens Projection head LN → Lin (2304 →256) → GELU →
+
+Lin (256 →256) 
+
+LN → Lin (2560 →256) → GELU →
+
+Lin (256 →256) 
+
+Output dim 256 256 
+
+Memory compiler 
+
+Trunk LN → Lin (256 →256) → GELU →
+
+Lin (256 →256) 
+
+LN → Lin (256 →256) → GELU →
+
+Lin (256 →256) 
+
+Latent / key dim 256 256 
+
+LoRA rank r / scale α 8 / 16 .0 8 / 16 .0
+
+Memory layers last 4 blocks (indices 22 –25 ) last 4 blocks (indices 32 –35 )Target modules q_proj , v_proj , o_proj , down_proj q_proj , v_proj , o_proj , down_proj 
+
+LoRA init A ∼ N (0 , 0.02 2), B=0 A ∼ N (0 , 0.02 2), B=0 
+
+Two-stage router 
+
+Stage-1 retrieval cosine over L2-normalised keys cosine over L2-normalised keys Stage-1 top-K1 32 32 
+
+Stage-2 reranker BAAI/bge-reranker-base BAAI/bge-reranker-base 
+
+Stage-2 max length 192 tokens 192 tokens Rerank fusion weight αr 1.0 1.0
+
+Metadata bias 4 learned scalars 4 learned scalars Final selection softmax-weighted top-k (curriculum) softmax-weighted top-k (curriculum) Routing temperature 1.0 1.0
+
+Composer softmax on on 
+
+Optimization 
+
+Optimiser AdamW (β1=0 .9, β 2=0 .999) AdamW (β1=0 .9, β 2=0 .999) 
+
+Weight decay 0.01 0.01 
+
+Learning rate 1.0×10 −4 8.0×10 −5
+
+LR schedule cosine cosine Warm-up 500 steps 500 steps 
+
+Hardware & data loading 
+
+GPUs 8× NVIDIA A100 80 GB 8× NVIDIA A100 80 GB Distributed DDP, find_unused_parameters=true DDP, find_unused_parameters=true 
+
+Dataloader workers / prefetch / per-sistent 
+
+8 per rank / 4 / on 8 per rank / 4 / on 
+
+Table 6: Hyperparameter configuration of Doc2Atom on both base LLMs. Values are read row by row: the middle column is the gemma-2-2b-it run, the right column is the Qwen3-4B-Instruct-2507 run. 
+
+20
