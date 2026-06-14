@@ -1,0 +1,1172 @@
+Title: AbstRAG: Learning to Abstract for Retrieval Problems
+
+URL Source: https://arxiv.org/pdf/2606.09459v1
+
+Published Time: Tue, 09 Jun 2026 02:16:15 GMT
+
+Number of Pages: 26
+
+Markdown Content:
+# AbstRAG: Learning to Abstract for Retrieval Problems 
+
+Lei Xu 1,2 Xin Quan 1 Daniel Pedronette 3 André Freitas 1,4,51Idiap Research Institute, Switzerland 
+
+> 2
+
+École Polytechnique Fédérale de Lausanne (EPFL), Switzerland 
+
+> 3
+
+São Paulo State University, Brazil 
+
+> 4
+
+Department of Computer Science, University of Manchester, United Kingdom 
+
+> 5
+
+CRUK National Biomarker Centre, University of Manchester, United Kingdom 
+
+{lei.xu, xin.quan, andre.freitas}@idiap.ch pedronette@unesp.br 
+
+Abstract 
+
+Retrieval-augmented generation often fails when the query, the document evidence, and the user’s intent are expressed at different levels of abstraction. A query may ask about a class, a relation, or an event, while the document only states specific instances, indirect framings, or scoped formulations. We define this mismatch as an abstraction gap : the minimal set of typed assumptions required to align query intent with the available evidence. To close this gap, we introduce AbstRAG , which treats abstraction as an explicit retrieval object. AbstRAG de-composes the query–evidence gap into expres-sion, conceptual, intent–evidence, and event-type components, and scores relevance by com-bining match quality, a query-independent util-ity prior, and the cost of the required bridges. Its central mechanism is reflective refinement :a critic diagnoses retrieval failures, localizes the failed abstraction operator, proposes a mini-mal stage-specific patch, and accepts the patch only under sufficiency and compression con-trols. Across three within-document retrieval benchmarks against seven baselines, AbstRAG outperforms on nDCG@10 in 18 of 21 paired-bootstrap contrasts and improves generation accuracy by 1.9%, 5.2%, and 4.0% across the three benchmarks; ablations confirm that re-flective refinement drives most of the retrieval gain and the compression control alone reduces over-expansion false positives from 73.7% to 0% on a stress slice. 
+
+1 Introduction 
+
+Retrieval-augmented generation (RAG) is intended to ground language-model outputs in external evi-dence, but many of its failures are not just failures to retrieve a lexically similar passage (Lewis et al., 2020; Chen et al., 2024b): they arise when the query, the available evidence, and the user’s in-tended information need are expressed at different levels of abstraction. A user may ask for a cate-gory, a relation, or an event, while the document states only concrete roles, consequences, artifacts, dates, or local descriptions. In such cases, rele-vance depends on whether the retrieval system can produce a bridge between the evidence and the query intent: a ‘CEO’ may satisfy a query for an ‘executive’, a recorded visit may support a query about a meeting or collaboration, and a document-level date may supply the temporal scope for an otherwise underspecified sentence. Dense retrieval typically treats these distinct operations as a single embedding-based similarity score, so the generator is left either to infer an abstraction that the evidence does not support, or to miss the evidence altogether (Karpukhin et al., 2020; Khattab and Zaharia, 2020; Aly et al., 2021; Chen et al., 2024a; Schlichtkrull et al., 2023). We call this mismatch the RAG abstraction gap :the minimal set of typed assumptions required to align query intent with the evidential form available in the document. The gap covers expression-level variation, conceptual abstraction, intent-evidence membership, and event-type inference; each bridge carries a different inferential risk and should there-fore be named, costed, and repairable. AbstRAG is built around this view, treating abstraction as an explicit retrieval object. The gap is not addressable via a single similarity relation. A candidate segment supports a query only after distinct inferential steps are enacted, e.g. entity normalization, role binding under a shared temporal or discourse scope, and linking of indi-rect consequences to event-level evidence. Dense retrieval folds these heterogeneous operations into one similarity score grounded on latent objects, and so cannot identify which bridge made a seg-ment relevant, or where a failure should be repaired (Karpukhin et al., 2020; Khattab and Zaharia, 2020; 1
+
+> arXiv:2606.09459v1 [cs.CL] 8 Jun 2026
+
+Wu et al., 2023; Zhang et al., 2023). Structured, graph-based, and set-selection retrieval make more document structure available (Edge et al., 2024; Gutierrez et al., 2024; Lee et al., 2025; Chen et al., 2024b), but their improvements stay at the candi-date representation, leaving the bridge itself im-plicit. Document structure provides a second, weaker signal about where such bridges are worth attempt-ing. Evidence-bearing content is not uniformly distributed: in a scientific report, results, meth-ods, and conclusions tend to carry the asserted claims and primary evidence, while background sections supply context. This regularity does not by itself determine relevance, but it gives retrieval a query-independent utility prior. AbstRAG uses this prior to favor contribution-bearing segments before query-specific matching, while leaving the decision that a segment actually supports the query to the typed bridge calculus. AbstRAG frames retrieval as costed abductive alignment between query intent and document evi-dence. The relevance score combines match qual-ity, the utility prior, and a bridge-cost discount, so a segment is preferred when it satisfies the query with fewer or safer bridges. The key additional step is reflective refinement (Madaan et al., 2023; Asai et al., 2024; Yan et al., 2024; Quan et al., 2024; Mohr et al., 2026): when retrieval is insuffi-cient, a critic diagnoses the failed abstraction, lo-calizes the responsible bridge family, proposes a minimal patch to the corresponding operator, and accepts the patch only under sufficiency, compres-sion, and non-regression controls. Figure 1 sum-marizes the stage-localized procedure connecting indexing-time canonicalization, query-time con-trolled expansion, and reflective updates. Our contributions are threefold. 1. Method. We make reflective refinement a first-class retrieval object: a critic-driven loop that edits typed bridging operators under explicit acceptance criteria. Three supporting objects, a utility prior, a costed semantic gap, and an indexing-query operator calculus connected by minimal-context lifting, together specify where refinement patches can act, with full develop-ment in Sections 3.1–3.6. 2. Structural properties. We establish two struc-tural properties of the framework: a multiplica-tive dominance order on the relevance score, and a zero-cost conservativity condition that identifies which document-side operators may safely move to indexing time without chang-ing retrieval semantics; both are stated in Sec-tion 3.4 and Section 3.5, with proofs in Ap-pendix G. 3. Empirical. On three within-document bench-marks against seven baselines, AbstRAG out-performs every baseline on nDCG@10 in the vast majority of cases and improves generation accuracy on all three benchmarks; ablations at-tribute most of the retrieval gain to reflective refinement. 
+
+2 Related Work 
+
+RAG has developed along two complementary di-rections. One direction improves the retrieval repre-sentation: dense passage retrieval and late interac-tion (Karpukhin et al., 2020; Khattab and Zaharia, 2020; Lewis et al., 2020), hypothesis-document ex-pansion (Gao et al., 2023), set selection (Lee et al., 2025), and graph-derived retrieval (Edge et al., 2024; Gutierrez et al., 2024; Wu et al., 2023). The other places retrieval inside an adaptive or reflective control loop: query rewriting (Ma et al., 2023), in-terleaved chain-of-thought retrieval (Trivedi et al., 2023; Jiang et al., 2023; Shao et al., 2023), adap-tive routing between policies (Jeong et al., 2024; Li et al., 2025; Ye et al., 2025; Jullien et al., 2024; Ranaldi et al., 2025), and critic-driven revisers that edit the generated answer (Asai et al., 2024; Yan et al., 2024; Madaan et al., 2023; Ranaldi and Fre-itas, 2024; Quan et al., 2024; Mohr et al., 2026). Both directions improve specific stages but leave abstraction implicit: surface variation, role bind-ing, and conceptual mismatches collapse into one similarity score or are repaired only by free-form answer rewrites. The closest literature to AbstRAG are the critic-driven revisers Self-RAG (Asai et al., 2024) and CRAG (Yan et al., 2024). AbstRAG differs in three ways: the abstraction map MD is document-local with typed and explicit abstraction bridges; reflec-tive refinement edits the retrieval mechanism un-der typed acceptance criteria, while Self-RAG and Self-Refine (Madaan et al., 2023) edit the gener-ated answer; and edits are inference-time stage-local patches accepted under sufficiency criteria, while CRAG and Q-PRM (Ye et al., 2025) apply per-query string rewrites. Claim-verification work (Thorne et al., 2018; Wadden et al., 2020; Aly et al., 2021; Jiang et al., 2020; Schlichtkrull et al., 2023; 2Event Abs             
+
+> Abstractive query builder
+> Abs map
+> Conceptual
+> Query
+> <𝑞 𝑖 ,𝑑 𝑗 >
+> Explain
+> 𝜋 𝑒𝑣𝑒𝑛𝑡
+> 𝑀
+> 𝜋 𝑐𝑜𝑛
+> 𝜋 𝑞𝑢𝑒𝑟𝑦
+> Reflective Explainer
+> 𝐼
+> Localize
+> Refine 𝜃 𝑖 +1𝜋 𝑡
+> iteration i
+> <𝑛 𝑙 𝑖 ,𝐷’ >
+> +coverage: 𝑛𝑙 ,𝑁𝐿
+> +monotonic improvement: Μ,Θ
+> Π
+> 𝒟
+> Critic <𝑛 𝑙 𝑖 ,𝐷’ >
+> Θ
+> 𝒪
+> exp
+> Indexer
+
+Figure 1: AbstRAG with stage-localized reflective refinement. The abstractive query builder Π (purple, left) composes typed query stages πcon , π M, π event , π query over the indexed document, producing a top-K retrieval. The critic (red, bottom) either accepts the result ( ✓) or routes a rejected retrieval to the reflective explainer Θ (blue, right), which explains the failure, localizes the responsible stage, and refines the corresponding operator πt for the next iteration. Patches are accepted only under monotonic improvement of Suff and Comp on the control / trigger episode set. 
+
+Glockner et al., 2024; Chen et al., 2024a; Zerong et al., 2025) shares the bridging perspective on structurally displaced evidence; we borrow that framing but without the explicit abstraction compo-nent. 
+
+3 Method 
+
+3.1 Notation and Motivating Example 
+
+A document D is segmented into discourse units 
+
+Seg( D) = {s1, . . . , s n}, each with a layout role 
+
+role L(s) drawn from a small set of canonical sections that we later use to define the query-independent utility prior. A query q is represented by a target semantic form φq together with op-tional answer-type, temporal, and scope constraints. We scope this paper to single-document retrieval support; accordingly, the background resource B
+
+collects alias dictionaries, temporal-normalization rules, lightweight taxonomic knowledge, and event-schema hints drawn from within or paired with that single document. We write S(s) for the semantic content of s, i.e. the claims, properties, concepts, and evidence objects retrieval matches against; fine-grained typing is in Appendix A. To make the gap concrete, consider the query “Give me all collaborations between LLM com-panies and chip suppliers in 2024 ” against a tech-news document whose header dates to 
+
+2024-05-15 and contains the sentence “ The CTO of Anthropic visited the head of TSMC’s 3 nm fabrication division this Tuesday. ” Embedding-only retrieval typically returns generic “LLM– chip partnerships 2024” and misses the Anthropic– TSMC sentence, because retrieving it requires three operations that embedding similarity does not name: bridging TSMC to chip supplier and An-thropic to LLM company through affiliation, bridg-ing CTO and division head to company representa-tive through office-to-type rules, and binding both roles to the same event under a temporal scope drawn from the document header. In our main experimental runs the role and event bridges are populated by the document-local abstraction map 
+
+MD, as developed in Section 3.4; a 30-case toy-B
+
+sanity check in Appendix L verifies that AbstRAG works as intended when B is non-empty. The re-mainder of the paper makes each bridge a first-class retrieval modeling object, and routes refinement to whichever mechanism is responsible when retrieval fails. 
+
+3.2 Utility Prior 
+
+Factual documents distribute their key content un-evenly across segments. Results and conclusions carry the novel claims, methods carry credibility 3cues, and background sections carry context. We model this distribution as a query-independent prior 
+
+U (s | D) ∈ R≥0 grounded on document layout, interpreted as the expected contribution of s under a query distribution appropriate for the document’s genre and domain. 
+
+U combines a layout-role term and acontribution-mass term additively, 
+
+U (s | D) = α U L(s) + U contrib (s), (1) where U L(s) = wL(role L(s) | genre , domain) is a layout-role weight keyed by genre and domain, and U contrib (s) = NovMass( s) · AsrtMass( s) is the product of a novelty term and an assertedness term. The additive outer form lets the layout-role and contribution-mass signals each provide an in-dependent baseline. The empirically calibrated 
+
+wL schedule and the trust-weighted decomposi-tion of NovMass and AsrtMass are described in Appendix B. 
+
+3.3 Semantic Gap as Costed Bridging 
+
+We treat the gap between query semantics φq and segment semantics S(s) as an explicit alignment object. Let Aq,s be a finite candidate set of admis-sible bridging assumptions enumerable from the abstraction map MD and the controlled DNF ex-pansion of φq in Section 3.4, and write type( a) ∈{expr , abs , intent , event } for the bridge family of 
+
+a ∈ A q,s . The minimal bridging set collects the assumptions required for segment plus background plus bridges to entail the query, 
+
+A⋆q,s = arg min 
+
+> A⊆A q,s
+
+Cost( A),
+
+s.t. S(s) ∪ B ∪ A ⊢ φq,
+
+(2) The associated cost of this set of operations de-fines the abstraction gap , Gap( q, s ) = Cost( A⋆q,s ),with the convention Gap( q, s ) = + ∞ when no fea-sible A exists. We require Cost : 2 Aq,s → R≥0 to be non-negative with Cost( ∅) = 0 , monotonic in inclu-sion, and to weight bridges by their (operational) type via ω(type( a)) with ω(expr) ≤ ω(abs) ≤
+
+ω(intent) ≈ ω(event) so that Rel in Section 3.5 is monotone in Cost . Finiteness of Aq,s and non-negativity make arg min attainable. In our imple-mentation we use the additive instantiation 
+
+Cost( A) = X
+
+> a∈A
+
+ ω(type( a)) + δ(a), (3) where δ(a) ≥ 0 measures the distance or commit-ment a specific bridge introduces; full δ catalogs are in Appendix C, and alternative non-negative aggregators are admissible. The four families partition A. The expression gap (Aexpr ) covers same-referent surface variation at low cost; the conceptual gap (Aabs ) covers para-phrase and conceptual-level shifts at medium cost; the intent-evidence gap (Aintent ) covers inferences from specific evidence to a more general queried class, e.g., “CTO of Anthropic” to “AI company representative”; the event-type gap (Aevent ) covers indirect event evidence through frames, nominal-izations, and artifacts. The last two rely on typical-ity, so retrieval treats them as revisable hypotheses that still pay positive cost; the cost-budgeted ex-pansion in Section 3.4 admits them only when the budget τ allows. Per-family δ(a) catalogs are in Appendix C. 
+
+3.4 Operator Calculus: Indexing vs. Query Expansion 
+
+The gap definition in Section 3.3 is declarative. To compute it, the method splits two operator families that share a single intermediate object. Document-side operators are query-independent transforma-tions applied offline at indexing time; query-side operators are applied online and depend on the information need. Indexing applies conservative normalizations once and reuses them across all fu-ture queries, while query-side expansion remains closely aligned to user intent and is restricted to cost-bounded controlled disjunction. The two families share a single intermediate ob-ject, the minimal-context lifting operator LiftCtx ,which attaches a sufficient context C⋆(s) =
+
+⟨E, T, Σ, E⟩ to each segment s, binding entities (E), time ( T ), scope ( Σ), and attribution ( E). The indexing pipeline composes LiftCtx into the eight-operator chain 
+
+Idx (D) = BuildMap ◦ AbsEvent ◦ AbsConcept 
+
+◦ LiftCtx ◦ NormTime 
+
+◦ NormNE ◦ Coref ◦ Seg L(D), (4) applied right-to-left from layout segmentation, coreference, named-entity canonicalization, and temporal normalization, through minimal-context lifting, concept abstraction, event abstraction, and the abstraction-map build (the order is fixed: 
+
+LiftCtx requires entity and temporal binding to be in place; see Appendix D). After indexing, each 4segment s carries its role role L(s), utility U (s | D),lifted context C⋆(s), and canonical form Scan (s),while the document carries an abstraction map 
+
+MD. We single out the document-side operators that are conservative. 
+
+Proposition 3.1 (Conservativity of zero-cost canonicalization) . Let T0 be a document-side operator on segment semantics satisfying, for all S, B, A, φ ,
+
+(T1) S ∪ B ∪ A ⊢ φ
+
+⇐⇒ T0(S) ∪ B ∪ A ⊢ φ, 
+
+(T2) Cost( A) is invariant under T0.
+
+Then, writing eS(s) = T0(Scan (s)) ,
+
+gGap( q, s ) = Gap( q, s ) ∀ (q, s ).
+
+Alias resolution, temporal normalization, and sim-ilar truth-preserving zero-cost lifts can therefore move to the index without changing retrieval semantics; the proof is in Appendix G. Non-conservative bridges carry positive cost and stay query-side under τ . The conditions on C⋆ and Algorithm 2 are in Appendix D. A query is first mapped into the canonical space of the index by NormQuery (φq) and then ex-panded into a cost-bounded disjunction 
+
+Expand τ (φq) = _ 
+
+> i: Cost( ci)≤τ
+
+^
+
+> j
+
+ℓij , (5) where each clause ci = V 
+
+> j
+
+ℓij is a typed-bridging alternative, each literal ℓij is one bridge appli-cation drawn from Aq,s , and the per-clause cost 
+
+Cost( ci) = P
+
+> j
+
+ ω(type( ℓij ))+ δ(ℓij ) reuses the additive aggregator of Eq. (3) . The budget τ makes the gap typology a runtime control: low τ admits only expression-level expansion, higher τ admits abstraction and event bridges. The full procedure is in Algorithm 3 and Appendix D. 
+
+3.5 Relevance Integration 
+
+The three components combine multiplicatively into the operational relevance score 
+
+Rel( q, s ) = Match( q, s ) · U (s | D)
+
+· exp  −Gap( q, s ), (6) where Match : Q×S → [0 , 1] is a clause-coverage functional realized as either a hard entailment in-dicator or a soft coverage ratio, with the two re-alizations specified in Appendix E; U (s | D) ∈
+
+R≥0 is the utility prior from Section 3.2; and 
+
+exp  −Gap( q, s ) is a multiplicative discount that decays smoothly with bridge cost. 
+
+Lemma 3.2 (Dominance under higher utility and lower gap) . For any query q and seg-ments s1, s 2, if 
+
+Match( q, s 1) ≥ Match( q, s 2),U (s1 | D) ≥ U (s2 | D),
+
+Gap( q, s 1) ≤ Gap( q, s 2),
+
+then Rel( q, s 1) ≥ Rel( q, s 2).
+
+This fixes a partial ranking order; reversals con-tradicting it indicate a model or implementation error, with the proof in Appendix G. Document-level relevance aggregates segment scores under one of three choices per experiment: the default top-k mean, top-1, and log-sum-exp. 
+
+3.6 Reflective Refinement 
+
+Reflective refinement updates the abstraction opera-tors governing indexing and query expansion in re-sponse to typed retrieval failures. The evolving sys-tem carries the state Ξi = ⟨O i, Πi, Mi, Θi⟩, where 
+
+O collects document-side indexing operators, Π
+
+collects query-side prompt or policy builders de-composed into typed stages, M is the abstraction map, and Θ governs the critic, localization, and re-finement judges. Each prompt has four slots; only the rules and the few-shot examples are editable, and edits are appended to a persistent policy store so the next query benefits without re-deriving the patch. The critic returns a structured failure object 
+
+fq,s = ⟨q, s, φ q, A ⋆q,s , Gap( q, s ), κ q,s ⟩, where κq,s 
+
+records unmet literals, dominant gap terms, ambi-guity flags, and over-expansion indicators. The proposer responds with a stage-localized patch 
+
+ui = ⟨t, ∆t⟩, where t names the stage and ∆t is a minimal change to that stage’s prompt, policy, or rule set. Three constraints address two risks: noisy judges and unconstrained drift. 1. Typed localization. Each failure is attributed to a stage loc( failure ) ∈ S, where S =
+
+{πcon , π M, π event , π query } and the named-entity and synonym/paraphrase substages are merged into πM in the implementation. Apatch always names the stage it edits. 5Algorithm 1 AbstRAG with stage-local refine-ment.                                          
+
+> Require: query q, document D, background B, state Ξi=
+> ⟨O i,Πi,Mi,Θi⟩
+> Return: ranked segments R, updated state Ξi+1
+> 1: Index Dand build canonical query under Ξi, producing
+> ID,U, and Q
+> 2: Rank segments by Rel( q, s )from Eq. (6) ; let Rbe the resulting top-K
+> 3: if critic θcritic rejects R, propose a stage-localized patch
+> ui; accept and apply it to obtain Ξi+1 only if Eqs. (7) –(8) both hold; otherwise Ξi+1 ←Ξi
+> 4: return R,Ξi+1
+
+2. Costed changes. Patch cost reuses the gap typology of Section 3.3: high-risk operators carry higher patch cost than low-risk ones, and a bounded budget limits patch attempts and operator complexity so rule sets cannot grow without control. 3. Monotonic acceptance. Write Suff( q, D ; Ξ) ∈{0, 1} for the critic’s binary verdict that the top-K retrieved evidence under Ξ supports a complete answer, and Comp( q, D ; Ξ) ∈ R≥0
+
+for the top-1 segment relevance as a concentra-tion proxy, which is higher when the top-1 seg-ment dominates the top-K pool. Throughout, 
+
+∆X(Ξ i → Ξi+1 ) := X(·; Ξ i+1 ) − X(·; Ξ i) de-notes the signed change of any signal X when the state moves from Ξi to Ξi+1 . A candidate patch is accepted only if both 
+
+∆Suff( q, D ; Ξ i → Ξi+1 ) ≥ 0, (7) 
+
+∆Comp( q, D ; Ξ i → Ξi+1 ) ≥ 0, (8) hold on an episode set that contains the trigger-ing failure plus a control of preserved cases; Ap-pendix F routes ∆Suff to the control half and 
+
+∆Comp to the trigger half. The sufficiency cri-terion (7) prevents regression on solved cases; the compression control (8) penalizes over-expansion and reliance on high-cost bridging. Algorithm 1 states the runtime procedure; the judge split, mutation router, control-overlap proxy, and on-disk policy store are in Appendix F. 
+
+4 Experiments 
+
+4.1 Setup Datasets. We evaluate on three benchmark fami-lies chosen to exercise different aspects of within-document retrieval. SciFact (Wadden et al., 2020) is section-aware scientific evidence retrieval ( 323 
+
+dev claims, single cited document per claim); 
+
+FEVEROUS (Aly et al., 2021) is metadata-routed page-local retrieval ( 250 -case subset balanced across challenge types); QASPER (Dasigi et al., 2021) is single-document scientific QA ( 250 -case subset balanced across answer types). Per-family target mechanisms are summarized in Appendix H. In addition, we collect a small refinement-stress slice sampled from SciFact and FEVEROUS fail-ure seeds plus solved controls. 
+
+Baselines. Seven zero-shot baselines under matched single-document candidate pools span the standard retrieval families: BM25; Dense with gte-modernbert-base (Warner et al., 2024); cross-encoder rerank with 
+
+BAAI/bge-reranker-base (Xiao et al., 2024) over BM25 top-k; HyDE (Gao et al., 2023); IRCoT (Trivedi et al., 2023); Self-RAG (Asai et al., 2024); and CRAG (Yan et al., 2024). Graph-augmented multi-document systems and supervised dataset-native pipelines are excluded as incompatible with the single-document zero-shot scope; full rationale is in Appendix I. 
+
+Metrics. Per dataset we report one standard set-F1 metric and two retrieval metrics aligned with the bridge mechanism: Sufficiency@ K and nDCG@10 (Järvelin and Kekäläinen, 2002); the formal definitions are in Appendix J. Genera-tion accuracy is 3-class label accuracy for Sci-Fact / FEVEROUS and token-level Answer-F1 for QASPER, computed by feeding each system’s top-
+
+3 retrieved evidence into the answer generator. 
+
+Experimental setup. All systems use 
+
+gpt-5.4-mini-2026-03-17 under matched prompt templates (Appendix M), judges, and de-coding controls; benchmark-specific instantiation of B is in Appendix B, and tuning protocol and hyperparameter defaults are in Appendix K. The always-on operator suite supports the empirical claims below, with ExpRole and ExpTime demon-strated separately on the toy-B sanity check; see Appendix L. 
+
+Statistical protocol. All AbstRAG-vs-baseline contrasts are case-aligned paired-bootstrap CIs (B=10 ,000 ); “CI excludes zero” is equivalent to a 
+
+95% -confidence claim that AbstRAG outperforms the baseline. 
+
+4.2 Main Results 
+
+Table 1 reports retrieval and generation accuracy of AbstRAG against the seven baselines on SciFact, 6Table 1: Retrieval (Suff@5, nDCG@10) and generation accuracy on three within-document benchmarks; all values 
+
+×100 , per-column winners in bold. Self-RAG and CRAG are within-document instantiations using the same backbone. Per-class splits, dataset-native set-F1 sanity checks, and per-system n counts are in Appendix L.                                                                                                       
+
+> SciFact ( n=323 )FEVEROUS ( n=250 )QASPER ( n=250 )
+> retrieval generation retrieval generation retrieval generation
+> Method Suff@5 nDCG@10 3-cls Acc Suff@5 nDCG@10 3-cls Acc Suff@5 nDCG@10 Ans-F1 BM25 (Robertson and Zaragoza, 2009) 76.2 45.5 78.3 37.2 58.7 53.2 46.0 28.6 30.4 Dense (Warner et al., 2024) 85.4 50.3 81.1 26.0 51.5 46.0 51.6 34.9 33.3 CE-Rerank (Xiao et al., 2024) 84.5 51.0 80.5 27.6 55.0 48.8 50.8 31.8 30.2 HyDE (Gao et al., 2023) 86.1 51.9 80.8 28.0 51.8 49.2 50.8 37.8 31.9 IRCoT (Trivedi et al., 2023) 70.3 37.6 81.4 21.2 39.7 51.2 38.0 18.5 30.8 Self-RAG (Asai et al., 2024) 87.6 51.0 81.7 31.6 45.5 39.6 55.2 37.0 31.4 CRAG (Yan et al., 2024) 78.9 46.5 78.3 37.6 57.2 50.4 52.8 36.1 33.1 AbstRAG (ours) 87.0 55.7 83.6 38.8 59.1 58.4 56.8 43.1 37.3 010 20
+> = AbstRAG baseline (×100)
+> BM25
+> Dense
+> CE-Rerank
+> HyDE
+> IRCoT
+> Self-RAG
+> CRAG
+> SciFact
+> 010 20
+> = AbstRAG baseline (×100)
+> BM25
+> Dense
+> CE-Rerank
+> HyDE
+> IRCoT
+> Self-RAG
+> CRAG
+> FEVEROUS
+> 010 20 30
+> = AbstRAG baseline (×100)
+> BM25
+> Dense
+> CE-Rerank
+> HyDE
+> IRCoT
+> Self-RAG
+> CRAG
+> QASPER
+> Suff@5 nDCG@10 Generation CI contains zero CI excludes zero
+
+Figure 2: Paired-bootstrap CIs of AbstRAG minus each baseline on Suff@5 (blue square), nDCG@10 (orange circle), and generation accuracy (green triangle), shown separately for SciFact, FEVEROUS, and QASPER. Filled markers with a star indicate CIs that exclude zero; open markers indicate CIs that contain zero. AbstRAG leads on 
+
+18 of 21 nDCG@10 contrasts; the three exceptions are all on FEVEROUS and are discussed in Section 4.5. 
+
+FEVEROUS, and QASPER; Figure 2 reports the paired-bootstrap CIs against each baseline. We observe two main findings. 
+
+AbstRAG outperforms every baseline on top-5
+
+retrieval by moving gold spans from ranks 6–10 
+
+into the top-5. AbstRAG raises Suff@5 by +1 .2
+
+over CRAG on FEVEROUS and +1 .6 over Self-RAG on QASPER, the two non-saturated datasets: each point of Suff@5 corresponds to one query where a gold span moved from ranks 6–10 into the top-5. The same effect carries to ranking quality, where AbstRAG leads every nDCG@10 column in Table 1 and 18 of 21 paired-bootstrap CIs exclude zero, as the orange circles in Figure 2 show, so the top-5 improvement is a consistent system-level property. 
+
+Retrieval gains improve generation most when answers depend on selecting local page elements. 
+
+Feeding each system’s top-3 retrieval into the an-swer generator carries the retrieval gains over to generation accuracy: AbstRAG leads the next-best baseline by +1 .9% on SciFact, +5 .2% on FEVER-OUS, and +4 .0% on QASPER. The FEVEROUS and QASPER gaps are larger because page-local element selection and top-3 answer extraction in-crease the relative value of correctly ranking gold evidence. The gain is statistically significant on 10 
+
+of 21 system–dataset contrasts, with FEVEROUS the strongest setting where 6 of its 7 baselines reach significance; per-baseline CIs are in Appendix L. 7Table 2: Ablation of reflective refinement on SciFact and FEVEROUS; values ×100 . The ∆ column reports (w/o refine) − (Ours), so negative values indicate that removing refinement degrades the metric. ⋆ marks con-trasts whose CI excludes zero (all 4 contrasts). Ours is this table’s reference run; it differs slightly from Table 1 because LLM calls are independent.                       
+
+> SciFact ( n=322 )FEVEROUS ( n=250 )Metric Ours ∆w/o refine Ours ∆w/o refine Suff@10 93.2 −1.6⋆[−3.1,−0.3] 41.6 −9.2⋆[−13 .6,−5.2]
+> nDCG@10 54.9 −2.0⋆[−3.7,−0.5] 54.7 −6.7⋆[−9.7,−3.9]
+
+4.3 Removing Reflective Refinement Isolates the Mechanism 
+
+Table 2 reports the paired-CI ablation on SciFact (n=322 ) and FEVEROUS ( n=250 ); w/o refine-ment turns off the refinement loop with the rest of the pipeline fixed. We report retrieval metrics be-cause refinement acts directly on the retrieval stage and generator variance dilutes the ablation signal. We observe: 
+
+Refinement helps more when baseline Suff@10 is far from its dataset maximum, and less when it is already near that maximum. On FEVER-OUS, where baseline Suff@10 is 41 .6, w/o re-finement loses on every metric and drops 9.2
+
+Suff@10 and 6.7 nDCG@10; on SciFact, where the sentence-level pool is already near a ∼ 93% 
+
+Suff@10 ceiling, the loss shrinks to −1.6 Suff@10 and −2.0 nDCG@10. 
+
+Refinement triggers more often where evidence needs abstraction beyond surface matching. 
+
+The refinement loop activates on 2% of SciFact, 
+
+19% of QASPER, and 41% of FEVEROUS cases (Appendix L), tracking evidence difficulty: Sci-Fact and QASPER allow surface matching for most claims; FEVEROUS’s metadata-routed page-element evidence requires bridging the initial rank-ing does not produce. 
+
+4.4 Compression Control Suppresses Over-Expansion 
+
+On a small refinement-stress slice (Appendix L), we contrast Ours against w/o sufficiency control 
+
+and w/o compression control . We observe: 
+
+Sufficiency and compression controls block dis-tinct errors that the other cannot catch. Ours and the two ablations agree on Suff@10 ( 73 .7), nDCG@10 ( 37 .7), and preserved-case rate ( 100 ), with zero regressions. Dropping the compression 
+
+Table 3: nDCG@10 of AbstRAG against the strongest non-IRCoT baseline, broken down by query family. The ∆ column reports (AbstRAG) − (best baseline). The Group column lists evidence labels for SciFact and FEVEROUS, and answer types for QASPER.                                    
+
+> Family Group nOurs Best ∆
+> SciFact SUPPORTS 138 86.4 83.0 +3 .4
+> REFUTES 71 85.7 78.8 +6 .9
+> FEVEROUS SUPPORTS 119 70.1 73.1 −3.1
+> REFUTES 114 49.0 42.6 +6 .4
+> QASPER extractive 130 56.5 51.1 +5 .4
+> abstractive 50 56.9 45.7 +11 .2
+> yes_no 40 40.1 34.6 +5 .5
+
+control ∆Comp ≥ 0 is the only configuration that separates from Ours: the over-expansion false-positive rate jumps from 0% to 73 .7% , isolating over-expansion as the error that only the compres-sion control catches. The sufficiency control plays the symmetric role on FEVEROUS, where remov-ing it costs 9.2 Suff@10 (Section 4.3) and compres-sion alone does not block the regressions. 
+
+4.5 Per-Family Breakdown and Negative Result 
+
+Table 3 reports the per-family nDCG@10 break-down of AbstRAG against the strongest non-IRCoT baseline. We observe: 
+
+AbstRAG’s gain depends on the evidence link a query family needs; the one negative is budget overrun, not operator failure. AbstRAG leads on 6 of 7 families with gold support. The largest gains come from non-surface links: QASPER abstractive ( +11 .2) needs aggregating scattered text; SciFact and FEVEROUS REFUTES ( +6 .9,
+
++6 .4) match negated claims through role and event bridging. The exception FEVEROUS SUPPORTS (−3.1) crosses two bridge types whose summed cost exceeds the budget τ ; lifting τ would restore it at the cost of noisier expansions. 
+
+5 Conclusion 
+
+AbstRAG makes reflective refinement a first-class retrieval object: typed bridging operators edited under sufficiency and compression controls, sup-ported by a utility prior, a costed semantic gap, and an indexing–query operator calculus. To-gether these make abstraction and revision explicit retrieval objects with computable cost, giving a shared vocabulary for diagnosing retrieval failure. 86 Limitations 
+
+We see three open directions that the present for-mulation does not yet cover. The theory is deliber-ately scoped to within-document retrieval support, so multi-document multi-hop reasoning, open-web verification, and domains with weak layout or dis-course signals remain out of reach; extending the bridge calculus and the document-local abstrac-tion map MD across documents is a natural next step that we expect to interact in non-trivial ways with the cost calibration of typed operators. A sec-ond direction concerns the background resource B,which is empty on all three reported benchmarks because none ships an official paired knowledge base; the toy-B sanity check in Appendix L verifies that AbstRAG behaves correctly when B is non-empty, while a full instantiation with domain-scale taxonomies, schema dictionaries, or curated event ontologies would extend the effect of role-to-type and time-window operators from the motivating example to the main benchmarks. Reflective refine-ment itself is bounded but not globally convergent: the acceptance rule guarantees non-regression on the control set, but does not guarantee that a long sequence of accepted patches reaches a fixed point. A formal convergence guarantee, alongside an in-cremental update rule for MD during refinement cycles, would close the gap between the current bounded-budget treatment and a fully convergent refinement loop. 
+
+Acknowledgments 
+
+This work was partially funded by the Swiss Na-tional Science Foundation (SNSF) projects RATIO-NAL and M-RATIONAL. 
+
+References 
+
+Rami Aly, Zhijiang Guo, Michael Sejr Schlichtkrull, James Thorne, Andreas Vlachos, Christos Christodoulopoulos, Oana Cocarascu, and Arpit Mittal. 2021. The fact extraction and VERification over unstructured and structured information (FEVEROUS) shared task. In Proceedings of the Fourth Workshop on Fact Extraction and VERification (FEVER) .Akari Asai, Zeqiu Wu, Yizhong Wang, Avirup Sil, and Hannaneh Hajishirzi. 2024. Self-RAG: Learning to retrieve, generate, and critique through self-reflection. In ICLR .Collin F. Baker, Charles J. Fillmore, and John B. Lowe. 1998. The Berkeley FrameNet project. In ACL , pages 86–90. Steven Bird, Ewan Klein, and Edward Loper. 2009. Nat-ural Language Processing with Python . O’Reilly Media. Olivier Bodenreider. 2004. The Unified Medical Lan-guage System (UMLS): integrating biomedical ter-minology. Nucleic Acids Research , 32(Database issue):D267–D270. Jifan Chen, Grace Kim, Aniruddh Sriram, Greg Durrett, and Eunsol Choi. 2024a. Complex claim verification with evidence retrieved in the wild. In NAACL .Yuxuan Chen, Daniel Roeder, Justus-Jonas Erker, Leon-hard Hennig, Philippe Thomas, Sebastian Moeller, and Roland Roller. 2024b. Retrieval-augmented knowledge integration into language models: A sur-vey. In Proceedings of the 1st Workshop on Towards Knowledgeable Language Models (KnowLLM 2024) .Pradeep Dasigi, Kyle Lo, Iz Beltagy, Arman Cohan, Noah A. Smith, and Matt Gardner. 2021. A dataset of information-seeking questions and answers anchored in research papers. In NAACL .Darren Edge, Ha Trinh, Newman Cheng, Joshua Bradley, Alex Chao, Apurva Mody, Steven Truitt, Dasha Metropolitansky, Robert Osazuwa Ness, and Jonathan Larson. 2024. From local to global: A Graph RAG approach to query-focused summariza-tion. Preprint , arXiv:2404.16130. Luyu Gao, Xueguang Ma, Jimmy Lin, and Jamie Callan. 2023. Precise zero-shot dense retrieval without rele-vance labels. In ACL .Max Glockner, Ieva Stali ¯unait ˙e, James Thorne, Gisela Vallejo, Andreas Vlachos, and Iryna Gurevych. 2024. AmbiFC: Fact-checking ambiguous claims with evi-dence. Transactions of the Association for Computa-tional Linguistics , 12:237–256. Bernal Jimenez Gutierrez, Yiheng Shu, Yu Gu, Michi-hiro Yasunaga, and Yu Su. 2024. HippoRAG: Neu-robiologically inspired long-term memory for large language models. In NeurIPS .Kalervo Järvelin and Jaana Kekäläinen. 2002. Cumu-lated gain-based evaluation of IR techniques. ACM Transactions on Information Systems , 20(4):422– 446. Soyeong Jeong, Jinheon Baek, Sukmin Cho, Sung Ju Hwang, and Jong Park. 2024. Adaptive-RAG: Learn-ing to adapt retrieval-augmented large language mod-els through question complexity. In NAACL .Yichen Jiang, Shikha Bordia, Zheng Zhong, Charles Dognin, Maneesh Singh, and Mohit Bansal. 2020. HoVer: A dataset for many-hop fact extraction and claim verification. In Findings of EMNLP .Zhengbao Jiang, Frank F. Xu, Luyu Gao, Zhiqing Sun, Qian Liu, Jane Dwivedi-Yu, Yiming Yang, Jamie Callan, and Graham Neubig. 2023. Active retrieval augmented generation. In EMNLP .
+
+9Mael Jullien, Alex Teodor Bogatu, Harriet Unsworth, and Andre Freitas. 2024. Controlled LLM-based reasoning for clinical trial retrieval. Preprint ,arXiv:2409.18998. Vladimir Karpukhin, Barlas O˘ guz, Sewon Min, Patrick Lewis, Ledell Wu, Sergey Edunov, Danqi Chen, and Wen tau Yih. 2020. Dense passage retrieval for open-domain question answering. In EMNLP .Omar Khattab and Matei Zaharia. 2020. ColBERT: Effi-cient and effective passage search via contextualized late interaction over BERT. In SIGIR .Dahyun Lee, Yongrae Jo, Haeju Park, and Moontae Lee. 2025. Shifting from ranking to set selection for retrieval augmented generation. In ACL .Vladimir I. Levenshtein. 1966. Binary codes capable of correcting deletions, insertions, and reversals. Soviet Physics Doklady , 10(8):707–710. Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Hein-rich Küttler, Mike Lewis, Wen tau Yih, Tim Rock-täschel, Sebastian Riedel, and Douwe Kiela. 2020. Retrieval-augmented generation for knowledge-intensive NLP tasks. In NeurIPS .Rui Li, Liyang He, Qi Liu, Zheng Zhang, Heng Yu, Yuyang Ye, Linbo Zhu, and Yu Su. 2025. UniRAG: Unified query understanding method for retrieval aug-mented generation. In ACL .Xinbei Ma, Yeyun Gong, Pengcheng He, Hai Zhao, and Nan Duan. 2023. Query rewriting in retrieval-augmented large language models. In EMNLP .Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, Shashank Gupta, Bodhisattwa Prasad Majumder, Katherine Hermann, Sean Welleck, Amir Yazdan-bakhsh, and Peter Clark. 2023. Self-refine: Iterative refinement with self-feedback. In NeurIPS .George A. Miller. 1995. WordNet: A lexical database for English. Communications of the ACM , 38(11):39– 41. Isabelle Mohr, Joao Pedro Gandarela, John Dujany, and Andre Freitas. 2026. Reflective reasoning for SQL generation. Preprint , arXiv:2601.06678. Donald Nute. 1994. Defeasible logic. In Handbook of Logic in Artificial Intelligence and Logic Pro-gramming, Vol. 3 , pages 353–395. Oxford University Press. John L. Pollock. 1987. Defeasible reasoning. Cognitive Science , 11(4):481–518. Xin Quan, Marco Valentino, Louise A. Dennis, and An-dre Freitas. 2024. Verification and refinement of nat-ural language explanations through LLM-symbolic theorem proving. In EMNLP .Leonardo Ranaldi and Andre Freitas. 2024. Self-refine instruction-tuning for aligning reasoning in language models. In EMNLP .Leonardo Ranaldi, Marco Valentino, and Andre Fre-itas. 2025. Eliciting critical reasoning in retrieval-augmented generation via contrastive explanations. In NAACL .Raymond Reiter. 1980. A logic for default reasoning. 
+
+Artificial Intelligence , 13(1–2):81–132. Stephen Robertson and Hugo Zaragoza. 2009. The probabilistic relevance framework: Bm25 and be-yond. Foundations and Trends in Information Re-trieval , 3(4):333–389. Michael Sejr Schlichtkrull, Zhijiang Guo, and Andreas Vlachos. 2023. AVeriTeC: A dataset for real-world claim verification with evidence from the web. In 
+
+NeurIPS Datasets and Benchmarks Track .Claude E. Shannon. 1948. A mathematical theory of communication. Bell System Technical Journal ,27(3):379–423. Zhihong Shao, Yeyun Gong, Yelong Shen, Minlie Huang, Nan Duan, and Weizhu Chen. 2023. Enhanc-ing retrieval-augmented large language models with iterative retrieval-generation synergy. In Findings of EMNLP .James Thorne, Andreas Vlachos, Christos Christodoulopoulos, and Arpit Mittal. 2018. FEVER: a large-scale dataset for fact extraction and VERification. In NAACL .Harsh Trivedi, Niranjan Balasubramanian, Tushar Khot, and Ashish Sabharwal. 2023. Interleaving retrieval with chain-of-thought reasoning for knowledge-intensive multi-step questions. In ACL .Denny Vrandeˇ ci´ c and Markus Krötzsch. 2014. Wiki-data: A free collaborative knowledgebase. Commu-nications of the ACM , 57(10):78–85. David Wadden, Shanchuan Lin, Kyle Lo, Lucy Lu Wang, Madeleine van Zuylen, Arman Cohan, and Hannaneh Hajishirzi. 2020. Fact or fiction: Verifying scientific claims. In EMNLP .Benjamin Warner, Antoine Chaffin, Benjamin Clavié, Orion Weller, Oskar Hallström, Said Taghadouini, Alexis Gallagher, Raja Biswas, Faisal Ladhak, Tom Aarsen, Nathan Cooper, Griffin Adams, Jeremy Howard, and Iacopo Poli. 2024. Smarter, better, faster, longer: A modern bidirectional encoder for fast, memory efficient, and long context finetuning and inference. Preprint , arXiv:2412.13663. Zhibiao Wu and Martha Palmer. 1994. Verb semantics and lexical selection. In ACL , pages 133–138. Zirui Wu, Nan Hu, and Yansong Feng. 2023. Enhancing structured evidence extraction for fact verification. In 
+
+EMNLP .
+
+10 Shitao Xiao, Zheng Liu, Peitian Zhang, Niklas Muen-nighoff, Defu Lian, and Jian-Yun Nie. 2024. C-Pack: Packed resources for general Chinese embeddings. In SIGIR .Shi-Qi Yan, Jia-Chen Gu, Yun Zhu, and Zhen-Hua Ling. 2024. Corrective retrieval augmented generation.       
+
+> Preprint , arXiv:2401.15884. Xiaopeng Ye, Chen Xu, Chaoliang Zhang, Zhaocheng Du, Jun Xu, Gang Wang, and Zhenhua Dong. 2025. Q-PRM: Adaptive query rewriting for retrieval-augmented generation via step-level process supervi-sion. In Findings of EMNLP .Zhaxi Zerong, Chenxi Li, Xinyi Liu, Ju hui Chen, and Fei Xia. 2025. A systematic survey of claim verifica-tion: Corpora, systems, and case studies. In Findings of EMNLP .Hengran Zhang, Ruqing Zhang, Jiafeng Guo, Maarten de Rijke, Yixing Fan, and Xueqi Cheng. 2023. From relevance to utility: Evidence retrieval with feedback for fact verification. In Findings of EMNLP .
+
+A Notation and Preliminaries 
+
+Extending the notation of Section 3.1, each seg-ment s ∈ Seg( D) yields typed semantic items 
+
+I(s) = C(s) ∪ P (s) ∪ K (s) ∪ E (s),
+
+where: • C(s) are claims (assertions, causal statements, conditionals). • P(s) are properties (measurements, constraints, comparisons, attribute-value facts). • K(s) are concepts (definitions, disambiguations, schema/ontology mappings). • E(s) are evidence/attribution objects (citations, study descriptors, sources). The method does not depend on this four-way split as a strict typing; the operator calculus oper-ates on a generic canonical semantic set Scan (s)
+
+derived from I(s) during indexing. 
+
+B Utility Prior: Full Construction 
+
+The main-body presentation in Section 3.2 intro-duces the additive form of the query-independent prior U (s | D) = α U L(s) + U contrib (s) with 
+
+U L(s) = wL(role L(s) | genre , domain) and 
+
+U contrib (s) = NovMass( s) · AsrtMass( s). This appendix gives the full sub-decomposition of 
+
+NovMass and AsrtMass and the calibration of the layout-role weight schedule wL.
+
+Novelty mass. NovMass is a trust-weighted sum of novelty contributions across the typed items of 
+
+s, normalized per document so the output lies in 
+
+[0 , 1] :
+
+NovMass raw (s) = X
+
+> x∈C (s)∪P (s)
+
+Nov( x | B) Trust( x),
+
+NovMass( s) = NovMass raw (s)/Z Nov ,
+
+where ZNov = max s′∈Seg( D) NovMass raw (s′).
+
+Nov( x | B) ∈ [0 , 1] measures how much x is not entailed by background resources B and Trust( x)
+
+scales by attribution strength (citation, source de-scriptor, evidence type). Items already entailed by 
+
+B contribute zero novelty regardless of phrasing. The per-document max normalization expresses the segment’s novelty contribution as a share of the most novel segment in the same document, con-sistent with the single-document retrieval scope of Section 3.5. 
+
+Assertedness mass. AsrtMass measures whether content is framed as a conclusion or as-serted result vs. contextual setup, also normalized per document so the output lies in [0 , 1] :
+
+AsrtMass raw (s) = X
+
+> c∈C (s)
+
+Asrt( c) Trust( c),
+
+AsrtMass( s) = AsrtMass raw (s)/Z Asrt ,
+
+where ZAsrt = max s′∈Seg( D) AsrtMass raw (s′),where Asrt( c) ∈ [0 , 1] is high for claims framed assertively (“we show”, “we find”, “X causes Y”) and low for contextual or hedged statements. The product form NovMass( s) · AsrtMass( s) penal-izes both extremes: high novelty without assertion (idle observation) and high assertion without nov-elty (review of known facts). 
+
+Layout-role weight schedule. The schedule 
+
+wL(role L(s) | genre , domain) is configurable. The default schedule for scientific articles, empir-ically calibrated from a centrality rubric applied to three reference ML papers (see Appendix K), places results and methods at the top, with dis-cussion close behind and conclusion and back-ground in the lowest band; for engineering or sys-tems documents, the schedule inverts the methods– results ordering so that the design/implementation contribution dominates the benchmark numbers. Calibration evidence, including per-section ratings, is reported in Appendix K. 11 When the prior misfires. The prior is approxi-mate by construction. It can overfocus on conven-tionally salient sections when the contribution is atypically located, and it can underweight evidence that lives in tables or footnotes when those regions are not given dedicated layout roles. Section 6 records these residual risks, and the cross-genre robustness check in Appendix H provides cases for evaluating these failures during design. 
+
+Epistemic profiles and trust weights. Follow-ing defeasible-reasoning intuitions (Pollock, 1987; Reiter, 1980; Nute, 1994), we assign each state-ment extracted from a segment one of six epis-temic profiles: established (non-defeasible con-sensus), strong_claim (the author’s empirically-supported claim, used as the default when no marker is present), hypothesis (explicitly ten-tative claim), cited_external (claim attributed to others), disputed (mixed evidence in litera-ture), and defeated (retracted or refuted). The trust weight is Trust( x) = wtrust (profile) ·
+
+conf( x), where the profile-conditioned weights 
+
+wtrust = (1 .0, 0.9, 0.7, 0.5, 0.4, 0.0) for (estab-lished, strong_claim, cited_external, hypothesis, disputed, defeated) reflect decreasing robustness to retraction: only established is non-defeasible, 
+
+cited_external applies a uniform discount because the original source quality is not observable, and 
+
+defeated contributes no trust. The assertedness weights wasrt = (1 .0, 1.0, 0.6, 0.5, 0.3, 0.2) follow the same tier with a steeper drop for unsuccessful claims, since these claims still appear in the text but contribute weakly to the assertedness mass. 
+
+Background resources B: benchmark instan-tiation. The framework accepts a typed back-ground resource B assembled from alias dictionar-ies, time anchors, role taxonomies, event schemas, and an optional corpus-derived novelty term set; the BackgroundResources interface is doc-umented in the codebase. Our three evaluation benchmarks (SciFact, FEVEROUS, QASPER) do not ship an official paired knowledge base, and substituting an ad-hoc external KB (e.g., UMLS (Bodenreider, 2004) for SciFact or Wikidata (Vran-deˇ ci´ c and Krötzsch, 2014) for FEVEROUS) would mix the framework gain with KB-coverage and KB-curation effects, so we instantiate B = ∅ across all reported runs. Under empty B, the novelty term 
+
+Nov( x | B) = 1 for every statement, NovMass( s)
+
+degenerates to a trust-weighted aggregation, and the role-to-type / time-window expansion opera-tors ExpRole and ExpTime have empty input and produce no variants; the rest of the operator suite operates over the document-local abstraction map 
+
+MD and remains active. A 30 -case toy-B san-ity check in Appendix L confirms that ExpRole 
+
+activates as intended when B provides a role taxon-omy; production-scale plug-ins are left to follow-up work. 
+
+C Semantic Gap: Per-Type Catalog and Distance Terms 
+
+The main-body presentation in Section 3.3 retains the typed cost model and one inline example per gap type. This appendix lists the full per-type cata-log and the explicit distance-term derivations. 
+
+Expression gap Aexpr . Same referent or concept, different surface form. Examples: • named entity aliases, acronyms, alternative spellings (e.g. “Anthropic” ≡ “AI startup An-thropic PBC”); • temporal expressions normalized to intervals (“last year” relative to a document date; “Q1 2015”); • local coreference and mention linking (“he” →
+
+“the CEO”). Distance term: δexpr (a) =LexicalDistance( surface 1, surface 2), e.g. nor-malized edit distance or Jaccard over character n-grams, plus a small fixed cost for the alias entry itself. 
+
+Conceptual gap Aabs . Different conceptual lev-els or paraphrases (the symbol abs is kept for back-ward compatibility with the implementation). Ex-amples: • synonymy or near-synonymy of nominal phrases (“automobile” ≡ “car”); • hypernym/hyponym (“Anthropic CTO” ⊑ “tech executive”); • attribute abstraction (“European region” member-ship; category unions). Distance term: δabs (a) =TaxonomicDepth( c1, c 2) measured as the depth of the least-common-ancestor in the relevant taxonomy, plus a defeasibility penalty when the bridge is one-directional. 12 Intent–evidence gap Aintent . Queries often ask about a general class while documents provide spe-cific instances. The bridging rule has the form 
+
+Role( x, ρ ) ⇒ Type( x, τ ),
+
+e.g. holding office ρ = “CTO of Anthropic” im-plies τ = “AI company representative”. Distance term: δintent (a) = Surprisal( ρ → τ ) as the nega-tive log-likelihood of the role-to-type rule under the local membership prior, plus an additional penalty when the rule is context-sensitive (e.g. “AI com-pany” membership of a research lab without com-mercial products). 
+
+Event-type gap Aevent . Information needs phrased as event types are encoded indirectly in documents through frames, nominalizations, and artifacts: • lexical frames (“held talks”, “signed”, “negoti-ated”); • nominalizations (“talks”, “deal”, “agreement”); • artifacts implying events (an “agreement” implies a signing event). The bridging rule has the form 
+
+Frame( a, b, t ) ⇒ ∃ e : EventType( e)
+
+∧ participants( e, a, b )
+
+∧ time( e, t ).
+
+Distance term: δevent (a) measures the structural mismatch between the frame schema and the event schema as the count of unfilled or coerced slot bind-ings, plus a high defeasibility penalty for artifact-only implicature. 
+
+Cost weight ordering. The intended ordering 
+
+ωexpr < ω abs < ω intent ≈ ωevent is calibrated on the development split (cf. Appendix K). The uniform-cost ablation ( w/o typed cost ) in Ap-pendix L verifies that the gain is driven by the typing of the weights, beyond their mere presence. 
+
+Defeasibility. Bridges in Aintent and Aevent are usually justified by typicality. The cost model treats this as an additive penalty: a revisable bridge can still be selected when the budget allows and no cheaper bridge succeeds, but it accumulates ex-tra cost so that the retrieval model prefers non-revisable alternatives whenever they exist. 
+
+Implementation constants. In our implemen-tation, the four distance terms are realized as pure functions with the following defaults: 
+
+δexpr = NormalizedEditDistance( s1, s 2)+0 .05 ·
+
+⊮[alias entry ]; δabs = TaxonomicDist( c1, c 2) + 0.15 · ⊮[unidirectional ], where TaxonomicDist re-solves in three tiers, WordNet Wu–Palmer distance (1 − wup ) when both endpoints have a noun synset, embedding cosine distance when an embedding model is supplied, and a baseline of 0.30 other-wise; δintent = − log P (τ | ρ) capped at 2.0,with P (τ | ρ) supplied by an LLM-as-judge call (or a baseline of 0.40 without LLM access), plus 
+
+0.20 when the rule is context-sensitive; δevent =0.10 · | unfilled slots | + 0 .30 · ⊮[artifact-only ]. Total bridge cost is ωt + δt as specified in the main text. These constants are tunable parameters; calibration on dev splits is a future ablation. 
+
+Implementation basis for each distance term. 
+
+The four distance terms compose a literature-grounded primary metric with a small set of project-specific additive penalties. The primary metric of δexpr is Levenshtein edit distance (Levenshtein, 1966) normalized by the longer of the two surfaces, computed by a standard dynamic-programming routine; the alias-entry constant 0.05 is a project default representing the fixed bookkeeping cost of consulting an alias dictionary. The primary met-ric of δabs is the Wu–Palmer taxonomic similarity (Wu and Palmer, 1994) as exposed by WordNet (Miller, 1995) via NLTK (Bird et al., 2009); the embedding-cosine fallback and the constant-0.30 
+
+baseline form a three-tier resolution scheme that we use so that the implementation does not fail on out-of-WordNet concepts. The primary metric of δintent is the Shannon surprisal − log P (τ | ρ)
+
+(Shannon, 1948); the probability is supplied by an LLM-as-judge call, and the cap 2.0 together with the offline baseline 0.40 keep the cost bounded when the judge is unavailable or returns near-zero. The structure of δevent is our own composition of an additive slot-mismatch term and a fixed artifact-only penalty; we adopt the additive form because it follows the FrameNet-style coercion accounting in event-detection work (Baker et al., 1998) and keeps the metric monotone in unfilled slot count. All nu-meric constants ( 0.05 , 0.15 , 0.20 , 0.30 , 0.10 , 0.30 ,cap 2.0, baseline 0.40 ) are initial project choices to be calibrated; we report a sensitivity sweep over each constant in Appendix K. 13 D Operator Calculus: Full Development 
+
+D.1 Context Object 
+
+A context is a 4-tuple 
+
+C = ⟨E, T, Σ, E⟩ ,
+
+where E is the entity binding environment map-ping mentions and variables to canonical entities (including coreference resolution); T is the tempo-ral anchor , a time point or interval used to normal-ize relative times and indexicality; Σ is the scope or condition store (section-level conditions, local assumptions, discourse restrictions); and E is the 
+
+epistemic / evidence profile covering attribution, modality, uncertainty, and evidence strength. We reserve Θ and Ξ for the refinement-state notation introduced in Section 3.6 and Appendix F. 
+
+Segment semantics. Each segment s yields a set S(s) of interpreted statements (claims, typed properties, event descriptions, attribution-bearing evidence). Items may be represented as natural-language strings, semi-structured records, or fully symbolic forms. The only requirement is that each statement admit a canonical semantics against which satisfaction can be tested. We write 
+
+(W, C ) |= ψ for ψ ∈ S(s) to mean that ψ is truth-evaluable in world-model W relative to context 
+
+C.
+
+Sufficient and minimal contexts. A context C is 
+
+sufficient for s if every formula ψ ∈ S(s) is truth-evaluable under C, i.e., (W, C ) |= ψ is defined for every such ψ. Write Csuff (s) for the set of contexts sufficient for s. A unique strict minimum may not exist, so we define the minimal-information projection 
+
+C⋆(s) = π
+
+ \ 
+
+> C∈C suff (s)
+
+C
+
+ ,
+
+where π extracts only the parts required to evaluate 
+
+S(s) and the intersection is over compatible fields (the greatest lower bound under an information ordering). 
+
+Context lifting. The context-lifting operator at-taches a minimal sufficient context to every seg-ment: 
+
+LiftCtx (D) = {⟨ s, C ⋆(s)⟩ : s ∈ Seg( D)}.
+
+This is the shared intermediate object linking indexing-time canonicalization and query-time ex-pansion in Section 3.4. 
+
+Implementation status. The truth-evaluation predicate (W, C ) |= ψ is realized as an LLM-as-judge call with n = 3 multi-sample at tempera-ture 0.3; the binary verdict is the majority vote and the missing-information set is the dedupli-cated union across samples ( truth_eval.py ). The world model W is a facts-only dataclass (world_model.py ); no LLM is embedded in-side the data structure. The minimal sufficient con-text C⋆(s) is constructed by greedy top-down prun-ing: drop the lowest-confidence FieldValue ,accept the drop only if the pruned context is still evaluable under θtruth _eval , repeat until no field can be removed within a configurable judge-call budget ( minimize_context.py , all under 
+
+src/reflective_rag/ ). We do not enumer-ate Csuff (s) exhaustively because the lattice size is exponential in the number of C-fields; the greedy procedure returns one deterministic minimal ele-ment under the priority ordering, which suffices for the downstream LiftCtx contract. 
+
+D.2 Document-Side Indexing Operators 
+
+Let TD be a set of document transformation opera-tors, each mapping a document representation to a new representation: 
+
+t : D → D , t ∈ T D.
+
+Core operators include: • Layout segmentation Seg L: produce Seg( D)
+
+and assign role L(s) from layout and discourse cues. • Coreference substitution Coref : resolve anaphora and unify mentions in the entity bind-ing environment E.• Named-entity canonicalization NormNE : map aliases and acronyms to canonical entities. • Temporal normalization NormTime : normal-ize relative or implicit time expressions using the temporal anchor T .• Context lifting LiftCtx : attach minimal suffi-cient contexts C⋆(s) (cf. Appendix D.1). • Concept abstraction AbsConcept : align nom-inal phrases to ontology concepts with disam-biguated senses. • Event abstraction AbsEvent : map frames, nom-inalizations, and artifacts to event types with ex-plicit argument structure. 14 Design properties. These operators are amor-tized cost (done once per document), stable se-mantics (canonicalization reduces superficial mis-match), and enable principled truth conditions via context lifting. They avoid the query-time combi-natorial explosion that arises when the same nor-malization is performed independently for every query. 
+
+D.3 Canonical Index Composition 
+
+The abstraction-map builder BuildMap packages the canonicalized items into the document-local abstraction map MD (canonical entity ids, nor-malized time, typed roles, typed events). The full indexing pipeline composes operators in the order 
+
+Idx (D) = BuildMap ◦ AbsEvent ◦ AbsConcept 
+
+◦ LiftCtx ◦ NormTime 
+
+◦ NormNE ◦ Coref ◦ Seg L(D).
+
+The index provides, for each segment s, a canoni-cal semantic set Scan (s) together with its minimal context C⋆(s).
+
+Document-local abstraction map. The pipeline also produces an abstraction map MD that caches the small set of abstraction moves the document ac-tually licenses, e.g. alias edges such as “Anthropic” 
+
+↔ “AI startup”, role edges such as “CTO” → “ex-ecutive”, office edges such as “CTO of Anthropic” 
+
+→ “AI company representative”, and event edges such as “visit” or “signed agreement” → “meet-ing / collaboration”. The map is document-local, which keeps the abstraction surface auditable and the canonicalization cost bounded. 
+
+D.4 Algorithm: Index-Side Canonicalization Algorithm 2 Index-side canonicalization and ab-straction induction                                                       
+
+> Require: document D, background resources B, layout and discourse analyzers
+> State: Seg( D),role L(s),U(s|D),C⋆(s),Scan (s),
+> MD
+> Return: canonical index Idx (D)with segment records and abstraction map MD
+> 1: segment Dwith Seg Land assign layout roles role L(s)
+> 2: estimate the query-independent utility prior U(s|D)
+> from layout and discourse signals 3: for all s∈Seg( D)do
+> 4: resolve coreference and canonical entity mentions in
+> s
+> 5: normalize temporal expressions and scope cues 6: construct the minimal sufficient context C⋆(s)
+> 7: lift nominal concepts, roles, and event mentions into canonical semantic items 8: attach source links and confidence to every lifted or normalized item 9: induce a conservative abstraction map MDover aliases, role types, concept levels, and event schemas 10: package ⟨s, role L(s), U (s|D), C ⋆(s), S can (s)⟩into segment records 11: return Idx (D)=⟨M D,{(s, U (s|
+> D), C ⋆(s), S can (s)) }⟩
+
+D.5 Query-Side Expansion Operators 
+
+Let TQ be a set of query transformation operators, each mapping a query form to a set of alternative query forms (capturing disjunction): 
+
+e : Q → 2Q, e ∈ T Q.
+
+Core operators include: • Alias / acronym expansion ExpAlias (expres-sion gap). • Synonym and nominal paraphrase expansion 
+
+ExpSyn (conceptual gap). • Hypernym / hyponym controlled expansion 
+
+ExpHyp (conceptual gap; heavily costed because of one-directional entailment). • Role-to-type expansion ExpRole (intent– evidence gap; defeasible). • Event-type expansion ExpEvent (event gap; from event classes to frame and artifact variants). • Time-window expansion ExpTime (temporal underspecification; bounded by the document’s temporal anchor T ). 
+
+Risks. Query-side operators are inherently more risky than document-side ones because they in-troduce assumptions the indexed document never 15 made. Three errors recur: semantic drift when ex-pansions add unintended senses; overgeneration 
+
+when disjunctions expand the candidate space com-binatorially; and judgment dependence when role-to-type and event-frame inferences rely on context-sensitive decisions. These risks motivate the cost-budgeted disjunction in Appendix D.6. 
+
+D.6 DNF Expansion with Cost Budget Canonical query. Let NormQuery (φq) map the query semantics into the same canonical semantic space as Idx (D). Most factual queries decompose into a conjunction of literals (constraints, type pred-icates, relations): 
+
+φq =
+
+> m
+
+^
+
+> j=1
+
+ℓj .
+
+Expansion as DNF. Expression-level and abstraction-level alternatives naturally induce disjunction. We define an expanded query as a disjunction of conjunctions (DNF): 
+
+Expand( φq) = 
+
+> k
+
+_
+
+> i=1
+
+
+
+> mi
+
+^
+
+> j=1
+
+ℓij 
+
+ , (9) where each clause i is a coherent alternative inter-pretation (entity alias choices, concept paraphrases, event-frame variants). 
+
+Costed expansion. Each clause is associated with an expansion cost summed over the literals it contains, following the additive aggregator of Eq. (3): 
+
+Cost 
+
+^
+
+> j
+
+ℓij 
+
+ = X
+
+> j
+
+ ω(type( ℓij )) + δ(ℓij ).
+
+Controlled expansion restricts the disjunction to clauses under a budget τ :
+
+Expand τ (φq) = _  
+
+> i: Cost( clause i)≤τ
+
+^
+
+> j
+
+ℓij 
+
+ .
+
+Worked example. For the Anthropic–TSMC query of Section 3.1, a low-cost clause may align 
+
+LLM company to Anthropic via alias plus role ex-pansion and chip supplier to TSMC via affiliation, contributing ω(expr) + ω(intent) plus the corre-sponding δ(·) terms. A higher-cost clause addi-tionally invokes event-type bridges such as visited 
+
+→ collaboration , adding ω(event) plus its δ. The budget τ therefore decides whether retrieval stays near direct paraphrase and alias matching or admits the more revisable event-support clauses. 
+
+Implementation note. The cost-budgeted expansion Expand τ (φq) is implemented as 
+
+expand_dnf with a default budget τ = 1.5.Each ExpandedClause carries its accumulated bridge cost ( ω + δ summed across the operators that produced it), and the output clause list is sorted in ascending cost order so that downstream 
+
+Gap minimization can short-circuit at the first satisfying clause. The original φq is always retained at clauses[0] with cost 0.
+
+D.7 Algorithm: Query-Side Controlled Expansion and Retrieval Scoring Algorithm 3 Query-side controlled expansion and retrieval scoring                                                              
+
+> Require: query q, canonical index Idx (D), abstraction map
+> MD, budget τ, background resources B
+> State: φq,Expand τ(φq),Gap( q, s ),Match( q, s ),
+> Rel( q, s )
+> Return: ranked retrieval support set for q
+> 1: map qinto canonical query form φqcompatible with
+> Idx (D)
+> 2: generate alias, synonym, type, event, and temporal alter-natives in canonical space 3: prune alternatives by operator cost to obtain
+> Expand τ(φq)
+> 4: for all s∈Seg( D)with indexed record in Idx (D)do
+> 5: test whether Scan (s)∪Bentails aclause of
+> Expand τ(φq)
+> 6: compute the residual semantic gap Gap( q, s )when entailment fails directly 7: derive Match( q, s )from clause coverage or entail-ment strength 8: score the segment with Rel( q, s )via Eq. (6) 9: aggregate high-scoring segments subject to binding, scope, and bridge-cost compatibility 10: return ranked support segments with matched clauses, contexts, and gap traces
+
+E Matching Semantics 
+
+Section 3.5 treats matching as canonical entailment with abductive fallback. This appendix states the full hard-satisfaction and graded-matching defini-tions. 
+
+Hard satisfaction by entailment. A canonical segment satisfies a query clause if 
+
+Scan (s) ∪ B ⊢ ^
+
+> j
+
+ℓij .
+
+The expanded query is satisfied if any clause is entailed: 
+
+Scan (s) ∪ B ⊢ Expand τ (φq),
+
+i.e. there exists a clause index i such that Scan (s) ∪
+
+B ⊢ V 
+
+> j
+
+ℓij .16 Preorder view (graded matching). Define a pre-order ⪯ on formulas by reverse entailment: 
+
+ψ ⪯ φ ⇐⇒ φ ⊢ ψ. 
+
+Then “ φ is at least as informative as ψ”. Query satisfaction becomes “the segment entails a suf-ficiently informative clause”. Partial matching is modeled by maximizing a coverage functional over entailed subformulas, which lets the relevance score interpolate between exact entailment and complete mismatch. 
+
+Abductive alignment (gap). When canonical en-tailment fails, the matcher uses bridging assump-tions instead. In operator terms, gap minimization corresponds to finding a minimal-cost set of trans-formations or assumptions such that entailment holds: 
+
+Gap( q, s ) = min  
+
+> A⊆A
+
+Cost( A)
+
+s.t. Scan (s) ∪ B ∪ A ⊢ φq,
+
+or equivalently, as a minimal-cost operator se-quence transforming φq into a form entailed by Scan (s). The relevance score Rel( q, s ) in Section 3.5 combines the match value with 
+
+exp( −Gap) so that partial entailment with a small residual gap is preferred to exact entailment of an irrelevant clause. 
+
+Implementation note. The hard-satisfaction re-lation ⊢ is realized in our implementation by an LLM-as-judge call ( θentailment ) that takes the seg-ment’s canonical statements together with B and the canonical query literals, and returns a per-literal Boolean array. Conjunctive satisfaction is taken as the AND over the array; partial matching for the preorder view is taken as the coverage ratio. Without an LLM client the function returns con-servatively False to avoid false-positive entailment claims. This LLM-as-judge realization is consis-tent with the abductive reading: the model is asked to judge the existence of an inferential bridge. 
+
+F Reflective Refinement: Full Schema 
+
+The main-body presentation in Section 3.6, summa-rized in Algorithm 1, keeps the parameter state Ξ
+
+at the component-name level. This appendix gives the sub-tuple decompositions, the failure-object schema, and the patch-object schema. 
+
+Prompt collection Π. The prompts that param-eterize the typed operators decompose into the editable-stage set S introduced in Section 3.6. In the implementation we use 
+
+Π = ⟨πcon , π M, π event , π query ⟩,
+
+where πcon governs context construction and lift-ing; πM merges named-entity canonicalization and synonym/paraphrase control into the abstraction-map updater; πevent governs event abstraction; and 
+
+πquery governs the query-side controlled-expansion stage. Each component prompt is a separately ad-dressable patch target. 
+
+Judge collection Θ. The judges that govern critic, localization, and refinement decompose as 
+
+Θ = ⟨θexplain , θ localize , θ refine , θ critic ⟩.θcritic evaluates whether the current retrieval episode satisfies the query; θexplain produces the human-readable diagnostic trace κq,s ; θlocalize 
+
+chooses the stage t to which the failure is attributed; 
+
+θrefine proposes the patch ui that the acceptance gate then evaluates. 
+
+Failure object schema. A failure object carries six fields: 
+
+fq,s = ⟨ q, s, φ q, A ⋆q,s ,
+
+Gap( q, s ), κ q,s ⟩.
+
+The diagnostic trace κq,s is itself structured: it records unmet literals (which clause failed to be entailed), dominant gap terms (which bridge type contributed the most cost), ambiguity flags (which canonicalization step left an unresolved mention), and over-expansion indicators (which clauses in-flated the candidate pool without contributing en-tailed segments). 
+
+Patch object schema. A patch 
+
+ui = ⟨t, ∆t, π edit  
+
+> t
+
+⟩
+
+specifies a target stage t ∈ S (instantiated as {πcon , π M, π event , π query } above), a minimal sample-local change ∆t, and an optional persis-tent prompt-edit πedit  
+
+> t
+
+(the πedit  
+
+> t
+
+slot extends the two-tuple form in Section 3.6). ∆t is itself typed: an alias addition, a hypernym restriction, a role-to-type rule addition, an event-frame mapping addition, a temporal expansion-window adjust-ment, or a clause-cost adjustment. πedit  
+
+> t
+
+, when 17 present, is one of add_rule or add_few_shot 
+
+against the stage’s mutable policy slots and carries a base_hash pointing at the main-file content it was forked from (used for conflict detection at pro-motion). The size of ∆t is bounded by the refine-ment budget; the same patch object format (includ-ing base_hash , validation_status , and 
+
+promotion_status fields) is preserved in the audit log so accepted and rejected patches share the same provenance schema. 
+
+Acceptance routine and corpus-retrieval proxy. 
+
+The acceptance gate evaluates Ξi → Ξi+1 on an episode set Eq,s ∪ Econtrol , where Eq,s holds the triggering failure plus structurally similar failures and Econtrol samples previously solved cases. A patch is accepted only when both ∆Suff ≥ 0 on 
+
+Econtrol and ∆Comp ≥ 0 on Eq,s ; a bounded budget caps patch attempts and operator com-plexity per episode. In a corpus-retrieval evalu-ation, ∆Suff is supplied by θcritic , so acceptance never consults held-out labels, and a top-K over-lap between the candidate rerank and the unre-fined retrieval substitutes for Econtrol replay be-cause patches here alter only the per-query refined query. 
+
+Mutation router and on-disk policy store. 
+
+Each accepted patch is classified into one of six effect kinds — edge addition (into 
+
+MD), query rewrite, bridge-weight adjustment, temporal-window adjustment, prompt edit (into 
+
+configs/prompts/ ), or unclassified no-op — and the first five accumulate in a re-finement session state for downstream attribu-tion. Prompt edits write an atomic backup to configs/prompts/.backup/ on accep-tance and are promoted at session end af-ter a base_hash check rejects writes over human-edited main files. The acceptance gate is implemented in evaluate_acceptance ;the corpus-retrieval pipeline uses the analogous 
+
+run_corpus_refinement with the θcritic sig-nal and the top-K overlap proxy. 
+
+Per-family scoping, cross-case voting, and write serialization. The on-disk policy store is parti-tioned per benchmark family. Each family owns a subdirectory at configs/prompts/<f>/ 
+
+that overrides a shared baseline at 
+
+configs/prompts/_base/ ; reads fall back to the baseline when a family has no override, and writes are confined to the family directory. Every candidate edit must also accumulate k
+
+distinct case votes (default k = 3 ) before becoming eligible for promotion, and an eligible candidate is promoted only after a replay over the session’s already-solved cases shows zero regression; re-jected candidates persist in the audit log alongside the accepted ones. The supported edit ops include 
+
+add_rule , add_few_shot , remove_rule ,and remove_few_shot , so refinement can retract as well as introduce rules. Per-stage backup writes, promotions, and candidate-log appends are serialized by an advisory file lock. 
+
+G Theoretical Results: Proofs 
+
+Two formal results are stated in the main text (Proposition 3.1 and Lemma 3.2). Both address the two main mechanism questions in the paper: when canonicalization is genuinely safe, and when one candidate segment must outrank another under the multiplicative relevance law. 
+
+Axioms for T0. Proposition 3.1 treats T0 as any document-side rewrite of segment semantics, 
+
+eS(s) = T0(Scan (s)) , that satisfies the following two properties: (T1) Entailment-preserving on the retrieval lan-guage. For every segment-semantics set S,background B, bridge set A, and retrieval-language formula φ,
+
+S∪B∪A ⊢ φ ⇐⇒ T0(S)∪B∪A ⊢ φ. 
+
+(T2) Zero-cost. For every A, Cost( A) computed with respect to eS(s) equals Cost( A) com-puted with respect to Scan (s), i.e. the cost aggregator is invariant under T0.Write gGap( q, s ) for the semantic gap recomputed with eS(s) in place of Scan (s).
+
+Proof of Proposition 3.1. By (T1), the feasibility constraint Scan (s) ∪ B ∪ A ⊢ φq is satisfied by exactly the same family of bridge sets A ⊆ A q,s 
+
+as the constraint eS(s) ∪ B ∪ A ⊢ φq. By (T2), each feasible A carries the same Cost( A) in both optimizations. Hence the minimum over the com-mon feasible family is identical: gGap( q, s ) =Gap( q, s ).
+
+Instantiation in the implementation. Alias res-olution, temporal normalization, and coreference substitution are realized as logically equivalent rewrites (each statement entails the rewritten ver-sion and vice versa, holding E, T , and E fixed), 18 satisfying (T1) by construction. They are tagged 
+
+cost_class = zero in the implementation, satisfying (T2). Non-conservative operators carry positive cost and are not eligible for the index-side route under the proposition. 
+
+Interpretation. The theorem is the formal justifi-cation for moving alias resolution, temporal nor-malization, and similarly conservative document-side lifts into the index. The point is not compu-tational convenience alone: these operations can stabilize the representation without changing what counts as supporting evidence for the retrieval task. Non-conservative operators (hypernym expansion, role-to-type, event abstraction) violate the zero-cost premise, so we keep them query-side under τ .
+
+Proof of Lemma 3.2. By Eq. (6) , Rel( q, s ) is the product of Match( q, s ), U (s | D), and 
+
+exp( −Gap( q, s )) . The assumptions give Match 
+
+≥, U ≥, and (since exp( −· ) is strictly decreasing) 
+
+exp( −Gap) ≥ across s1 vs s2. Multiplying the three nonnegative inequalities gives Rel( q, s 1) ≥
+
+Rel( q, s 2). The inequality is strict whenever at least one premise is strict and the baseline product 
+
+Match · U at s2 is positive. 
+
+Interpretation. The relevance law induces a gen-uine partial dominance order: a segment that is no worse on match, no worse on utility prior, and no worse on semantic gap should not rank below its competitor. This makes the scoring function a structured partial order, and clarifies what kinds of ranking reversals should be read as model or implementation errors. 
+
+Implementation status. Lemma 3.2 is regression-tested by unit tests in 
+
+tests/test_relevance.py ; the 
+
+truth_preserving flag carried by every canonicalization edge produced by Phase 2–3 operators realizes the zero-cost premise of Propo-sition 3.1 (edges marked truth-preserving carry 
+
+cost_class = zero ). 
+
+H Benchmark Family Summary and Dataset Criteria 
+
+We retain three benchmark families plus one stress slice, each chosen to exercise a different mecha-nism in AbstRAG. SciFact tests the utility prior over scientific discourse roles, since claims must be matched to evidence located in specific paper sections (results, methods, conclusion); FEVER-OUS tests metadata routing and context lifting on page-local evidence, since gold spans are cells or sentences inside Wikipedia infoboxes and tables; QASPER tests within-paper question answering with mixed paragraph and table evidence, since an-swers depend on aggregating scattered text. The stress slice is a small stability probe for the com-pression control that we collected for this diagnos-tic, drawn from SciFact and FEVEROUS failures plus solved controls and held out from refinement patch design and acceptance tuning; it serves only as a diagnostic for the compression control. Ta-ble 4 summarizes the target mechanism and can-didate instantiation for each family. Beyond this mapping, we apply two minimal eligibility criteria: each family must provide stable per-case identi-fiers (so paired-bootstrap CIs are reproducible) and within-document candidate pools (so the within-document scoping is meaningful). 
+
+I Baselines and Metric Choices 
+
+Because the paper’s empirical claim is mechanism-level, comparator selection and measurement are documented as explicit appendix specifications. The seven baselines reported in Table 1 span the standard retrieval families: BM25 (lexical floor), Dense (dense retrieval), CE-Rerank (cross-encoder reranking), HyDE (hypothesis-document expan-sion), IRCoT (interleaved chain-of-thought), and the two reviewer-requested reflective systems Self-RAG (Asai et al., 2024) and CRAG (Yan et al., 2024). 
+
+Raw-to-derived measure instantiation. 
+
+Benchmark-native scores remain visible for context, but the mechanism claims are evaluated on measures derived from saved retrieval and refinement artifacts: Sufficiency@K , nDCG@10, normalized bridge cost, cost-normalized suffi-ciency gain, over-expansion false-positive rate, and preserved-case rate. These measures require stable query ids, ranked evidence ids, utility annotations, bridge-cost traces, budget logs, and refinement-preservation outcomes. 
+
+J Metric Definitions and Statistical Protocol 
+
+J.1 Raw-to-Derived Metric Contract 
+
+Each derived metric is defined as a deterministic function of named raw record fields. The con-tract below freezes the field names that every re-trieval and refinement run must persist; a metric is computable for a case only when all required 19 Table 4: Appendix-level summary of the benchmark families retained by the empirical design. 
+
+Family Target mechanism Candidate instantiation SciFact utility priors over discourse roles scientific evidence retrieval with auditable article-local evidence such as SciFact 
+
+FEVEROUS metadata routing and context lifting page-local or report-style evidence with headers or tables such as 
+
+FEVEROUS -like subsets QASPER within-paper scientific question answering single-document scientific QA with paragraph and table evidence such as QASPER 
+
+stress set preservation-aware reflective re-finement (stability stress test, 
+
+not an independent benchmark) failures and solved controls sampled from SciFact and FEVER-OUS outcomes, held out from refinement patch design and accep-tance tuning, used solely for the stability check in Appendix L 
+
+Table 5: Retained external comparator families in-stantiated for the within-document scope. We omit two classes of systems. First, graph-augmented multi-document systems (LightRAG, LongRAG): their per-document graph contribution degenerates when retrieval is restricted to a single source. Second, supervised dataset-native pipelines (VeriSci, MultiVerS on SciFact; LED, LongT5 on QASPER): these are fine-tuned end-to-end on the target dataset’s training split, while AbstRAG is zero-shot under prompted backbones; including them as direct comparators would conflate the mechanism contribution with the supervised/zero-shot gap. Pub-lished numbers for those systems are noted in the dataset entries of Appendix H as literature context only.      
+
+> Comparator family Retained system Interpretation role lexical / hybrid retrieval BM25 non-RAG retrieval floor against which the RAG-specific gain is measured dense retrieval Dense, CE-Rerank, HyDE dense and rerank baselines; HyDE adds hypothesis-doc expansion interleaved retrieval IRCoT tests whether interleaved chain-of-thought retrieval still works in single-document scope critic-driven systems Self-RAG, CRAG tests whether critic-token gating (Self-RAG) or retrieval-evaluator query rewrite (CRAG) explains the planned refinement-loop gains
+
+fields are present, otherwise the case is reported as 
+
+not_computable (see Section J.2). 
+
+J.2 Missingness and Abstain Policy 
+
+Some run outcomes leave a metric mathematically undefined. We resolve such cases by a fixed policy, so the reported numbers can be audited row-by-row against the raw records: • Empty retrieval (top-K is empty due to back-end failure or hard fail): the case is recorded as 
+
+not_sufficient for Suff@K-family met-rics; cost-normalized gain is undefined and the case is dropped from that metric’s denom-inator. • Missing gold annotation (e.g., a claim with no evidence label in the upstream release): the case is recorded as not_computable for any metric that requires the missing field and excluded from that metric’s denominator. • Refinement produced no accepted update :the case is structurally inapplicable for Preserved-case rate (the metric is conditioned on at least one accepted update) and is ex-cluded from that metric’s denominator; it remains valid for Suff@K and the other retrieval-side metrics. • Bridge-cost trace missing : cost-normalized sufficiency gain is voided for that case (not imputed to zero); the case still contributes to Suff@K and nDCG@10. • NEI / unanswerable claim in retrieval-side metrics : Suff@K is undefined (no positive sentence-level evidence exists) and the case is excluded from the retrieval-side denominator; the same case still participates in Label-F1 (SciFact) / Answer-F1 (QASPER) generation metrics, where “no support found, abstain” is itself a correct prediction. For every reported metric value, the accompa-nying record indicates the denominator under this policy. We never replace missing values with zeros, means, or other imputations. 
+
+J.3 Statistical Protocol Paired bootstrap protocol. Confidence intervals on derived metrics use the paired bootstrap at the relevant aggregation unit (query for retrieval, refinement-episode for Preserved-case rate). We resample B = 10 ,000 replicates with replacement, pairing each replicate’s index across the methods compared so the same set of cases scores every method in every replicate. Reported intervals are the 2.5%–97.5% empirical quantiles. Family-wise 20 Table 6: Primary metric assigned to each framework mechanism. 
+
+Mechanism Primary metric What it is meant to establish utility prior U nDCG@10 the utility prior concentrates retrieval on contribution-bearing evidence without harming sufficiency canonicalization +minimal-context lifting Suff@10 and nDCG@10 canonicalization and context lifting improve evidence recovery and ranking quality without harming sufficiency controlled expansion cost-normalized sufficiency gain controlled expansion helps via abstraction closure, separating its effect from the volume of rewrites reflective refinement preserved-case rate accepted refinement updates improve operator behavior without regressing already solved cases 
+
+Table 7: Raw-to-derived metric contract. Every numerical cell in Table 1, the ablation table, and the refinement-suite table is derived from records that carry the fields listed here; runs without these fields are reported as not_computable. 
+
+Metric Required raw fields (per query) Computation rule Aggregation unit Sufficiency@K (Suff@K) retrieved ranked span ids; gold sup-port span ids 1 if all required gold support span ids appear in top-K (cases with no gold are vacuously satisfied), else 0 query-level mean nDCG@10 retrieved ranked span ids; gold sup-port span ids standard nDCG@10 with binary rele-vance (gain = 1 if span ∈ gold, else 
+
+0)query-level mean Cost-normalized suf-ficiency gain Suff@K with and without the mechanism under test; per-query P 
+
+> a∈A∗
+
+(ω(type( a)) + δ(a)) bridge cost on the accepted clause (cf. Eq. (3)) 
+
+∆Suff@K /(1 + bridge _cost) , av-eraged over queries where the un-ablated branch closes the case query-level mean Preserved-case rate set of cases solved by the pre-refinement policy; set of cases solved by the post-refinement policy 
+
+|post ∩ pre |/|pre | over the held-out preservation slice refinement-episode level Sentence-level F1 (SciFact) top-K sentence spans; allenai 
+
+evidence_sentences per claim token-equivalent F1 between pre-dicted sentence id set and gold sen-tence id set, per AllenAI SciFact pro-tocol query-level mean Evidence-F1 (FEVEROUS) top-K page-element ids; FEVEROUS gold evidence.content ids per claim F1 between predicted and any single gold evidence set (per FEVEROUS scorer) query-level mean Answer-F1 (QASPER) generated answer text; per-annotator reference answer strings token-overlap F1 vs. each annotator reference, max across annotators (per QASPER protocol) query-level mean Label-F1 (SciFact, optional) generated 3-class verdict; 
+
+evidence_label per claim macro-F1 over SUPPORTS / RE-FUTES / NEI query-level macro 
+
+comparisons within one benchmark use Holm– Bonferroni adjusted p-values alongside the unad-justed bootstrap CI; significance requires both ad-justed p < 0.05 and CI excluding zero. Cross-benchmark comparisons are reported per dataset only, not pooled. Throughout the main body we use “CI excludes zero” qualitatively; full intervals live in Table 8 and the ablation table. 
+
+Mechanism vs. standard metric reporting. 
+
+Each dataset in Table 1 carries one widely-cited standard set-F1 metric (Sent-F1 / Evid-F1 / Para-F1) alongside two mechanism-aligned ones (Suff@10 and nDCG@10). Captions mark which columns are mechanism-specific and which are ex-ternal. 
+
+Cross-system paired CIs. Table 8 reports the paired-bootstrap mean differences (AbstRAG minus baseline) for every (dataset, baseline, mechanism-metric) triple in Table 1. On nDCG@10, 18 of 21 CIs exclude zero (smallest significant separation +3 .88 on SciFact vs. HyDE, largest +24 .51 on QASPER vs. IRCoT). The three non-significant nDCG@10 contrasts are all on FEVEROUS (vs. BM25, vs. CE-Rerank, and vs. CRAG), consistent with the metadata-routed cou-pling discussed in Section 4.3. On Sufficiency@10 only the IRCoT contrast is significant, reflecting the saturated-coverage regime under strong dense and rerank baselines. 21 Table 8: Cross-system paired bootstrap mean differences (AbstRAG − baseline) with 95% CI. All values in 0–100 units. ⋆ marks deltas whose CI excludes zero. SciFact has n=322 because one case is dropped under the Appendix J.2 not_computable policy. 
+
+SciFact ( n=322 ) FEVEROUS ( n=250 ) QASPER ( n=250 )Baseline Metric ∆ low high ∆ low high ∆ low high BM25 Suff@10 +1 .24 −1.24 +3 .73 −4.00 −10 .40 +2 .40 +4 .00 −2.40 +10 .40 
+
+nDCG +10 .28 ⋆ +7 .74 +12 .91 +0 .33 −3.83 +4 .54 +14 .45 ⋆ +9 .48 +19 .41 
+
+Dense Suff@10 −0.93 −3.11 +1 .24 +2 .40 −4.00 +9 .20 −0.40 −6.40 +5 .60 
+
+nDCG +5 .47 ⋆ +3 .26 +7 .74 +7 .56 ⋆ +3 .16 +11 .93 +8 .12 ⋆ +3 .52 +12 .78 
+
+CE-Rerank Suff@10 −1.55 −3.73 +0 .62 −3.20 −9.60 +3 .20 +4 .40 −2.00 +10 .80 
+
+nDCG +4 .77 ⋆ +2 .62 +6 .99 +4 .03 −0.08 +8 .05 +11 .29 ⋆ +6 .24 +16 .32 
+
+HyDE Suff@10 −0.62 −2.79 +1 .55 +2 .40 −4.40 +9 .20 −3.20 −9.20 +2 .80 
+
+nDCG +3 .88 ⋆ +1 .87 +5 .96 +7 .29 ⋆ +2 .74 +11 .85 +5 .26 ⋆ +0 .59 +9 .89 
+
+IRCoT Suff@10 +25 .78 ⋆ +20 .81 +31 .06 +23 .60 ⋆ +17 .20 +30 .00 +26 .00 ⋆ +20 .00 +32 .00 
+
+nDCG +18 .21 ⋆ +14 .97 +21 .76 +19 .40 ⋆ +14 .93 +23 .78 +24 .51 ⋆ +19 .29 +29 .76 
+
+Self-RAG Suff@10 −2.17 ⋆ −4.35 −0.31 −4.00 −10 .80 +2 .80 −0.80 −7.20 +5 .60 
+
+nDCG +4 .80 ⋆ +2 .55 +7 .12 +13 .60 ⋆ +8 .76 +18 .43 +6 .03 ⋆ +0 .80 +11 .18 
+
+CRAG Suff@10 +1 .86 −0.62 +4 .35 −3.20 −9.60 +3 .20 −2.40 −8.40 +3 .60 
+
+nDCG +9 .28 ⋆ +6 .70 +11 .99 +1 .90 −2.27 +6 .07 +6 .92 ⋆ +1 .75 +12 .08 
+
+K Hyperparameter Optimization Protocol 
+
+Tuning splits and freeze rules. All compara-tor families tune on a non-reporting development slice ( dev_design or dev_pilot ) and freeze before any number is generated on eval_main .Once frozen, no retuning is permitted after in-spection of held-out results, qualitative exemplar choices, or refinement-control outcomes. Tuning logs (chosen ranges, selected values, stop rules) are reported per family. 
+
+Optimization objective hierarchy. The shared objective hierarchy is: (1) maximize retrieval suf-ficiency on the target family; (2) preserve utility concentration when the family is section-sensitive; (3) minimize uncontrolled bridge-cost growth; (4) preserve already solved control cases for refine-ment variants.                     
+
+> Family Tunable surface Selection rule lexical / dense / hy-brid baselines candidate depth, rerank depth, scorer mixture best dev sufficiency un-der matched cost canonical variants utility weight, role prior, context-lift threshold utility-aware ranking without sufficiency loss controlled expansion (Ours) plan budget, bridge-cost cap, clause cap maximize cost-normalized sufficiency gain refinement vari-ants (Ours, w/o refinement, w/o sufficiency control, w/o compression control) acceptance threshold, itera-tion cap, control-set weight maximize proxy im-provement under preservation constraints
+
+Tunable parameters. Family fairness. Comparable families receive comparable search-space breadth. Prompt-heavy baselines cannot use hidden iterative prompt tuning on reporting splits. Parameter-light families are recorded as fixed-default systems and keep their published defaults intact. 
+
+Reporting obligations. For every reported num-ber, the tuning record discloses: tuned parame-ters, explored ranges, development split size, selec-tion objective, stop criterion, final frozen values, and any family-specific deviations from matched-budget fairness. 
+
+Implementation defaults. The implementation chose the following defaults (all are surfaced as explicit constants in code; per-condition overrides are supported throughout): • Bridge type weights ω (mechanism.py): ωexpr =0.35 , ωabs = 0 .65 , ωintent = 0 .90 , ωevent =0.90 , ωcontext = 0 .50 .• Distance term constants (bridges/distances.py, bridges/taxonomy.py): δexpr alias entry cost =0.05 ; δabs uses WordNet Wu–Palmer distance first, embedding cosine distance second, and a baseline of 0.30 third, plus a unidirectional de-feasibility penalty of 0.15 ; δintent surprisal cap 
+
+= 2 .0, context-sensitivity penalty = 0 .20 ; δevent 
+
+slot mismatch unit cost = 0 .10 , artifact-only penalty = 0 .30 .• Trust / Asrt weights (differential_utility.py): trust 22 wtrust = (1 .0, 0.9, 0.7, 0.5, 0.4, 0.0) and assert-edness wasrt = (1 .0, 1.0, 0.6, 0.5, 0.3, 0.2) for (established, strong_claim, cited_external, hy-pothesis, disputed, defeated). The derivation is in Appendix B. • Layout-role schedules (model.py): default scientific schedule with wL(results ) = 0 .91 ≿
+
+wL(methods ) = 0 .87 ≻ wL(discussion ) = 0.73 ≻ wL(introduction ) = 0.53 ≻
+
+wL(background ) = 0.24 ≻
+
+wL(conclusion ) = 0.20 ; engineering /systems schedule with methods dominant (wL(methods ) = 0 .90 , wL(results ) = 0 .75 ,
+
+wL(discussion ) = 0.68 ); SciFact schedule with wL(abstract ) = 0 .75 since abstracts are the entire document; FEVEROUS schedule with cell/text/table weights between 0.45 and 0.70 .The scientific and engineering schedules are not hand-picked: see the calibration paragraph below. • Entity / concept merge thresholds 
+
+(named_entity.py, concept_abs.py): sentence-transformer cosine candidate threshold = 0 .75 ;LLM-confirm merge confidence threshold 
+
+= 0.85 for entity normalization, 0.85 for concept synonym; high-risk surface forms (regex-detected protein/drug codes) bypass cosine and go directly to LLM. • Refinement gate (real_retrieval.py): Econtrol 
+
+sample size = 3 per cycle, replayed under each candidate refined query; ∆Comp proxy =
+
+−distractor_rate@k ; refinement budget capped by refinement_max_cycles .• Truth-evaluation judge (truth_eval.py): 
+
+nsamples = 3 , temperature 0.3; binary evaluable is the majority vote, missing-info set is the deduplicated union across samples; parse errors count as not-evaluable with a parse_error 
+
+gap label. • Context minimization (minimize_context.py): top-down greedy pruning ordered by ascending confidence ; default 
+
+judge_call_budget = 24, sufficient for typical context objects with ≤ 8 field values across the four C-tuple fields. • Document-level aggregation (aggregation.py): three modes available, top_k_mean (default, 
+
+k = 5 ), top1 , and log_sum_exp , applied over per-segment Rel( q, s ) scores and selectable per condition via the experiment config. • DNF expansion budget (canonicalize/expan-sion.py): default budget τ = 1 .5, applied after Bridge cost composition; clauses output sorted ascending by accumulated cost so Gap search short-circuits at the first satisfying clause. • Relevance MAX_GAP cap (relevance.py): Gap 
+
+capped at 4.0 to prevent exp( −∞ ) when no sat-isfying expansion clause is found within τ .All constants are tunable via configuration; the val-ues listed above are the implementation defaults used in our reported runs unless a condition explic-itly overrides them. 
+
+Layout-role schedule calibration. The scientific and engineering layout-role schedules were not hand-picked. We calibrated them from six refer-ence papers (three engineering / systems: MapRe-duce, Bigtable, ZooKeeper; three scientific ML: Attention Is All You Need, Deep Residual Learn-ing, BERT) using a centrality rubric on a 0.0–1.0
+
+scale: 1.0 means the section IS the main contribu-tion, 0.8 that it directly demonstrates it, 0.6 that it is necessary context, 0.4 supporting material, 0.2
+
+background or housekeeping. For each section we collected three independent ratings from a strong LLM judge and took the mean; we then aggregated within each genre by averaging across all papers containing a section in that canonical role. The ag-gregated weights collapse to the table above. The two-genre split is empirically supported: engineer-ing papers concentrate centrality in the design / implementation sections with performance trailing, whereas scientific ML papers place results almost on par with the architecture. 
+
+L Ablation Details and Per-class Generation 
+
+This appendix expands the reflective refinement ablation reported in Table 2 (main body) and the per-baseline generation breakdown summarized in the generation columns of the main-body Table 1. 
+
+Sub-mechanism splits inside the reflective re-finement. The main-body ablation contrasts only w/o refinement against Ours. Two finer splits in-side reflective refinement are referenced in the main text: w/o sufficiency control keeps refinement but removes the ∆Suff ≥ 0 acceptance constraint, and w/o compression control removes ∆Comp ≥ 0.These two splits attribute reflective refinement’s 23 effect to the two acceptance controls individually, and the stress set paragraph below reports the re-sult. 
+
+Refinement trigger rates. The refinement trig-ger rates quoted in Section 4.3 ( 2% SciFact, 19% 
+
+QASPER, 41% FEVEROUS) are logged per-run from the critic θcritic ’s accept/reject decisions on the unrefined top-K retrieval, aggregated over the same case sets as Table 1. 
+
+stress set. The stress set is a small slice we col-lected for this diagnostic and reports the same Suff@10, nDCG@10, and preserved-case rate for Ours / w/o sufficiency control / w/o compres-sion control: 73 .7, 37 .7, 100 , with refinement-regression count 0 across all configurations. Re-moving the compression control is the only configu-ration that separates from Ours: over-expansion FP rate moves from 0 to 73 .7 while the other columns stay at the Ours value. The BM25 reference on the slice sits at Suff@10 84 .2, nDCG@10 49 .9,over-exp. FP 0.
+
+SciFact generation per-class. Per-class label accuracy (SUPPORTS n=138 , REFUTES n=71 ,NEI n=114 ): BM25 74 .6/81 .7/80 .7; Dense 
+
+81 .9/83 .1/78 .9; CE-Rerank 81 .9/78 .9/79 .8;HyDE 81 .2/87 .3/76 .3; IRCoT 78 .3/84 .5/83 .3;AbstRAG 84 .1/90 .1/78 .9. AbstRAG wins REFUTES. 
+
+FEVEROUS generation per-class. Per-class label accuracy (SUPPORTS n=119 , REFUTES 
+
+n=112 –114 , NEI n=17 ): BM25 57 .1/46 .4/70 .6
+
+(n=248 ); Dense 41 .2/47 .4/70 .6; CE-Rerank 
+
+50 .4/43 .9/70 .6; HyDE 41 .2/55 .3/64 .7; IR-CoT 53 .8/46 .4/64 .7 (n=248 ); AbstRAG 
+
+66 .4/49 .1/64 .7. AbstRAG wins SUPPORTS; HyDE wins REFUTES; NEI is a small 17-case slice and the column is largely tied. 
+
+QASPER generation coverage. Mean Answer-F1 ( ×100 ): BM25 30 .4 (n=249 ); Dense 33 .3
+
+(n=250 ); CE-Rerank 30 .2 (n=250 ); HyDE 31 .9
+
+(n=250 ); IRCoT 30 .8 (n=250 ); AbstRAG 37 .3
+
+(n=250 ). AbstRAG leads Dense by +4 .0 Answer-F1. 
+
+Generation paired-bootstrap CIs. We compute AbstRAG-minus-baseline paired CIs ( B=10 ,000 )at the case-pair level on the generation metric (3-class accuracy for SciFact / FEVEROUS, token-level Answer-F1 for QASPER). The CI excludes zero on 10 of 21 system–dataset contrasts: Sci-Fact (vs. BM25 +5 .28 CI [+0 .93 , +9 .63] ; vs. CRAG +5 .28 [+1 .24 , +9 .32] ); FEVEROUS ( 6 of 
+
+7 baselines significant, BM25 the lone exception with ∆= + 4 .84 [ −0.81 , +10 .48] ; largest +18 .80 
+
+vs. Self-RAG [+12 .40 , +25 .20] ); QASPER (vs. BM25 +4 .34 [+0 .71 , +7 .97] ; vs. HyDE +5 .72 [+2 .44 , +9 .24] ). Remaining contrasts straddle zero, reflecting two effects: (i) on SciFact the gen-eration cluster is tight ( 5.3-point band) because the answer generator can recover label from any reasonable evidence subset; (ii) on QASPER the answer-token denominator shrinks as the answer generator abstains, leaving n around 120 –145 per baseline, which widens the CI. The cross-baseline pattern on FEVEROUS confirms the retrieval gain carries over to the generator when page-local ele-ment selection is required. 
+
+Toy-B sanity check: AbstRAG with a non-empty B. On a 30 -case FEVEROUS sanity-check sample biased toward motivating-example-style cases (queries mentioning country-of-origin, office-to-type, or event predicates), we run Ab-stRAG twice with the same backbone and prompts: once with the default empty background B (the configuration used for all main reported runs), and once with a 27 -entry toy taxonomy (4 alias edges, 18 role aliases, 5 event schemas) loaded through the typed BackgroundResources in-terface. Paired Suff@10 over the 30 cases moves from 90 .0 (empty B) to 93 .3 (toy B), ∆ = +3 .3;paired nDCG@10 moves 67 .7 → 68 .5, ∆ =+0 .8. At the case level, 2 cases newly reach gold under toy B via ExpRole -licensed bridges (FEVEROUS_PL-0015476 and FEVEROUS_PL-0010254, both queries containing role-to-type ex-pansions activated by the toy role taxonomy); 1
+
+case regresses; the remaining 27 are tied. The sample is small and the case-level ∆ is bounded by the binary Suff metric, but it suffices to verify that (i) AbstRAG with non-empty B runs correctly and produces non-trivial output, (ii) ExpRole acti-vates on real FEVEROUS cases when B supplies a role taxonomy, and (iii) the toy taxonomy does not significantly degrade retrieval (no over-expansion FP). A full B with UMLS- or Wikidata-scale tax-onomies is left to future work. 
+
+Per-query-family breakdown (nDCG@10). 
+
+Per-family details are in main-body Table 3. The SciFact NEI, FEVEROUS NEI, and QASPER unanswerable groups are omitted for lack of gold 24 support spans or too few cases. 
+
+M Prompts Used in Each Stage 
+
+The method treats prompts and policies as parameterizations of typed operators (cf. Sec-tion 3.6). The four editable stages S =
+
+{πcon , π M, π event , π query } each receive a separate program with a stable contract over inputs, out-puts, and acceptance signals; below we show one representative substage prompt per family. 
+
+Named-entity canonicalization prompt (NE substage of πM)
+
+Input. Raw segment text plus background re-sources B (alias dictionaries, time-zone hints, role taxonomies, light event schemas). 
+
+Task. Produce canonical mentions: alias reso-lution, acronym expansion, coreference attach-ment, temporal normalization, scope binding. Return a structured record with source spans. 
+
+Constraints. (i) Do not introduce facts not en-tailed by the segment plus B. (ii) Each canon-icalization is logged with its source bridge type so cost accounting in Section 3.3 can use it downstream. (iii) Ambiguous mentions re-main explicitly ambiguous. 
+
+Output schema. {segment_id, canonical_items[], lift_traces[], ambiguity_flags[]} .
+
+Query-side expansion prompt πquery 
+
+Input. Canonical query φq, budget τ , abstrac-tion map MD from the indexed document. 
+
+Task. Generate cost-budgeted disjunctive alternatives Expand τ (φq) that align φq to canonical-space entries available in Idx (D).Each clause names the operators used to pro-duce it (alias, synonym, hypernym, role-to-type, event-type, time-window). 
+
+Constraints. (i) Reject any clause whose ac-cumulated Cost exceeds τ . (ii) Each clause must remain interpretable as a conjunction of typed literals; free-form rewrites are discarded by the validator stage. 
+
+Output schema. {query_id, clauses[{ops[], literals[], cost}]} .
+
+Critic prompt θcritic 
+
+Input. Query, ranked retrieval support, re-trieved gap traces, current parameter state Ξi.
+
+Task. Decide whether retrieval is sufficient. If insufficient, emit a typed failure object fq,s 
+
+carrying the dominant bridge type, the unmet literal(s), and any over-expansion / ambiguity flags. Do not propose patches at this stage. 
+
+Constraints. (i) Output must be parseable into the failure schema. (ii) Subjective com-plaints without typed grounding are rejected by the schema validator. 
+
+Output schema. {q, s, phi_q, A_star, gap, kappa} .
+
+Refinement prompt θrefine 
+
+Input. Failure object fq,s , current state Ξi,refinement budget. 
+
+Task. Propose a stage-local patch ui =
+
+⟨t, ∆t⟩ where t names exactly one mecha-nism to edit (indexing πcon , abstraction map 
+
+M, event abstraction πevent , or query builder 
+
+πquery ) and ∆t is a minimal change to that stage’s prompt, policy, or rule set. 
+
+Acceptance. The proposed patch is evaluated against an episode set plus a held-out solved-case control. Only patches with ∆Suff ≥ 0
+
+and ∆Comp ≥ 0 are accepted into Ξi+1 .
+
+Output schema. {patch_id, target_stage, delta, eval_set_id, accept_decision, suff_delta, comp_delta} .
+
+Implementation status. The four prompt pro-grams above are realized as separate functions in the implementation, and several additional prompts were introduced to support the full pipeline. Each prompt has an independent system prompt, an ex-plicit JSON output schema, and unit tests cover-ing schema parsing. The merged single-call crit-ic/localizer/refiner of earlier prototypes is split into 
+
+θcritic + θrefine at the cost of one additional LLM call per refinement cycle. The runtime prompts are partitioned into muta-ble mechanism stages (Π, eligible for reflective re-finement edits via add_rule / add_few_shot 
+
+on the rules and few-shot slots) and fixed evalua-tor stages (held constant so that ablations isolate 25 mechanism changes from judge changes): All on-disk sources are relative to 
+
+configs/prompts/ unless noted.                                    
+
+> Stage Role Source
+> θLiftCtx mutable Πtheta_LiftCtx.json
+> θNE _norm mutable Πtheta_NE.json
+> θAbsConcept _extract mutable Πtheta_ConceptAbs_ extract
+> θAbsConcept _align mutable Πtheta_ConceptAbs_ align
+> θAbsEvent _extract mutable Πtheta_EventAbs_ extract
+> θAbsEvent _align mutable Πtheta_EventAbs_align
+> θNormQuery mutable Πtheta_QCAN.json
+> θcoref fixed indexing/coreference.py
+> θS_extract fixed indexing/statements.py
+> θentailment fixed canonicalize/ entailment.py
+> θtruth _eval fixed truth_eval.py
+> θcritic fixed judges.py
+> θrefine fixed judges.py
+
+For each mutable Π stage the on-disk JSON has four slots: instruction (the task fram-ing, immutable), output_schema (the re-quired response shape, immutable), rules (mu-table), and few_shot (mutable). The refiner’s 
+
+prompt_edit field targets one of rules or 
+
+few_shot ; a denylist over rule text blocks the obvious schema-corrupting attempts (e.g., “return YAML only”, “ignore the output schema”, “add a new field”). At the start of each session the loader reads the main file, checks any pending backup for a matching base_hash , and either fast-forwards the backup overlay or writes a conflict.json 
+
+if the main was hand-edited in the meantime. The split between mutable mechanism stages and fixed evaluator stages is deliberate: changing the critic or refiner under reflective feedback would com-pound noise with the policy edits we are trying to evaluate. 26
