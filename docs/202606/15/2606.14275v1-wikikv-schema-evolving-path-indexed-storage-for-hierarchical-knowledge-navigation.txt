@@ -1,0 +1,817 @@
+Title: WikiKV: Schema-Evolving Path-Indexed Storage for Hierarchical Knowledge Navigation
+
+URL Source: https://arxiv.org/pdf/2606.14275v1
+
+Published Time: Mon, 15 Jun 2026 00:42:03 GMT
+
+Number of Pages: 14
+
+Markdown Content:
+# WikiKV: Schema-Evolving Path-Indexed Storage for Hierarchical Knowledge Navigation 
+
+Feifei Li *, Haoliang Ming *, Zihan Li *, Hang Liao ,
+
+Xingyu Fan , Xiaoqing Wu , Chenggong Wang , Wenhui Que †
+
+WeChat, Tencent Inc., Beijing, China 
+
+{niyali, hliangming, muselli, caryliao }@tencent.com 
+
+{fanxfan, xiaoqingwwu, jevanwang, victorque }@tencent.com 
+
+> *
+
+These authors contributed equally to this work. 
+
+> †
+
+Corresponding author. 
+
+Abstract —LLM-curated hierarchical knowledge bases, namely a tree-structured wiki whose nodes summarize an underly-ing corpus, have become a dominant substrate for retrieval-augmented applications, yet their storage layer is still treated as an implementation detail. This workload is hierarchical, query-intensive, and continuously evolving, and no existing storage model natively captures all three properties at once. We present W IKI KV, a path-indexed key–value storage model purpose-built for this workload, comprising three components: (i) a data-driven schema that bootstraps the hierarchy via Intent-Anchored Schema Induction and refines it through Continuous Evolution Operators; (ii) a consistency protocol for the path-indexed storage model that precludes partial-read observations under concurrent offline rewrites without read-path locking; and (iii) a budgeted navigation operator whose search-accelerated routing reduces the expected number of LLM-assisted descent steps from d to O(1) while preserving anytime semantics with progressively refined answers. We evaluate W IKI KV through real-world deployment for the WeChat Official Account AI Assistant and benchmark it against diverse baselines on the A U-
+
+> TH
+
+TRACE dataset, where it achieves balanced low per-operator latency across four query operators against relational, graph, and FS backends, and reaches 63 .2% end-to-end answer correctness, exceeding multiple RAG baselines, with the gap widening on low- and high-fan-in multi-document questions. Ablation study further confirms the effectiveness of W IKI KV’s components. 
+
+Index Terms —hierarchical knowledge base, key–value store, path indexing, schema evolution, LLM-curated wiki, navigation query, retrieval-augmented generation. 
+
+I. I NTRODUCTION 
+
+At the intersection of large language models (LLMs) [1]–[3] and data systems, a new paradigm of knowledge management is emerging. Rather than indexing flat document collections for retrieval-augmented generation (RAG) [4], [5], production applications increasingly compile their unstructured corpora into hierarchical knowledge bases , tree-structured wiki whose nodes summarize and organize the underlying material— echoing the curated structures of community-built knowledge bases such as Wikidata [6], DBpedia [7], and Freebase [8]. End-user queries are then answered by navigating the hi-erarchy from a global index through dimensions down to individual entity pages and documents, often through agentic reasoning–acting loops over the structure [9]. This pattern al-ready underlies LLM-curated assistants, enterprise knowledge portals, and content authoring tools, placing the storage layer on the critical path of every online query. Three properties distinguish this workload from both document retrieval and general graph processing. First, access is hierarchical : every read traverses the fixed schema 
+
+Index → Dimension → Entity → Digest →
+
+Document . Second, the workload is read–write asymmetric :online traffic is read-only under tight latency SLAs, while writes are batched into offline pipelines that construct and evolve the wiki. Third, the knowledge base is continuously evolving : pages are added, merged and corrected as the corpus grows and access statistics expose stale content. A storage system for this paradigm thus needs low-latency path lookups and directory listings, snapshot-consistent reads under concurrent offline rewrites, and first-class schema evolution. Yet no existing storage model natively supports this access pattern. Relational databases [10] require recursive JOIN s or CTEs for deep paths, turning O(1) navigation into O(depth ),and their fixed schemas cannot accommodate diverse wiki structures. Graph databases [11] like Neo4j model nodes and edges but lack a “directory listing” primitive, mismatching the read-page-and-enumerate-children contract with high op-erational overhead. Flat key-value stores [12]–[14] offer O(1) 
+
+lookups but no hierarchical semantics, forcing scans or sec-ondary indexes for enumeration. Hierarchical file systems [15], [16] fit structurally but are optimized for large sequential byte streams rather than fine-grained, queryable directory metadata under concurrent random reads, and they expose directory listings as opaque enumerations rather than as a first-class, payload-bounded query primitive. Practitioners therefore compose ad-hoc stacks of vector indexes [17], [18], relational metadata, and bespoke caches, none of which captures the hierarchical semantics end to end. We introduce W IKI KV, a path-indexed key–value (KV) storage model purpose-built for hierarchical knowledge bases. WIKI KV encodes the wiki schema directly into the key space, so that one directory listing is served by a single point lookup on the directory node, in O(1) storage round-trips. Above this storage core, W IKI KV provides (i) a data-driven schema layer that initializes the hierarchy from corpus samples 
+
+> arXiv:2606.14275v1 [cs.DB] 12 Jun 2026
+
+and continuously evolves it via merge and split operators, complemented by a content-level Error Book for cross-batch self-correction, (ii) a consistency protocol that prevents par-tial reads under write-while-read traffic, and (iii) a budgeted navigation query operator that uses search-accelerated routing to compress multi-step descents into O(1) LLM-assisted hops while preserving progressive answer quality. WIKI KV presents the database-engineering realization of our broader LLM-curated wiki program, whose application-level retrieval method we introduced in our prior work [19]; that method achieved state-of-the-art results on multiple pub-lic benchmarks (see [19] for details). This paper focuses on the storage, deployment, and evolution side. Both the application-level retrieval behavior and the content-level Error Book are carried over from our prior work [19], and are here re-grounded on the storage layer; the contributions of this paper are the database-layer components (path-as-key storage, the consistency protocol, the three-tier cache, and the schema-optimization formalization), and the end-to-end study of §VI-D reports the full pipeline running on W IKI KV to verify that the storage layer preserves its answer quality. WIKI KV has been successfully deployed in production to serve the WeChat Official Account AI Assistant, organizing WeChat Official Account articles into personal knowledge bases that enable the AI Assistant to answer followers’ ques-tions based on it. Based on the calculation that each account contains hun-dreds to thousands of articles and knowledge pages, the system can support millions of account authors in building their personal knowledge bases. Our main contributions are summarized as follows:  
+
+> •
+
+Data-driven schema design and evolution. We for-malize hierarchical wiki construction as a constrained schema-optimization problem, and present algorithms for cold-start initialization and for continuous evolution via mutual-information-driven merge and Architect–Critic– Arbiter split, complemented by a content-level Error Book that persists across full and incremental ingestion runs.  
+
+> •
+
+Path-indexed storage model. We propose a path-as-key encoding together with a structured value schema, and prove that under the accompanying parent-after-child write protocol every online query observes a consistent, partial-read-free view of the wiki. Both point lookups and directory listings are served in O(1) storage round-trips.  
+
+> •
+
+Search-accelerated navigation queries. We define a budgeted navigation query NAV (q, B ) with progressive semantics and show that search-accelerated routing re-duces the expected number of LLM-driven navigation steps from O(depth ) to O(1) for single-target queries, while still returning a usable coarse-grained answer whenever the budget is exhausted early. We show that W IKI KV outperforms representative base-lines in per-operator latency across relational, graph, and FS backends, and achieves state-of-the-art end-to-end answer cor-rectness against RAG baselines on the A UTH TRACE dataset. The remainder of this paper is organized as follows. Sec-tion II formalizes the hierarchical knowledge-base model, the query model, and the consistency requirements. Section III describes data-driven schema cold-start and continuous evo-lution. Section IV presents the W IKI KV storage model and proves its consistency guarantees. Section V introduces the budgeted navigation query and its search-accelerated execution plan. Section VI reports the experimental study. Section VII surveys related work, and Section VIII concludes. II. P RELIMINARIES AND PROBLEM FORMULATION 
+
+A. Hierarchical Knowledge Base Model 
+
+A hierarchical knowledge base , hereafter a wiki , is an ordered rooted tree T = ( V, E ) whose vertex set is partitioned into five ordered levels , V = VI ∪ VD ∪ VE ∪ VDI ∪ VDO ,corresponding to the node types Index , Dimension , Entity ,
+
+Digest , and Document . The unique root r ∈ VI is the global index, internal nodes belong to VD , and leaves belong to VE ∪ VDI ∪ VDO . Every node v ∈ V carries three pieces of state: a path π(v), a content payload c(v), and a metadata record m(v). The path π(v) = /d 1/d 2/ · · · /d n
+
+is the unique sequence of edge labels on the directed path from r to v, encoded as a slash-separated string; it serves both as a human-readable address and, in §IV, as the stor-age key. We bound every node by depth (v) ≤ D for a depth budget D. The schema has five node types (Index, Dimension, Entity, Digest, Document); in our deployment each occupies one level, so D = 5. D may take any value, but effectiveness favors a small D (typically 5). We take D =5 by default because the five node types already span the full index →dimension →entity →digest →document abstraction chain, a larger D only inserts extra Dimension routing lev-els that improve neither coverage nor answer quality while lengthening every navigation descent. The storage model itself is depth-agnostic, but the operators in §V rely on this bound for their latency analysis. 
+
+B. Query Model Query                             
+
+> Ls
+> •Dimension_1 : <abstract>
+> •…
+> •Dimension_N : <abstract>
+> •Entity_1: <abstract>
+> •…
+> •Entity_N : <abstract>
+> Get
+> •name: …
+> •text: …
+> •meta: …
+> Search -Accelerated Navigation
+> Phase 1: search -accelerated routing
+> Π ← TopK ( Search( Extract(q) ), k )
+> Phase 2: targeted navigation
+> for πin Πdo
+> v ← Get( π);
+> Operator
+> NAV
+> 1. Index -level summary: the coarsest
+> answer the system can return;
+> 2. Dimension -level summary: restricted
+> to the dimension(s) selected for query;
+> 3. Entit y-or Article -level: page file.
+> Path prefix scan by query
+> Path -as -Key Encoding
+> …
+> …
+> sources "/sources"
+> "/sources /articles "articles
+> …
+> digests "/sources /digests "
+> …
+> 1
+> 4
+> 5
+> 2
+> 3
+> Dimension "/ d_n "
+> "/ d_n /e_n "Entity
+> Index "/"
+> Digest "/sources /digests/title "
+> Entity "/ d_n /e_1"
+> Document "/sources /articles/title "
+
+Fig. 1. Four query operators over a hierarchical knowledge base (the physical KV key stored in the underlying engine is the hash digest H(π(v)) ). 
+
+Real workloads on hierarchical knowledge bases reduce to four operators that together capture the access patterns of LLM-curated knowledge applications as shown in Figure 1:  
+
+> •
+
+Q1: Path lookup. GET (π) → v returns the node ad-dressed by path π, or ⊥ if no such node exists. • Q2: Directory list. LS(π) → (v, ⟨π1, . . . , π k⟩) returns the node at π together with the ordered list of paths of its children, where k is the fan-out of v. 
+
+> •
+
+Q3: Navigation query. NAV (q, B ) → ⟨ r1, r 2, . . . , r m⟩
+
+takes a natural-language query q and a time budget B,and returns a sequence of result records produced by descending the hierarchy under the budget.  
+
+> •
+
+Q4: Prefix search. SEARCH (p) → {π :
+
+p is a prefix of π} returns the set of paths whose textual prefix matches p; it is used to accelerate the entry step of N AV .The semantics of N AV differ from standard tree traversal in one essential way that we exploit in §V. 
+
+Property 1 (Progressive answers) If N AV (q, B ) is in-terrupted after step i, the prefix ⟨r1, . . . , r i⟩ remains a valid, albeit coarser-grained, answer to q. Equivalently, results are emitted in order of monotonically increasing granularity, so any prefix of the output is itself a usable answer. 
+
+C. Consistency Requirements 
+
+A wiki is read by online query traffic and written by offline construction-and-evolution pipelines. Any storage layer that realizes the above model must offer the following guarantees. 
+
+R1: Read-after-write consistency. Once a new page v
+
+is admitted into the wiki, every subsequent directory listing LS(π(parent( v))) returned to online queries must include 
+
+π(v), so that v is reachable through navigation. 
+
+R2: Concurrency safety under read–write asymme-try. Online traffic is strictly read-only, and the construction pipeline is the sole writer. The storage layer must guarantee that readers never observe partial-write states, ideally without taking explicit locks; page-level incremental updates issued by the pipeline must respect the same property. 
+
+R3: Bounded staleness. After an offline write completes, online readers must observe its effect within a bounded staleness window ∆, after which the new state is universally visible. These three requirements decouple online read availability from the cost and complexity of offline writes. Section IV gives a write protocol and a query-side fallback that together discharge R1–R3 without locking the read path. III. D ATA -D RIVEN SCHEMA DESIGN AND EVOLUTION 
+
+We address the dual challenges of cold-starting wiki schemas from corpora and enabling their continuous evolution. We formulate schema design as a constrained optimization problem, develop intent-anchored induction algorithms for initialization, and introduce two schema-evolution operators with a monotone-improvement guarantee, complemented by a content-level Error Book for cross-batch self-correction. These components integrate into an offline construction-and-evolution pipeline that supports dynamic schema adaptation. 
+
+A. Motivation 
+
+Production knowledge bases outgrow hand-curation: even a well-designed five-level schema falls out of equilibrium once the corpus crosses an order of magnitude in size. Empirically, a wiki without a principled re-shaping discipline is unmain-tainable past 10 4 KV pairs in our deployments. We observe three concurrent forms of drift. Width drift adds new top-level dimensions, forcing every navigation query to discriminate among many Index siblings at the first hop and inflating both LLM routing difficulty and index-primitive constants. Depth-and-density drift grows pages and edges roughly linearly with the corpus, bloating the materialized KV footprint and pushing directory listings past workable fan-out. Quality drift accumu-lates stale content, low-confidence assertions, and never-read entries that raise the retrieval noise floor without contributing to recall. 
+
+B. Schema Design as a Constrained Optimization Problem 
+
+We treat schema design as a global optimization problem over the space of valid wikis of depth at most D (five node types: Index, Dimension, Entity, Digest, Document; D = 5 in our system, as in §II-A). Let S = ( V, ℓ, E ) denote a candidate schema, where V is its node set, ℓ : V → { I, D, E, DI , DO }
+
+assigns each node to one of the five node types, and E encodes the parent–child structure. Let ρ be the access distribution that the online query workload induces over V , and let W
+
+denote the workload itself in the form of §II-B. We score every candidate schema by the cost 
+
+C(S; W ) = α |V | + β X
+
+> v∈V
+
+depth( v) · ρ(v) − γ Q(S; W ),
+
+(1) subject to a structural constraint depth( v) ≤ D together with a per-node fan-out bound |children( v)| ≤ kmax . Content-level quality is enforced separately by the Error Book repair loop introduced later in this section, rather than as a hard schema constraint. Each term in (1) has a direct counterpart elsewhere in the paper. The storage term α |V | measures the size of the materi-alized KV namespace whose layout we will fix in Section IV. The descent-depth term β P 
+
+> v
+
+depth( v)ρ(v) is the access-weighted traversal cost that dominates online navigation la-tency on tightly budgeted queries. The quality term Q(S; W )
+
+is the end-to-end answer correctness that the workload exposes empirically (Section VI). The three coefficients α, β, γ > 0 are deployment-time hyperparameters that trade storage footprint, online latency, and answer correctness against one another. The full optimization is super-exponential in |D| , and we do not attempt a global solution. Instead, we adopt a greedy local search that starts from a cold-start schema S0 (§III-C) and repeatedly applies the local operators of §III-D, each of which we will show in Theorem 1 to monotonically decrease 
+
+C under suitably chosen thresholds. 
+
+C. Cold-Start: Intent-Anchored Schema Induction 
+
+The cold-start problem is the zeroth-order instance of schema design: given a fresh corpus D and no prior structural assumptions, produce a valid initial schema S0 that satisfies the structural and constraints of §III-B. We solve it with a procedure we call Intent-Anchored Schema Induction (IASI) that invokes an LLM directly and depends on no statistical clustering, vector retrieval, or embedding model. The proce-dure runs once at deployment time, is decoupled from any online critical path, and consumes a sample S ⊂ D whose size is fixed independently of |D| .
+
+Intent-Anchored Schema Induction (IASI) procedure. 
+
+Firstly, IASI consumes the sample S and emits a corpus positioning descriptor 
+
+P = ⟨ focus , audience , ingestion -bias ⟩,
+
+a short structured record stating what the corpus is about, who it is written for, and the bias under which documents enter the corpus. Then, IASI takes (S, P) as input and emits the directory scaffold T that fixes VI , VD , VE and the parent– child structure of E at these levels (digest and document nodes are populated dynamically by the ingestion pipeline); it carries the structural constraints of §III-B, so that the tree is syntactically and structurally valid by construction on the first call rather than rejected and re-sampled by a post-hoc 
+
+generate-then-validate loop. By contrast, the most direct cold-start baseline, which hands a sample of articles to an LLM with a prompt saying “please produce a directory” and parses the response, yields a directory anchored on whichever salient entities happen to surface in the first few sample documents, with long-tail entities absorbed into the fallback bucket. Rather than being a transient intermediate string consumed and discarded by the LLM, P
+
+is a first-class schema object materialized to durable storage alongside the directory tree, and read directly by subsequent evolution operators of §III-D. 
+
+Non-uniform sampling. The sample S is not drawn uni-formly from D. A lightweight ingestion filter Φ runs before sampling and removes seven categories of low-information documents, such as boilerplate seasonal greetings, verbatim re-publications of upstream content, and event announcements. Since P is constructed from LLM observations in S, abundant low-information documents can systematically bias P toward inappropriate abstractions. Filtering before sampling prevents this miscalibration at the source instead of correcting it later. 
+
+D. Continuous Evolution Operators 
+
+The cold-start schema S0 drifts away from the optimum of §III-B as soon as the corpus grows, the access distribution ρ
+
+shifts, or page quality degrades. We define two local operators that move S down the cost surface of C one step at a time, each consuming statistics that the storage layer already carries on every page (Section IV)—no external usage log or analytics warehouse is required. 
+
+Operator 1: D IMENSION MERGE (mutual-information– driven). For two sibling internal nodes v1, v 2 that share a common parent, define the per-query co-access indicators 
+
+Xi = ⊮[a query touches vi] and the mutual information 
+
+MI( v1, v 2) = X
+
+> x1,x 2
+
+p12 (x1, x 2) log p12 (x1, x 2)
+
+p1(x1) p2(x2) , (2) estimated directly from the access_count statistics co-located with each page record. When MI( v1, v 2) > θ merge ,we merge v1 and v2 into a single node v12 : the child list is the union of the originals’ child lists, the access_count is the sum, and the content is the concatenation of the originals’ summaries. The operational interpretation is that two siblings whose access patterns are highly mutual are evidence that the user mental model treats them as a single concept; keeping them apart only widens the index and raises the routing burden of the navigation operator. 
+
+Operator 2: PAGE SPLIT (Architect–Critic–Arbiter). 
+
+We formalize a P AGE SPLIT operator by three roles, instan-tiate as follows. The Architect proposes a local candidate set Ee invoked through a rule-based trigger with an LLM serving as a local oracle, under either of two conditions: (i) 
+
+length( e) > l max , or (ii) a single LLM call adjudicates that e
+
+admits separable entity subtrees. The Critic assigns each e ∈ E e an estimated cost change 
+
+f∆C(e; W ) = α ∆|V | + β ∆(depth · ρ) − γ ∆ eQ, (3) where eQ approximates Q(S; W ) from the per-page 
+
+access_count and confidence statistics already co-located with each record (§IV-B). The Arbiter selects a commit set Ct ⊆ E e
+
+Ct = { e ∈ E e : f∆C(e; W ) < 0 ∧ Safety( e) }, |Ct| ≤ K, 
+
+(4) where Safety( e) requires every entity reachable in St to remain reachable in St+1 , and K caps the per-pass commit count. As in D IMENSION MERGE , splitting reduces per-node fan-out and lowers β P 
+
+> v
+
+depth( v)ρ(v) for the access mass previ-ously concentrated on v, at the cost of a unit increase in |V |
+
+charged directly by α ∆|V |.
+
+Theorem 1 (Monotone improvement). Let C be the schema cost (1), bounded below. Call an operator admissible 
+
+if it passes the acceptance test ∆C(e; W ) ≤ 0 of (4), and assume the quality term Q is separable across node-disjoint supports , so that disjoint operators contribute additively to 
+
+∆C. If each pass commits a node-disjoint set Ct of admissible operators, then C is non-increasing along the greedy trajectory 
+
+S0 → S1 → · · · and converges. 
+
+Proof. The three terms of C are sums over nodes, and by separability the quality term decomposes over disjoint supports; hence for a node-disjoint commit ∆C(Ct) =P 
+
+> e∈Ct
+
+∆C(e), each summand ≤ 0 by admissibility. Thus 
+
+{C(St)} is non-increasing and bounded below, hence con-verges. □
+
+Content-Level Self-Correction (Error Book). Comple-menting the schema-level operators above, our offline pipeline runs a content-level self-correction loop, the Error Book, carried over from our prior work [19]. While D IMENSION -MERGE and P AGE SPLIT operate on the structural shape of the namespace, the Error Book operates on individual record contents (e.g., dangling wikilinks, malformed source citations, unsupported facts, cross-page contradictions): detected error patterns are accumulated as constraint rules that are injected into subsequent ingestion prompts, and a two-layer repair— deterministic code-level fixes plus a periodic LLM-based fix— reduces both new and pre-existing errors. The Error Book is persisted alongside the wiki and reused across both full and incremental ingestion runs, so constraints accumulated in earlier runs continue to take effect in later ones. A contribution of this paper is to re-ground the Error Book on the storage layer, so that its constraint state and repairs share the same path-keyed records and per-author construction pipeline as the schema operators above. 
+
+E. Integration with the Offline Pipeline 
+
+The cold-start procedure, the two schema-evolution opera-tors, and the Error Book all execute as offline background jobs 
+
+that share a single construction-and-evolution pipeline with the storage layer. The pipeline runs at the following cadences: cold-start is one-shot; D IMENSION MERGE and P AGE SPLIT 
+
+are triggered every N ingested articles ( N = 30 in our deployment) to absorb access-distribution drift and corpus growth; and the Error Book runs after every ingestion batch (deterministic code-level fixes) plus a periodic LLM-level fix loop, with state persisted across full and incremental runs. IV. W IKI KV S TORAGE MODEL 
+
+We present W IKI KV, a path-indexed storage model that materializes the wiki schema directly into the key namespace of an underlying KV store, as illustrated in Figure 2. Directory                        
+
+> "name ": <segment string>,
+> "sub_dirs ": [<segment string>, ...],
+> "files ": [<segment string>, ...],
+> "meta ": {
+> "updated_at ": <timestamp>,
+> "entry_count ": <int>,
+> "access_count ": <int>
+> }
+> Path -as -Key Encoding
+> Entity "/d _n /e_1"
+> Value Schema
+> "name ": <segment string>,
+> "text ": <UTF -8 string>,
+> "meta ": {
+> "version": <int>,
+> "confidence": <float in [0,1]>,
+> "sources": [<URI>, ...],
+> "last_verified ": <timestamp>,
+> "access_count ": <int>
+> }
+> Page
+> Dimension "/ d_n "
+> …
+> …
+> "/ d_n /e_n "Entity
+> Operator
+> Ls
+> •Dimension_1 : <abstract>
+> •…
+> •Dimension_N : <abstract>
+> •Entity_1: <abstract>
+> •…
+> •Entity_N : <abstract>
+> O(1)
+> Get
+> •name: …
+> •text: …
+> •meta: …
+> O(1)
+> Index "/"
+> sources "/sources"
+> "/sources /articles "articles
+> Digest "/sources /digests/title "
+> …
+> digests "/sources /digests "
+> Document "/sources /articles/ title "
+> …
+> source links
+
+Fig. 2. Path-as-Key Encoding and Value Schema in W IKI KV (Paths are shown in logical form; the physical KV key stored in the underlying engine is the hash digest H(π(v)) ). 
+
+A. Path-as-Key Encoding 
+
+WIKI KV encodes the wiki schema by using each node’s path π(v) verbatim as its logical key. The five levels of the hierarchy thus collapse into a single, self-describing names-pace, with the binding shown in Table I. The root index is bound to the literal key "/" . A dimension index is bound to the single-segment key "/ d". Entity is both contained by dimension directory nodes and, as a page file, contains links to original digests and documents. Digests and documents are deliberately not nested under each entity. Since one source article often supports sev-eral entities across dimensions, replicating its digest and full text under every referencing entity would duplicate most of the stored bytes. We therefore hoist all sources into a single shared subtree ("/sources/digests/ ·",
+
+"/sources/articles/ ·") materialized once regardless of how many entities reference them; each entity page links to the relevant source paths rather than embedding their content, so a source shared by k entities is materialized once rather than 
+
+k times. Consequently, corpus growth accrues to the persistent tier alone; the in-memory cache footprint is fixed by capacity caps (§ caching) and independent of corpus size. The path π(v) is the logical address used throughout the paper, but the physical KV key is its hash digest 
+
+key( v) = H( π(v)) ; child paths advertised in directory records (§IV-B) are hashed on demand. Hashing yields a fixed-width, separator- and charset-agnostic key, sidestepping the encoding pitfalls of raw path strings such as non-ASCII (e.g. Chinese) segments that vary in byte length and collation across back-ends. 
+
+TABLE I: Path-as-Key Binding (The physical KV key stored in the underlying engine is the hash digest H( π(v)) ). 
+
+Node Logical path π(v) Bound to Index "/" root index 
+
+Dimension "/ d" dimension index d ∈ VD
+
+Entity "/ d/e" entity page e ∈ VE
+
+Digest "/sources/digests/ title " article digest di ∈ VDI 
+
+Document "/sources/articles/ title " article document do ∈ VDO 
+
+To make path equality unambiguous, we normalize paths: no trailing slash, case-sensitive segment matching, no reserved separator inside a segment, and depth bounded by the schema constant D. Normalization runs before hashing, so a path serves simultaneously as a tree address and, via H( π(v)) , as its storage key, with no separate translation table. 
+
+B. Value Schema 
+
+Internal nodes (Index, Dimension) are stored as directory 
+
+records, and leaves (Entity, Document and Digest) are stored as file records. 
+
+Directory records. A directory record has three parts. It identifies the node via type ="dir" and a name holding its segment relative to the parent; it enumerates children with two parallel arrays, sub_dirs (child directories) and 
+
+files (child leaves); and it carries a meta block of statistics: 
+
+updated_at , entry_count , and an access_count .
+
+File records. A file record follows an analogous lay-out: type ="file" with a name , a single UTF-8 text 
+
+payload, and a meta block recording a monotonically increasing version , a confidence score in [0 , 1] , a
+
+sources list of URIs, a last_verified timestamp, and an access_count .
+
+Design rationale. Two points deserve emphasis. First, since every directory record names its reachable children explicitly, L S(π) is served by a single point lookup at π with no prefix scan or auxiliary index, i.e. L S(π) ≡ GET (π) in 
+
+O(1) time in the common case. Second, the meta coun-ters ( access_count , confidence , last_verified ,version ) are unused by the storage operators here but feed the schema-evolution operators of Section III. 
+
+C. Consistency Protocol 
+
+The storage layer must reconcile two requirements: newly admitted pages must be reachable through their parent direc-tory (R1), yet readers running concurrently with offline writes must never observe a partial-write state (R2). As shown in Figure 3, W IKI KV discharges both with a parent-after-child write protocol paired with a permissive read, taking no explicit locks on the read path. Consistency Protocol (No partial reads)                  
+
+> Write protocol (parent -after -child)
+> To admit a new entity v at path π( v) = /d /e:
+> 1. child write :Put( π( v), c(v)) writes the record
+> into the store;
+> 2. parent update: Update( π( parent(v)))
+> appends the segment t to the files list of
+> the entity record at /d.
+> Read protocol (skip -on -miss)
+> 1. Ls( π) fetches the directory;
+> 2. issues a Get for each child;
+> 3. silently drops empty entries.
+> Path -as -Key Encoding
+> …
+> …
+> Index "/"
+> sources "/sources"
+> "/sources /articles "articles
+> Digest "/sources /digests/title "
+> …
+> digests "/sources /digests "
+> Document "/sources /articles/title "
+> …
+> Dimension "/ d_n "
+> "/d _n /e_n "Entity 1
+> 2
+
+Fig. 3. Consistency Protocol(No partial reads): Write protocol (parent-after-child) and Read protocol (skip-on-miss). 
+
+Write protocol (parent-after-child). To admit a new entity v at path π(v) = /d/e , the offline pipeline executes the following two operations in order : (1) Child write. 
+
+PUT (π(v), c (v)) writes the entity record into the store. (2) 
+
+Parent update. UPDATE (π(parent( v))) appends the segment 
+
+e to the files list of the dimension record at /d .If step 2 fails, the orphan record at π(v) remains in the store but is not yet linked from any directory listing. Page-level updates that rewrite an existing entity in place follow the same pattern, except that step 2 typically only refreshes 
+
+meta statistics on the parent and is therefore a no-op. 
+
+Read protocol (skip-on-miss). A reader executing L S(π)
+
+first fetches the directory record at π and then issues a G ET 
+
+for each child path it advertises. If a child G ET returns ⊥,the reader silently drops that entry from the result. Combined with the write order above, this discipline rules out partial-write observations, as the next theorem makes precise. 
+
+Theorem 2 (No partial reads). Under the parent-after-child write and skip-on-miss read protocols, and assuming monotonic cross-key visibility (a reader observing the parent update also observes the prior child write), a G ET /L S on π
+
+never returns a child that the record at π advertises but whose own record is missing. 
+
+Proof. Let a reader observe a directory record R at π and 
+
+π(v) be a new entity. (a) If R omits π(v), step 2 has not committed, so v is at most an unadvertised orphan and is not fetched. (b) If R lists it, step 2 committed, so by the write order and cross-key visibility step 1 is durable and visible here, and GET (π(v)) is complete. The only orphan reachable via a stale cache listing returns ⊥ and is dropped by skip-on-miss before reaching the result set. □
+
+This guarantee is stated for the deployment we evaluate—a single offline writer per subtree with a read-only online tier— and concerns advertised-but-missing children rather than full snapshot isolation; concurrency across multiple offline writers and strong isolation under cache races are delegated to the underlying T ABLE KV layer. 
+
+Optimistic concurrency control. Page-level updates rewrite existing records, so we attach a monotonically increas-ing version field to every record and use it as a compare-and-swap token. A writer that finds its expected version stale aborts and retries with the latest value. Because the workload is read-only on the online tier and the offline pipeline is the sole writer, write–write conflicts are rare in practice and a small bounded number of retries suffices; we therefore do not require a stronger pessimistic locking layer. 
+
+Multi-process parallel construction. The offline pipeline scales out by partitioning the write workload along author boundaries : each author’s corpus compiles into its own sub-tree, and distinct authors share no path, so their write sets are disjoint by construction. Construction is thus per-author-parallel, intra-author-serial —a pool of workers each owns one author at a time and applies its ingestion and evolution steps in sequence (preserving the parent-after-child order and version-CAS within the subtree), while different workers proceed in parallel with no cross-author coordination. This introduces no write–write conflicts beyond the intra-subtree ones already handled by OCC, and Theorem 2 continues to hold per subtree. With each ingestion batch completing in a few seconds, a modest worker pool sustains the throughput needed to build and maintain wikis for millions of Official Account authors. V. B UDGETED PATH NAVIGATION QUERY 
+
+Building on the key–value primitives of the storage layer, this section introduces the budgeted navigation query operator NAV (q, B ), which compiles a multi-step descent into O(1) 
+
+search-accelerated, LLM-assisted hops and pairs it with a path-keyed three-tier cache to sustain stable tail latency across knowledge-base scales. 
+
+A. Query Semantics 
+
+The navigation query operator N AV (q, B ) is the only oper-ator in §II-B not mapped to a single storage primitive: given a natural-language query q and wall-clock budget B, it returns an ordered sequence R = ⟨r1, . . . , r m⟩ with m ≤ ⌈ B/b ⌉,where b is the dominant single-step latency (an LLM-assisted descent in the worst case, a G ET in the best case). The operator is thus anytime : increasing B may yield a longer, finer sequence without invalidating the prefix returned under a smaller budget. As illustrated in Figure 4, N AV differs from a generic any-time traversal in the progressive contract of Property 1 (§II-B), specialized here to the wiki schema: records are emitted in order of monotonically increasing granularity, aligned with the hierarchy levels: budget -bounded interruption contract                  
+
+> Granularity ↓Budget ↑Validity Sequence
+> Coarse Modest ✓+ Index
+> Moderate Substantial ✓+ Dimension
+> Fine Ample ✓+ Entity
+> Refined Generous ✓+ Article Digest
+> Ultra -Fine Plentiful ✓+ Article Document
+> Query
+> NAV
+> 1. Index -level summary: the coarsest answer the
+> system can return;
+> 2. Dimension -level summary: restricted to the
+> dimension(s) selected for query;
+> 3. Entity -or Article -level: page file.
+> Path -as -Key Encoding
+> …
+> …
+> sources "/sources"
+> "/sources /articles "articles
+> …
+> digests "/sources /digests "
+> …5
+> Dimension "/ d_n "
+> "/ d_n /e_n "Entity
+> Index "/"
+> Digest "/sources /digests/title "
+> Entity "/ d_n /e_1"
+> Document "/sources /articles/title "
+> 1
+> 4
+> 2
+> 3
+
+Fig. 4. Flowchart of the navigation query operator with budget-bounded interruption contract.  
+
+> •
+
+r1 is an Index-level summary , the coarsest answer the system can return; e.g., “the wiki contains N dimensions: 
+
+Personal Relationships , Writing Style , . . . ”.  
+
+> •
+
+r2 is a Dimension-level summary restricted to the di-mension(s) selected for q; e.g., “ Personal Relationships 
+
+contains three entities: Family , Mentors and Friends ,
+
+Polemic Opponents ”.  
+
+> •
+
+r3 and onward are Entity- or Article-level pages; e.g., “The estrangement between Zhou Zuoren and Lu Xun occurred in 1923 . . . ”. For any prefix length i ≤ m, ⟨r1, . . . , r i⟩ is a valid (if coarser) answer to q. The operator thus admits a budget-bounded interruption contract: when the budget runs out, the accumulated partial sequence is returned as-is. This motivates the emission order of the plan and the budget-checking guards in the algorithm. 
+
+B. Search-Accelerated Routing 
+
+A literal layer-by-layer execution of N AV (q, B ) would in-voke an LLM at each level to pick the child to descend, incurring D serial LLM calls before the first entity-level record. The path-as-key namespace short-circuits this descent: a lexical keyword/prefix search S EARCH (p) over the path namespace (§II-B) returns candidate target paths that already approximate the right region of the tree, with no per-level LLM call. The router operates on textual path keys , not a dense vector index; vector retrieval, where used, is confined to the leaf-content operator Q4 and is orthogonal to path routing. The plan thus has two phases: Phase 1 selects k candidate paths via a single search call (a constant number of KV round trips, independent of D); Phase 2 performs targeted point lookups and optional single-level expansions. Both phases are gated by budget checks, so the operator can return at any point with a coherent prefix. 
+
+Engineering components. The algorithm comprises five lightweight components, each an explicit pseudocode step rather than an opaque sub-procedure.  
+
+> •
+
+CLASSIFY (q) is a hybrid router combining a regular-expression layer for enumeration triggers (“which . . . ”, “list . . . ”) with a small distilled classifier for ambiguous queries, adding at most 5ms. Its route class cls drives Phase 1: enumeration queries are answered by a single directory listing, the rest forwarded to the search router.  
+
+> •
+
+SEARCH (EXTRACT (q)) extracts candidate page-name keywords from q and runs a prefix scan over the path namespace to return candidate file paths.  
+
+> •
+
+NEEDS DEEPER (q, v ) compares q against a candidate’s content c(v) and returns true only if its semantic coverage of q falls below a threshold θ; it is a lightweight classifier or a single LLM call.  
+
+> •
+
+BUDGET EXHAUSTED (t0, B ) is the budget enforcement guard, evaluated before every potentially expensive step.  
+
+> •
+
+Multi-path exploration over the candidate set is performed serially by default to keep the budget guard authoritative; when the residual budget is large enough to amortize the call overhead, the per-candidate G ET calls of Phase 2 may be issued in parallel. 
+
+Algorithm. Algorithm 1 states the plan, with t0 the start time, cls the route class from C LASSIFY , Π the Phase 1 candidate set, and R the accumulating result. Enumeration-style queries short-circuit to a single root listing, bypassing keyword search; all other classes proceed to search-accelerated routing. Lines 8 and 17 are the budget guards, and line 15 performs the optional single-level expansion when a candidate page does not by itself cover q.
+
+Algorithm 1: N AV (q, B ): Search-Accelerated Navigation Require: Natural-language query q, time budget B (ms) 
+
+Ensure: Progressive result sequence R
+
+1: t0 ← NOW () ; R ← ⟨ ⟩ 
+
+2: cls ← CLASSIFY (q) {≤ 5ms hybrid router }
+
+3: // Phase 1: search-accelerated routing 
+
+4: if cls = ENUMERATE then 
+
+5: return ⟨LS("/" )⟩ { enumeration query answered by a single directory listing }
+
+6: end if 
+
+7: Π ← TOP K(SEARCH (EXTRACT (q)) , k ) {k = 3 candidate paths }
+
+8: if BUDGET EXHAUSTED (t0, B ) then 
+
+9: return ⟨LS("/" )⟩ { coarsest fallback }
+
+10: end if 
+
+11: // Phase 2: targeted navigation 
+
+12: for all π ∈ Π do 
+
+13: v ← GET (π); R. APPEND (v)
+
+14: if NEEDS DEEPER (q, v ) then 
+
+15: R. APPEND (LS(π)) 
+
+16: end if 
+
+17: if BUDGET EXHAUSTED (t0, B ) then 
+
+18: break 
+
+19: end if 
+
+20: end for 
+
+21: return R
+
+Theorem 3 (Step compression). Let D be the wiki depth and let h denote the number of post-routing hops needed to reach a target file from a candidate path returned by Phase 1. Under Algorithm 1, the number of LLM-assisted descent steps along a single target path drops from D in pure layer-by-layer navigation to h, where h ∈ {0, 1} for single-target queries (the candidate already covers q, or one expansion via N EEDS DEEPER suffices) and h ≤ k when q requires aggregating evidence across k dimensions. 
+
+Proof. Layer-by-layer navigation needs one LLM call per level, i.e. D to reach depth D. Under Algorithm 1, Phase 1 issues one routing call, then a single S EARCH replaces the first 
+
+D − h levels in constant KV round-trips independent of D.Among the rest only N EEDS DEEPER is on the critical path, giving the h post-routing descent calls: zero if the candidate covers q, once if one L S expansion suffices, at most k when 
+
+q spans k dimensions. Thus the descent steps equal h (the quantity in the statement) and the end-to-end count is the routing call plus these, 1 + h; both are independent of D.
+
+□
+
+C. Caching Strategy 
+
+The query model of §II-B treats every G ET as a fixed KV round trip, but in production we observe a strongly skewed access distribution: the root index and a small handful of dimension pages are read on essentially every query, while deep entity pages are read rarely but must remain available for the budgeted descent. This skew motivates a three-tier cache hierarchy keyed on the same path namespace as the underlying store, so that the cache lookup and the storage lookup share a single key derivation. The three tiers are arranged in increasing order of capacity and decreasing order of expected hit rate. 
+
+L1 — in-process cache (capacity: tens of pages).  
+
+> •
+
+Contents. The root index node "/" and every dimension node "/ d". 
+
+> •
+
+Policy. Pre-warmed at process start, never expired during the lifetime of the process; refreshed on the cache-invalidation event described below.  
+
+> •
+
+Rationale. Bounds the worst-case latency of Phase 1 by removing the single most frequently accessed prefix of the namespace from the network path. 
+
+L2 — shared Redis tier (capacity: thousands of pages).  
+
+> •
+
+Contents. Full directory node plus hot subset of Entity nodes, identified by the access_count statistic kept in each file’s meta record (§IV-B).  
+
+> •
+
+Policy. LRU eviction with a one-hour TTL, so that pages displaced from the working set are eventually reclaimed even without an explicit invalidation.  
+
+> •
+
+Rationale. Absorbs the long tail of dimension- and entity-level traffic that L1 cannot fit, and serves as the cross-process cache shared by all online query workers. 
+
+L3 — KV store (capacity: full wiki).  
+
+> •
+
+Contents. The complete W IKI KV keyspace, including full directory and file nodes.  
+
+> •
+
+Policy. Persistent backing tier; serves any request that misses L1 and L2.  
+
+> •
+
+Rationale. Acts as the authoritative source of truth and the consistency anchor for the cache-invalidation protocol. 
+
+Bounded in-memory footprint. Only L1 and L2 reside in memory, and both are capped by a fixed page budget (tens and thousands of pages, respectively) with LRU+TTL eviction; the resident working set is therefore bounded by the access skew rather than by corpus size. Growth in the article count enlarges only the persistent L3 tier (disk/SSD), so memory usage stays flat as the wiki scales. We deliberately attach no expiration to L3: a curated knowledge base is authoritative and durable, and content staleness is handled actively by the cache-invalidation stream and the Error Book / schema-evolution operators, not by passively expiring stored knowledge. 
+
+Cache invalidation. The offline construction-and-evolution pipeline publishes a path-keyed invalidation event on every successful write that completes the parent-after-child protocol of §IV-C. The online tier subscribes to this event stream and asynchronously refreshes any L1 or L2 entry whose key is a prefix of, or equal to, the affected path. Because the parent-after-child protocol guarantees that no advertised-but-missing child is ever observable in the underlying store (Theorem 2), an invalidation that races with an in-flight read can at worst force an extra round trip to L3, but it can never expose a partial-write state to the application. The bounded-staleness requirement R3 is therefore satisfied with ∆ equal to the maximum delay between a successful offline commit and the corresponding cache-refresh callback, which is independent of the wiki size. VI. E XPERIMENTAL EVALUATION 
+
+This section evaluates W IKI KV on a production hierarchical knowledge-base platform, against both representative storage backends and representative retrieval-augmented baselines. 
+
+A. Setup 
+
+Dataset and workload. We use AUTH TRACE [20], a recent diagnostic benchmark for evidence construction over thematically dense single-author corpora. It provides quoted evidence, exact fan-in annotations per question, and a unified pack-level protocol that measures evidence recall, evidence precision, and answer correctness. Its fan-in gradient , i.e., the number of source documents required to support an an-swer, defines a primary diagnostic axis along which retrieval, memory, graph, and structured-evidence paradigms can be compared on a level playing field. We adopt its three buckets: 
+
+single-doc (evidence in one document), low multi-doc (two documents), and high multi-doc (three or more documents). 
+
+Platform. The online tier serves user-facing navigation queries, while an offline construction-and-evolution pipeline writes pages to the storage layer. The read and write paths share no synchronous coordination beyond the parent-after-child write protocol of §IV-C. The online tier runs on a Redis Cluster and the persistent tier on T ABLE KV, a distributed KV system built by WeChat on an LSM-tree engine with PaxosStore consensus, whose simple KV abstraction scales horizontally. All LLM inference uses D EEP SEEK -V4-F LASH 
+
+[21]. 1
+
+> 1https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash
+
+Baselines. The storage latency study (§VI-B) compares WIKI KV’s path-as-key layout on its LevelDB engine against three alternative backends: a hierarchical file system (FS) using directory and file primitives; PostgreSQL with the ltree extension and a normalized parent-child schema; and Neo4j, representing native property-graph storage. The end-to-end study (§VI-D) compares W IKI KV against retrieval-augmented baselines: No-RAG , which queries the LLM with no retrieved evidence; Dense-RAG , embedding-based retrieval over a flat vector index; GraphRAG [22], community-summary retrieval over a constructed knowledge graph; and RAPTOR [23], recursive abstractive summarization producing a hierarchical retrieval tree. 
+
+Measurement protocol. All latency numbers are medians over 10 independent runs after a 200-query warmup; inter-run variation stays below 1% throughout. To control for LLM stochasticity, every answer-correctness result uses greedy decoding (temperature 0) with a fixed seed, so the reported scores are deterministic given the retrieved evidence. Unless noted otherwise, accuracy gaps reported below are statistically significant under a paired bootstrap test over per-question scores ( p < 0.01 ). 
+
+B. Storage Backend Latency 
+
+We first compare per-operator latency corresponding to Q1– Q4 in (§II-B) across the four storage configurations using a medium-sized wiki ( ∼2,000 KV pairs), as shown in Table II. For each operator, we randomly sample 100 target paths or prefixes and issue 1,000 queries per backend after a 200-query warmup. The path-as-key engine is our method: to isolate engine cost from service-layer effects, we realize it on a local LevelDB exposing the same Put/Get interface as TABLE KV but bypassing the service stack, reflecting only the local engine’s read/write cost. The remaining three backends—FS, PostgreSQL, and Neo4j—are the comparison points. All backends use a controlled, in-process, memory-resident setup; absolute latencies are therefore lower than in production, but since every backend is measured under the same configuration the relative comparison remains fair.                      
+
+> TABLE II: Median (P50) Per-Operator Latency by Backend, in Milliseconds, on the M EDIUM Wiki.
+> Backend Q1 Q2 Q3 Q4
+> FS 0.021 0.436 6.480 0.091 WIKI KV 0.017 0.088 5.411 0.085 PostgreSQL 0.075 0.117 1.671 0.432 Neo4j 2.494 1.230 6.397 1.686
+
+Our claim is therefore not that a path-as-key engine is the single fastest backend on every operator—none dominates on all four—but that it attains balanced low latency across the full Q1–Q4 mix, whereas each alternative is fast on some operators and pays disproportionately on others. 
+
+Q1 (path lookup). WIKI KV and FS deliver sub-millisecond P50 because Q1 maps directly to a single-key fetch in either backend. PostgreSQL pays a small but con-sistent overhead from the SQL parsing path even though the ltree key is indexed, while Neo4j is two orders of magnitude slower than W IKI KV because every Q1 incurs Bolt-driver round-tripping and a Cypher plan compilation. Backends whose data path is closest to the path-as-key contract pay the lowest constants. 
+
+Q2 (directory listing). WIKI KV is the fastest at P50 because the value record co-locates child segments (§IV-B) so that Q2 reduces to a single point lookup rather than a prefix scan. FS is slowed by per-entry metadata syscalls, and PostgreSQL is competitive only because the M EDIUM working set fits in memory and the ltree index avoids a recursive CTE. Neo4j again pays a multi-millisecond constant because the operation must traverse outgoing edges and rebuild Cypher result rows. 
+
+Q3 (navigation along a known path). Q3 is where the four backends diverge most clearly. PostgreSQL is unex-pectedly the fastest at P50 (1.671 ms) because the simulated navigation decomposes into a small number of indexed path equality lookups, each of which reuses a single client con-nection; with only ∼2,000 rows the index and base table are essentially in the page cache, and the per-step SQL constant is small. W IKI KV and FS both incur multiple round trips through their respective directory layers (a prefix scan and JSON parse for W IKI KV, repeated metadata calls for FS), and Neo4j additionally pays the Bolt and Cypher constants once per descent step. 
+
+Q4 (prefix search). WIKI KV and FS are the strongest at P50 because their lexicographic key layouts permit a native prefix range scan. PostgreSQL incurs additional overhead through the ltree match operator, and Neo4j has no native prefix-search primitive—it emulates Q4 with a pattern-match query that requires plan compilation per call. 
+
+C. Schema Design and Evolution Effectiveness 
+
+We next isolate the contribution of the cold-start procedure (§III-C) and the two schema-evolution operators (§III-D). The full W IKI KV system is compared against two internal variants on A UTH TRACE : W IKI KV-F IXED SCHEMA replaces cold-start with fixed dimensions, and W IKI KV-S TATIC keeps the cold-started schema but disables both evolution operators. All three configurations share the same storage layer (§IV) and query layer (§V), so any difference in answer correctness or latency is attributable to schema design and evolution alone. Throughout this section, answer correctness (AC) denotes the end-to-end correctness of the generated answer under the AUTH TRACE pack-level protocol; we report AC together with online first-token latency , and reserve human rating for the production study of §VI-E. 
+
+Cold-start vs. fixed dimensions. Replacing the cold-start procedure with a manually fixed schema (F IXED ) costs nearly ten absolute points of answer correctness (53.5 vs. 63.2), and simultaneously inflates the page count by 12% (2672 vs. 2385) because fixed dimensions over-partition the corpus into the-matically thin subtrees. The accuracy loss propagates to online TABLE III: Effect of Cold-Start and Evolution on Answer Correctness and Online Latency                   
+
+> Metric WIKI KV FIXED STATIC
+> Page count 2385 2672 2290 Avg. tool calls / query 3.18 3.36 3.12 Avg. pages read / query 1.48 1.56 1.44 Avg. first-token time (s)( ↓)11.7 12.7 11.7
+> AC ( ↑)63.2 53.5 52.5
+
+latency—average first-token time rises from 11.7 s to 12.7 s— because the wider Index and the over-partitioned topics force the navigation operator into more N EEDS DEEPER expansions per query (3.36 vs. 3.18 average tool calls) and into reading more pages per descent (1.56 vs. 1.48). The data-driven cold-start of §III-C therefore dominates fixed dimensions across every metric we report. 
+
+Evolution operators vs. frozen catalog. Freezing the schema after cold-start (S TATIC ) preserves the latency profile of full W IKI KV—average first-token time is identical to the full system (11.7 s)—but loses more than ten absolute points of answer correctness (52.5 vs. 63.2). The page count (2290 vs. 2385) further reveals the mechanism: without P AGE SPLIT 
+
+and D IMENSION MERGE , the schema fails to grow new topics in regions where the corpus has densified and fails to coalesce dimensions that the access distribution treats as one concept. The two evolution operators of §III-D therefore contribute the bulk of the system’s accuracy headroom while imposing essentially no latency overhead, consistent with Theorem 1’s monotone-improvement guarantee. 
+
+Page-count and accuracy interaction. Read jointly, the two ablations in Table III establish that schema quality, not schema size, is the binding constraint. F IXED is the largest schema yet the least accurate, while S TATIC is the smallest yet still loses ten points to full W IKI KV; only the cold-start–plus– evolution combination achieves both an appropriately sized namespace and the highest accuracy. This is the empirical analogue of the joint optimization in Eq. 1: minimizing |V |
+
+alone (S TATIC ) or maximizing fan-out alone (F IXED ) is insuf-ficient; both terms must be co-optimized through the operators of §III-D. 
+
+D. End-to-End Retrieval: AuthTrace 
+
+We compare the inherited LLM-W IKI retrieval pipeline of §V running on top of W IKI KV against four representative baselines on AUTH TRACE . All baselines share the same generation model and prompt template; only the retrieval stage differs. The metric is answer correctness, reported per fan-in bucket and as an overall average (Table IV). 
+
+Single-doc bucket. On single-doc queries, W IKI KV leads by 7.1 points ( p < 0.01 ) over the strongest baseline (RAP-TOR). Single-doc questions are precisely the regime in which a flat vector index is expected to perform best, because a single near-neighbor lookup can already locate the supporting passage; the gap above Dense-RAG and RAPTOR is therefore                          
+
+> TABLE IV: End-to-End Answer Correctness on A UTH TRACE by Fan-in Bucket
+> Method Single-doc Low multi-doc High multi-doc Overall
+> No-RAG 9.9 16.4 16.1 12.4 Dense-RAG 59.5 37.1 29.4 49.9 GraphRAG 52.2 33.8 27.6 44.3 RAPTOR 60.1 35.6 30.8 50.0
+> LLM-Wiki (W IKI KV) 67.2 60.9 47.7 63.2
+
+attributable to the structural advantage of navigating to a path-bounded entity page rather than to a free-floating chunk. 
+
+Low-multi-doc bucket. The gap widens dramatically at fan-in 2: W IKI KV delivers 60.9 versus the strongest baseline’s 37.1 (Dense-RAG). Two-document evidence requires either explicit traversal between sibling entity pages or multi-level traversal. WIKI KV’s path-indexed navigation matches this access pattern directly, while flat dense retrieval and graph-community retrieval both lack such capability. 
+
+High-multi-doc bucket. On the highest-fan-in bucket, WIKI KV scores 47.7 against the best baseline’s 30.8, a 16.9-point gap (paired bootstrap, p < 0.01 ) that confirms the prediction of §V-B: as the number of evidence documents required by a query grows, the value of structural navigation grows correspondingly, because each additional supporting document is typically reachable via hierarchical wiki nodes. The cross-bucket trend—the three retrieval baselines lose 20+ points moving from single-doc to high-multi-doc, while WIKI KV loses fewer than 20—indicates that structural re-trieval degrades more gracefully under fan-in stress than any of the flat-index or summary-tree baselines. 
+
+E. Production Deployment Study 
+
+We complement the above with a live deployment of WIKI KV as a personal knowledge-base service for the WeChat Official Account AI Assistant. The deployment backs a pro-duction knowledge base on the order of millions of pages and tens of millions of KV pairs across hundreds of author accounts, sustaining query traffic several orders of magnitude above the controlled workload of §VI-D. 2 We sample 1,000 real user queries against author-specific knowledge bases and measure the full online path (router → navigation → genera-tion), reporting both system-side latency and human-evaluated quality. 
+
+Quality-grading protocol. The 1,000 queries are uni-formly sampled from the live query log and de-identified before review. Each answer is rated on a 3-point scale that fol-lows the production review rubric: 3 (exact hit) —the answer directly answers, or fully supports answering, the user query without additional inference or supplementary information; 2(related but indirect) —the answer does not directly answer the query but contains content thematically related to the query that can be used after further inference; 1 (irrelevant or empty) —the answer has no substantive connection to the 
+
+> 2Absolute corpus and traffic figures are withheld for commercial confiden-tiality; the reported orders of magnitude suffice to characterize the deployment scale.
+
+query, or is empty. Each item is graded by three annota-tors blind to the system configuration, with substantial inter-annotator agreement (Krippendorff’s α = 0 .71 ); the reported value is the per-item mean. 
+
+TABLE V: Online Latency and Human-Evaluated Quality on 1,000 Real Queries from the WeChat Official Account AI Assistant Deployment 
+
+Metric Avg. P50 P95 P99 
+
+Wiki tool calls / query 2.2 2 3 4.6 Wiki tool latency (s) 0.432 0.411 0.554 0.966 First-token latency (s) 6.856 6.65 8.34 12.32 Human rating (1–3) 2.86 
+
+Online latency (Table V). The deployed system delivers a mean first-token latency of 6.856 s. The wiki-tool component itself contributes only 0.432 s on average and remains under 1 s even at P99, confirming that the path-as-key storage path of §IV is not the bottleneck in production: end-to-end time is dominated by LLM generation rather than by retrieval. The mean tool-call count of 2.2 per query (median 2, P99 4.6) further indicates that the search-routing operator of §V-B resolves the majority of real queries with one or two navigation steps. 
+
+Answer quality. The mean human rating of 2.86— between related (2) and exact hit (3), and much closer to the latter—shows that on real author-knowledge-base queries WIKI KV most often returns directly usable answers rather than merely related material. Together with the latency profile above, this provides real-world evidence complementing the controlled A UTH TRACE evaluation. 
+
+F. Scalability 
+
+We sample three nested regimes from AUTH TRACE of increasing corpus size: 500-query , 1000-query , and full .For each we record the structural footprint of the induced instance (directories and pages) and the first-token latency at Avg./P50/P95/P99. Figure 5(a) plots structural growth— directory count essentially invariant while pages grow nearly proportionally with corpus size; Figure 5(b) plots the latency profile—the body drifts only mildly while the tail compresses. The two views jointly separate the effect of schema depth from that of page mass on latency. 500-query 1000-query Full         
+
+> Corpus regime
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 30
+> First-token latency (s)
+> Avg.
+> P50
+> P95
+> P99
+> 0
+> 500
+> 1000
+> 1500
+> 2000
+> 2500
+> 3000
+> 3500
+> Number of documents / pages
+> 490
+> 675
+> 860
+> 1379
+> 1949 2385
+> 500-query 1000-query Full
+> Corpus regime
+> 0
+> 10
+> 20
+> 30
+> 40
+> Number of directories
+> Directories Documents Pages
+> 35 34 34
+> (a) WikiKV structural growth (b) End-to-end first-token latency
+
+Fig. 5. End-to-end scalability of WIKIKV on A UTH TRACE .
+
+Sub-linear scaling of end-to-end latency. The latency curves of Figure 5(b) make the sub-linear scaling visually explicit: doubling the question set lifts the page count by 
+
+∼1.4 × yet inflates average end-to-end latency by only 12 .2% 
+
+and P99 latency by only 10 .2% , and moving on to the full corpus adds less than 1% on top. The first-token Avg. curve drifts only mildly ( +9 .2% across the three regimes) while P50 stays essentially fixed; the high-percentile metrics tighten in the same proportion, with P95 even contracting on Full and P99 confined to a 0.7 s band. Scale therefore enters the system through the body of the latency distribution rather than through tail blow-ups. 
+
+Why the growth is nearly flat. The shape follows directly from the model of §IV–§V. Every query’s Q1 point lookup is 
+
+O(1) in the KV-pair count by the path-as-key co-location of §IV, a constant at every scale; the subsequent path navigation is bounded by schema depth D, not by |V |, and the cold-start of §III-C keeps D stable as the corpus grows. The flat “Direc-tories” curve in Figure 5(a) confirms this—the directory count holds at 34 –35 while documents and pages grow ∼1.75 × and 
+
+∼1.73 ×. The residual ∼10% growth is thus per-page reading at the leaves and slightly larger N EEDS DEEPER candidate sets, not navigation depth. 
+
+G. Ablation 
+
+To isolate the two most distinctive design choices in WIKI KV, namely the sampled cold-start of §III-C and the search-routing operator of §V-B, we run an end-to-end ablation on the single-author L U XUN corpus, the densest thematic subset of AUTH TRACE . We compare three configurations under an identical query workload, generation model, and prompt template: Full (the complete system); w/o Cold-Start ,which injects the full document set into schema construction instead of the sampled subset; and w/o Search Routing , which disables the Phase-1 router and falls back to pure layer-by-layer navigation. 
+
+TABLE VI: Ablation on the L U XUN Corpus (the densest thematic subset of AUTHTRACE): Removing Cold-Start Sampling or Search Routing                
+
+> Metric Full w/o Cold-Start w/o Search Routing
+> Avg. tool calls / query 3.53 3.75 5.42 Avg. pages read / query 1.56 1.63 5.40 Avg. first-token latency (s) 11.9 14.8 15.1 AC ( ↑)65.6 54.7 40.2
+
+Cold-start sampling vs. full-document injection. Re-placing sampled cold-start with full-document injection ( W/O
+
+COLD -S TART ) costs 10.9 absolute points of AC (54.7 vs. 65.6) and degrades every latency metric: average first-token latency rises +24% (11.9 s →14.8 s)(Table VI). The mecha-nism matches §III-C: feeding every document into schema induction inflates the prompt, biases the LLM toward over-specific topics from incidental overlaps, and yields a noisier, less discriminating schema. Downstream, tool calls (3.75 vs. 3.53) and pages read (1.63 vs. 1.56) rise as the navigator com-pensates online for a schema that was over-fit at construction time. Sampled cold-start thus delivers a strictly better schema for both accuracy and latency, not merely a cheaper one. 
+
+Search routing vs. pure layer-by-layer navigation. The average first-token latency of 11.9 s shows the system delivers correct answers efficiently. Removing search routing causes 
+
+more than triple the pages read per query (5.40 vs. 1.56) and 53% more tool calls (5.42 vs. 3.53), reflecting the deeper navigation required when the router cannot prune irrelevant branches. Latency increases modestly to 15.1 s, which is a side effect of the extra exploration rather than a primary cost. The real penalty is accuracy: without search routing the AC drops by 25.4 points (65.6% → 40.2%). The system thus allocates navigation budget precisely where it matters—fewer pages, fewer tool calls, and preserved correctness for the same latency order of magnitude. This validates the search-accelerated design: routing quality, not raw speed, is the bottleneck. VII. R ELATED WORK 
+
+We review existing work on hierarchical data management, graph and key–value databases for knowledge, and retrieval-augmented generation. 
+
+A. Hierarchical Data Management 
+
+Directory services such as LDAP [24] organize entries under a globally unique DN hierarchy. Distributed file systems such as GFS [15] and HDFS [16] provide a parent–child layout but expose only opaque byte streams at the leaves and treat directory metadata as bulk-oriented bookkeeping rather than a payload-bounded, queryable listing primitive. Warehouse-style query layers such as Hive [25] sit above these file systems, but their relational, set-oriented evaluation model is again ill-matched to the page-and-enumerate-children contract of LLM-driven navigation. More closely related is native and relational treatment of XML. TIMBER [26] pioneered set-at-a-time evaluation of tree queries via structural joins, and Tatarinov [27] encoded or-dered XML into relations without losing XPath expressiveness. However, all of the above systems expose navigation interfaces that return entire subtrees or unbounded child sets, with no mechanism to cap the payload size of a single traversal step under an LLM’s context window. In contrast, W IKI KV provides budget-aware hierarchical navigation tailored to LLM-driven traversal (§V). 
+
+B. Graph Databases and Key–Value Stores for Knowledge 
+
+Property graph databases like Neo4j with Cypher [11], [28], [29] excel at multi-hop reasoning over heterogeneous edges and power large knowledge graphs such as Freebase [8], DBpedia [7], and Wikidata [6]. Yet none exposes a na-tive “directory listing” primitive: enumerating children needs Cypher patterns or labelled traversals whose planner overhead is disproportionate to an O(k) prefix scan. At the opposite end, industrial KV and wide-column stores such as Dynamo [12], Bigtable [14], Cassandra [13], and Spanner [30]—typically atop LSM-tree backends [31]— provide O(1) lookups and scalability but are deliberately flat :no hierarchical key space, no contract tying a parent’s value to its children’s existence. Building a wiki on them forces the application to reinvent path semantics, the gap W IKI KV closes by lifting the hierarchy into the key encoding. W IKI KV is thus not a replacement for graph or KV stores but a thin path-indexing layer over any backend supporting point lookups and prefix scans (§IV). 
+
+C. Retrieval-Augmented Generation and Knowledge Retrieval 
+
+The dominant paradigm for grounding LLMs [1]–[3] in ex-ternal corpora is RAG [4], [5]: a dense retriever like DPR [32], ColBERT [33], or REALM [34] over an ANN index such as HNSW [35], FAISS [17], or Milvus [18], with readers like Fusion-in-Decoder [36] aggregating evidence. Unlike these methods, which flatten the corpus into a bag of chunks and force the LLM to reconstruct discarded structure, W IKI KV answers by walking the hierarchy rather than concatenating top-k chunks. Recent work recovers structure inside the retriever: RAP-TOR [23] clusters and summarizes chunks into a balanced tree; MemWalker [37] treats long-context reading as nav-igation over a summary tree; GraphRAG [22] extracts an entity-relation graph with community summaries; and agentic frameworks like ReAct [9] interleave retrieval with reasoning. These operate over a static in-memory hierarchy and leave schema evolution unaddressed; W IKI KV adds storage-layer evolution operators (§III) that let the hierarchy evolve safely under concurrent reads and writes. VIII. C ONCLUSION 
+
+In this paper, we present W IKI KV, a path-indexed key– value storage model purpose-built for LLM-curated hierarchi-cal knowledge bases, deployed at scale on the WeChat Official Account platform. By materializing the wiki schema directly into the key namespace, every directory listing reduces to a single point lookup in O(1) storage round-trips rather than a depth-dependent traversal. On top of this, a data-driven schema layer cold-starts via Intent-Anchored Schema Induc-tion and continuously evolves through mutual-information merge and Architect–Critic–Arbiter split, while a parent-after-child write protocol rules out partial reads under concurrent offline rewrites without locking the read path, and a budgeted navigation operator compresses LLM-assisted descent from 
+
+O(depth ) to O(1) . Experiments on A UTH TRACE and online deployment in the WeChat Official Account AI Assistant confirm consistently low per-operator latency across relational, graph, and FS backends, and superior end-to-end answer correctness relative to RAG baselines. Future work targets multimodal knowledge bases, adaptive depth tuning, stronger consistency under concurrent offline writers, and cross-domain generalization beyond AUTHTRACE’s single literature do-main. AI-G ENERATED CONTENT ACKNOWLEDGEMENT 
+
+We disclose the use of artificial intelligence (AI) in the experimental evaluation reported in Section VI as a drop-in inference component. Specifically, D EEP SEEK -V4-F LASH 
+
+was used in three places: (i) the offline construction of the WIKI KV instance with Intent-Anchored cold-start schema in-duction; (ii) the online schema-evolution pipeline; and (iii) the end-to-end retrieval-augmented question-answering pipeline of WIKI KV and all RAG baselines. REFERENCES [1] OpenAI, J. Achiam, S. Adler, S. Agarwal, L. Ahmad, I. Akkaya, F. L. Aleman, D. Almeida, J. Altenschmidt, S. Altman et al. , “Gpt-4 technical report,” 2024. [Online]. Available: https://arxiv.org/abs/2303.08774 [2] A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv et al. , “Qwen3 technical report,” 2025. [Online]. Available: https://arxiv.org/abs/2505.09388 [3] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan et al. , “The llama 3 herd of models,” 2024. [Online]. Available: https://arxiv.org/abs/2407.21783 [4] P. Lewis, E. Perez, A. Piktus, F. Petroni, V. Karpukhin, N. Goyal, H. K¨ uttler, M. Lewis, W.-t. Yih, T. Rockt¨ aschel et al. , “Retrieval-augmented generation for knowledge-intensive nlp tasks,” in Advances in Neural Information Processing Systems , H. Larochelle, M. Ranzato, R. Hadsell, M. Balcan, and H. Lin, Eds., vol. 33. Curran Associates, Inc., 2020, pp. 9459–9474. [Online]. Available: https: //proceedings.neurips.cc/paper files/paper/2020/file/6b493230205f780e 1bc26945df7481e5-Paper.pdf [5] Y. Gao, Y. Xiong, X. Gao, K. Jia, J. Pan, Y. Bi, Y. Dai, J. Sun, M. Wang, and H. Wang, “Retrieval-augmented generation for large language models: A survey,” 2024. [Online]. Available: https://arxiv.org/abs/2312.10997 [6] D. Vrandeˇ ci´ c and M. Kr¨ otzsch, “Wikidata: a free collaborative knowledgebase,” Commun. ACM , vol. 57, no. 10, p. 78–85, Sep. 2014. [Online]. Available: https://doi.org/10.1145/2629489 [7] S. Auer, C. Bizer, G. Kobilarov, J. Lehmann, R. Cyganiak, and Z. Ives, “Dbpedia: A nucleus for a web of open data,” in The Semantic Web: 6th International Semantic Web Conference, 2nd Asian Semantic Web Conference, ISWC 2007 + ASWC 2007, Busan, Korea, November 11-15, 2007. Proceedings . Berlin, Heidelberg: Springer-Verlag, 2007, p. 722–735. [Online]. Available: https: //doi.org/10.1007/978-3-540-76298-0 52 [8] K. Bollacker, C. Evans, P. Paritosh, T. Sturge, and J. Taylor, “Freebase: a collaboratively created graph database for structuring human knowledge,” in Proceedings of the 2008 ACM SIGMOD International Conference on Management of Data , ser. SIGMOD ’08. New York, NY, USA: Association for Computing Machinery, 2008, p. 1247–1250. [Online]. Available: https://doi.org/10.1145/1376616.1376746 [9] S. Yao, J. Zhao, D. Yu, N. Du, I. Shafran, K. Narasimhan, and Y. Cao, “React: Synergizing reasoning and acting in language models,” in The Eleventh International Conference on Learning Representations , 2023. [Online]. Available: https://arxiv.org/abs/2210.03629 [10] M. Stonebraker and L. A. Rowe, “The design of postgres,” in 
+
+Proceedings of the 1986 ACM SIGMOD International Conference on Management of Data , ser. SIGMOD ’86. New York, NY, USA: Association for Computing Machinery, 1986, p. 340–355. [Online]. Available: https://doi.org/10.1145/16894.16888 [11] I. Robinson, J. Webber, and E. Eifrem, Graph Databases: New Oppor-tunities for Connected Data , 2nd ed. O’Reilly Media, Inc., 2015. [12] G. DeCandia, D. Hastorun, M. Jampani, G. Kakulapati, A. Lakshman, A. Pilchin, S. Sivasubramanian, P. Vosshall, and W. Vogels, “Dynamo: amazon’s highly available key-value store,” in Proceedings of Twenty-First ACM SIGOPS Symposium on Operating Systems Principles , ser. SOSP ’07. New York, NY, USA: Association for Computing Machinery, 2007, p. 205–220. [Online]. Available: https://doi.org/10.1145/1294261.1294281 [13] A. Lakshman and P. Malik, “Cassandra: a decentralized structured storage system,” SIGOPS Oper. Syst. Rev. , vol. 44, no. 2, p. 35–40, Apr. 2010. [Online]. Available: https://doi.org/10.1145/1773912.1773922 [14] F. Chang, J. Dean, S. Ghemawat, W. C. Hsieh, D. A. Wallach, M. Burrows, T. Chandra, A. Fikes, and R. E. Gruber, “Bigtable: A distributed storage system for structured data,” ACM Trans. Comput. Syst. , vol. 26, no. 2, Jun. 2008. [Online]. Available: https://doi.org/10.1145/1365815.1365816 [15] S. Ghemawat, H. Gobioff, and S.-T. Leung, “The google file system,” in Proceedings of the Nineteenth ACM Symposium on Operating Systems Principles , ser. SOSP ’03. New York, NY, USA: Association for Computing Machinery, 2003, p. 29–43. [Online]. Available: https://doi.org/10.1145/945445.945450 [16] K. Shvachko, H. Kuang, S. Radia, and R. Chansler, “The hadoop distributed file system,” in 2010 IEEE 26th Symposium on Mass Storage Systems and Technologies (MSST) , 2010, pp. 1–10. [17] J. Johnson, M. Douze, and H. J´ egou, “Billion-scale similarity search with gpus,” IEEE Transactions on Big Data , vol. 7, no. 3, pp. 535–547, 2021. [18] J. Wang, X. Yi, R. Guo, H. Jin, P. Xu, S. Li, X. Wang, X. Guo, C. Li, X. Xu et al. , “Milvus: A purpose-built vector data management system,” in Proceedings of the 2021 International Conference on Management of Data , ser. SIGMOD ’21. New York, NY, USA: Association for Computing Machinery, 2021, p. 2614–2627. [Online]. Available: https://doi.org/10.1145/3448016.3457550 [19] H. Ming, F. Li, X. Wu, and W. Que, “Retrieval as reasoning: Self-evolving agent-native retrieval via llm-wiki,” 2026. [Online]. Available: https://arxiv.org/abs/2605.25480 [20] X. Wu, F. Li, H. Ming, and W. Que, “Authtrace: Diagnosing evidence construction in thematically dense single-author corpora,” 2026. [Online]. Available: https://arxiv.org/abs/2605.25382 [21] DeepSeek-AI, “Deepseek-v4: Towards highly efficient million-token context intelligence,” Model card, 2026. [Online]. Available: https: //huggingface.co/deepseek-ai/DeepSeek-V4-Flash [22] D. Edge, H. Trinh, N. Cheng, J. Bradley, A. Chao, A. Mody, S. Truitt, D. Metropolitansky, R. O. Ness, and J. Larson, “From local to global: A graph rag approach to query-focused summarization,” 2025. [Online]. Available: https://arxiv.org/abs/2404.16130 [23] P. Sarthi, S. Abdullah, A. Tuli, S. Khanna, A. Goldie, and C. D. Manning, “RAPTOR: Recursive abstractive processing for tree-organized retrieval,” in The Twelfth International Conference on Learning Representations , 2024. [Online]. Available: https: //openreview.net/forum?id=GN921JHCRw [24] J. Sermersheim, “Lightweight Directory Access Protocol (LDAP): The Protocol,” RFC 4511, Jun. 2006. [Online]. Available: https: //www.rfc-editor.org/info/rfc4511 [25] A. Thusoo, J. S. Sarma, N. Jain, Z. Shao, P. Chakka, S. Anthony, H. Liu, P. Wyckoff, and R. Murthy, “Hive: a warehousing solution over a map-reduce framework,” vol. 2, no. 2. VLDB Endowment, Aug. 2009, p. 1626–1629. [Online]. Available: https: //doi.org/10.14778/1687553.1687609 [26] H. V. Jagadish, S. Al-Khalifa, A. Chapman, L. V. S. Lakshmanan, A. Nierman, S. Paparizos, J. M. Patel, D. Srivastava, N. Wiwatwattana, Y. Wu et al. , “Timber: A native xml database,” The VLDB Journal , vol. 11, no. 4, p. 274–291, Dec. 2002. [Online]. Available: https://doi.org/10.1007/s00778-002-0081-x [27] I. Tatarinov, S. D. Viglas, K. Beyer, J. Shanmugasundaram, E. Shekita, and C. Zhang, “Storing and querying ordered xml using a relational database system,” in Proceedings of the 2002 ACM SIGMOD International Conference on Management of Data , ser. SIGMOD ’02. New York, NY, USA: Association for Computing Machinery, 2002, p. 204–215. [Online]. Available: https://doi.org/10.1145/564691.564715 [28] R. Angles, M. Arenas, P. Barcel´ o, A. Hogan, J. Reutter, and D. Vrgoˇ c, “Foundations of modern query languages for graph databases,” ACM Comput. Surv. , vol. 50, no. 5, Sep. 2017. [Online]. Available: https://doi.org/10.1145/3104031 [29] N. Francis, A. Green, P. Guagliardo, L. Libkin, T. Lindaaker, V. Marsault, S. Plantikow, M. Rydberg, P. Selmer, and A. Taylor, “Cypher: An evolving query language for property graphs,” in 
+
+Proceedings of the 2018 International Conference on Management of Data , ser. SIGMOD ’18. New York, NY, USA: Association for Computing Machinery, 2018, p. 1433–1445. [Online]. Available: https://doi.org/10.1145/3183713.3190657 [30] J. C. Corbett, J. Dean, M. Epstein, A. Fikes, C. Frost, J. J. Furman, S. Ghemawat, A. Gubarev, C. Heiser, P. Hochschild 
+
+et al. , “Spanner: Google’s globally distributed database,” ACM Trans. Comput. Syst. , vol. 31, no. 3, Aug. 2013. [Online]. Available: https://doi.org/10.1145/2491245 [31] P. O’Neil, E. Cheng, D. Gawlick, and E. O’Neil, “The log-structured merge-tree (lsm-tree),” Acta Inf. , vol. 33, no. 4, p. 351–385, Jun. 1996. [Online]. Available: https://doi.org/10.1007/s002360050048 [32] V. Karpukhin, B. Oguz, S. Min, P. Lewis, L. Wu, S. Edunov, D. Chen, and W.-t. Yih, “Dense passage retrieval for open-domain question answering,” in Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP) ,B. Webber, T. Cohn, Y. He, and Y. Liu, Eds. Online: Association for Computational Linguistics, Nov. 2020, pp. 6769–6781. [Online]. Available: https://aclanthology.org/2020.emnlp-main.550/ [33] O. Khattab and M. Zaharia, “Colbert: Efficient and effective passage search via contextualized late interaction over bert,” in Proceedings of the 43rd International ACM SIGIR Conference on Research and Development in Information Retrieval , ser. SIGIR ’20. New York, NY, USA: Association for Computing Machinery, 2020, p. 39–48. [Online]. Available: https://doi.org/10.1145/3397271.3401075 [34] K. Guu, K. Lee, Z. Tung, P. Pasupat, and M. Chang, “Retrieval augmented language model pre-training,” in Proceedings of the 37th International Conference on Machine Learning , ser. Proceedings of Machine Learning Research, H. D. III and A. Singh, Eds., vol. 119. PMLR, 13–18 Jul 2020, pp. 3929–3938. [Online]. Available: https://proceedings.mlr.press/v119/guu20a.html [35] Y. A. Malkov and D. A. Yashunin, “Efficient and robust approxi-mate nearest neighbor search using hierarchical navigable small world graphs,” IEEE Transactions on Pattern Analysis and Machine Intelli-gence , vol. 42, no. 4, pp. 824–836, 2020. [36] G. Izacard and E. Grave, “Leveraging passage retrieval with generative models for open domain question answering,” in Proceedings of the 16th Conference of the European Chapter of the Association for Computational Linguistics: Main Volume , P. Merlo, J. Tiedemann, and R. Tsarfaty, Eds. Online: Association for Computational Linguistics, Apr. 2021, pp. 874–880. [Online]. Available: https: //aclanthology.org/2021.eacl-main.74/ [37] H. Chen, R. Pasunuru, J. Weston, and A. Celikyilmaz, “Walking down the memory maze: Beyond context limit through interactive reading,” 2023. [Online]. Available: https://arxiv.org/abs/2310.05029

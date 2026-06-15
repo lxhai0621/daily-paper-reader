@@ -6,104 +6,95 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-14
-- 运行时间：2026-06-14 21:58:52 UTC
+- 最新运行日期：2026-06-15
+- 运行时间：2026-06-15 23:17:57 UTC
 - 运行状态：成功
-- 本次总论文数：28
-- 精读区：13
+- 本次总论文数：25
+- 精读区：10
 - 速读区：15
 
 ### 今日简报（AI）
-今日推荐28篇AI论文，精读13篇，重点关注智能体技能进化与检索问题抽象化方法。最值得关注的是精读高分《SkillHone》和《AbstRAG》，分别聚焦智能体持续学习与检索抽象化，速读中《VESTA》的LLM agent场景生成评估也值得一读。建议优先从智能体技能演进与检索系统优化两个方向深入，可针对性查看相关论文或实验复现。
-- 详情：[/202606/14/README](/202606/14/README)
+今日综述25篇论文，精读10篇，重点关注知识图谱增强记忆检索与多LLM智能体上下文适应方法。最值得看的是《Knowledge Graph Enhanced Memory-Augmented Retrieval》和《Graph-based Target Back-Propagation for Context Adaptation》这两篇9分工作，以及速读中《STREAM》的LLM推理中间件方案。建议优先精读两篇高分论文，并跟进STREAM的高效推理思路。
+- 详情：[/202606/15/README](/202606/15/README)
 
 ### 精读区论文标签
-1. [SkillHone: A Harness for Continual Agent Skill Evolution Through Persistent Decision History](/202606/14/2606.08671v1-skillhone-a-harness-for-continual-agent-skill-evolution-through-persistent-decision-history)  
+1. [Knowledge Graph Enhanced Memory-Augmented Retrieval for Long Context Modeling](/202606/15/2606.14047v1-knowledge-graph-enhanced-memory-augmented-retrieval-for-long-context-modeling)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：直接解决长上下文建模问题，使用知识图谱增强检索和多组件记忆
+2. [Graph-based Target Back-Propagation for Context Adaptation in Multi-LLM Agentic Systems](/202606/15/2606.14155v1-graph-based-target-back-propagation-for-context-adaptation-in-multi-llm-agentic-systems)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：GTBP优化多LLM智能体工作流中的提示词
+3. [CacheRL:Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward](/202606/15/2606.14179v1-cacherlmulti-turn-tool-calling-agents-via-cached-rollouts-and-hybrid-reward)  
    标签：评分：9.0/10、query:agent
-   evidence：基于持久决策历史的智能体技能持续演化
-2. [AbstRAG: Learning to Abstract for Retrieval Problems](/202606/14/2606.09459v1-abstrag-learning-to-abstract-for-retrieval-problems)  
+   evidence：CacheRL使用缓存回放的强化学习训练智能体基础模型进行多轮工具调用
+4. [WikiKV: Schema-Evolving Path-Indexed Storage for Hierarchical Knowledge Navigation](/202606/15/2606.14275v1-wikikv-schema-evolving-path-indexed-storage-for-hierarchical-knowledge-navigation)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：检索增强生成中的抽象鸿沟
-3. [Phi-Actor-Critic: Steering General-Sum Games to Pareto-Efficient Correlated Equilibria](/202606/14/2606.11284v1-phi-actor-critic-steering-general-sum-games-to-pareto-efficient-correlated-equilibria)  
-   标签：评分：9.0/10、query:agent
-   evidence：提出Phi-Actor-Critic框架实现多智能体强化学习下的帕累托有效均衡
-4. [A Controlled Study of Decoding-Time Truthfulness Methods on Instruction-Tuned LLMs](/202606/14/2606.12160v1-a-controlled-study-of-decoding-time-truthfulness-methods-on-instruction-tuned-llms)  
+   evidence：为RAG中层次知识库优化的路径索引键值存储
+5. [From Chatbot to Digital Colleague: The Paradigm Shift Toward Persistent Autonomous AI](/202606/15/2606.14502v1-from-chatbot-to-digital-colleague-the-paradigm-shift-toward-persistent-autonomous-ai)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：利用内部logits特征检测幻觉，直接降低RAG系统中的幻觉风险
-5. [The Internet of Agentic AI: Communication, Coordination, and Collective Intelligence at Scale](/202606/14/2606.12835v1-the-internet-of-agentic-ai-communication-coordination-and-collective-intelligence-at-scale)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：关于自主AI智能体的愿景论文，涵盖通信与协调
-6. [X-MADAM-RAG: Diagnosing and Handling Chinese-English Evidence Conflict in Retrieval-Augmented Generation](/202606/14/2606.12903v1-x-madam-rag-diagnosing-and-handling-chinese-english-evidence-conflict-in-retrieval-augmented-generation)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：RAG中的中英文证据冲突
-7. [G-Long: Graph-Enhanced Memory Management for Efficient Long-Term Dialogue Agents](/202606/14/2606.13115v1-g-long-graph-enhanced-memory-management-for-efficient-long-term-dialogue-agents)  
-   标签：评分：9.0/10、query:agent
-   evidence：图增强的长期对话智能体记忆管理
-8. [Rethinking RAG in Long Videos: What to Retrieve and How to Use It?](/202606/14/2606.13141v1-rethinking-rag-in-long-videos-what-to-retrieve-and-how-to-use-it)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：面向长视频的检索增强生成，基准和自适应重排序
-9. [MemRefine: LLM-Guided Compression for Long-Term Agent Memory](/202606/14/2606.13177v1-memrefine-llm-guided-compression-for-long-term-agent-memory)  
-   标签：评分：9.0/10、query:agent
-   evidence：LLM引导的长期智能体记忆压缩
-10. [CQC-RAG: Robust Retrieval-Augmented Generation via Cross-Query Consistency](/202606/14/2606.13438v1-cqc-rag-robust-retrieval-augmented-generation-via-cross-query-consistency)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：通过跨查询一致性增强RAG鲁棒性，提升事实性并减少幻觉
-11. [Uncertainty-Aware Hybrid Retrieval for Long-Document RAG](/202606/14/2606.13550v1-uncertainty-aware-hybrid-retrieval-for-long-document-rag)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：针对长文档RAG，提出不确定性感知的混合检索与多粒度分块方法
-12. [Agents-K1: Towards Agent-native Knowledge Orchestration](/202606/14/2606.13669v1-agents-k1-towards-agent-native-knowledge-orchestration)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：端到端知识编排管线将文档转化为智能体原生知识图谱
-13. [EvoArena: Tracking Memory Evolution for Robust LLM Agents in Dynamic Environments](/202606/14/2606.13681v1-evoarena-tracking-memory-evolution-for-robust-llm-agents-in-dynamic-environments)  
-   标签：评分：9.0/10、query:agent
-   evidence：提出EvoArena基准和EvoMem记忆范式，用于动态环境中的鲁棒LLM智能体
+   evidence：自主AI智能体，具备推理、行动和记忆能力
+6. [Self-Evolving Scientific Agent Discovers Generalizable Physically-Reasoned Fluid Control](/202606/15/2606.08405v1-self-evolving-scientific-agent-discovers-generalizable-physically-reasoned-fluid-control)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：自进化LLM智能体用于科学发现
+7. [CompRank: Efficient LLM Reranking via Token-Level Compression and Decoding-Free Scoring](/202606/15/2606.11700v1-comprank-efficient-llm-reranking-via-token-level-compression-and-decoding-free-scoring)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：用于检索增强生成的高效LLM重排
+8. [Task-Aware Structured Memory for Dynamic Multi-modal In-Context Learning](/202606/15/2606.11853v1-task-aware-structured-memory-for-dynamic-multi-modal-in-context-learning)  
+   标签：评分：8.0/10、query:agent
+   evidence：用于动态多模态上下文学习的任务感知结构化记忆
+9. [EvoBrowseComp: Benchmarking Search Agents on Evolving Knowledge](/202606/15/2606.13120v1-evobrowsecomp-benchmarking-search-agents-on-evolving-knowledge)  
+   标签：评分：8.0/10、query:agent
+   evidence：EvoBrowseComp基准测试基于LLM的搜索智能体
+10. [AgentSpec: Understanding Embodied Agent Scaffolds Through Controlled Composition](/202606/15/2606.14674v1-agentspec-understanding-embodied-agent-scaffolds-through-controlled-composition)  
+   标签：评分：8.0/10、query:agent
+   evidence：LLM智能体脚手架的模块化规范框架
 
 ### 速读区论文标签
-1. [VESTA: A Fully Automated Scenario Generation and Safety Evaluation Framework for LLM Agents](/202606/14/2606.08531v1-vesta-a-fully-automated-scenario-generation-and-safety-evaluation-framework-for-llm-agents)  
-   标签：评分：8.0/10、query:agent
-   evidence：LLM智能体安全评估框架
-2. [Closing the Indexing-Decoding Gap in Multimodal Generative Retrieval via Prefix Retention Optimization](/202606/14/2606.09241v1-closing-the-indexing-decoding-gap-in-multimodal-generative-retrieval-via-prefix-retention-optimization)  
-   标签：评分：8.0/10、query:mmkqa
-   evidence：多模态生成式检索前缀保留优化
-3. [Closing the Indexing-Decoding Gap in Multimodal Generative Retrieval via Prefix Retention Optimization](/202606/14/2606.09241v2-closing-the-indexing-decoding-gap-in-multimodal-generative-retrieval-via-prefix-retention-optimization)  
-   标签：评分：8.0/10、query:mmkqa
-   evidence：多模态生成检索的前缀优化方法，可用于多模态RAG
-4. [Density Ridge Selective Prediction for LLM and VLM Hallucination Detection under Calibration Label Scarcity](/202606/14/2606.10198v2-density-ridge-selective-prediction-for-llm-and-vlm-hallucination-detection-under-calibration-label-scarcity)  
+1. [CoDeR: Local Constraint-Compatible Retrieval Beyond Semantic Similarity](/202606/15/2606.13204v1-coder-local-constraint-compatible-retrieval-beyond-semantic-similarity)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：低校准标签下的LLM/VLM幻觉检测方法
-5. [Workflow-GYM: Towards Long-Horizon Evaluation of Computer-use Agentic tasks in Real-World Professional Fields](/202606/14/2606.11042v2-workflow-gym-towards-long-horizon-evaluation-of-computer-use-agentic-tasks-in-real-world-professional-fields)  
+   evidence：通过约束兼容性提升检索相关性
+2. [STREAM: Multi-Tier LLM Inference Middleware with Dual-Channel HPC Token Streaming](/202606/15/2606.13968v1-stream-multi-tier-llm-inference-middleware-with-dual-channel-hpc-token-streaming)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：面向专业领域长期智能体任务的基准
-6. [When Should Queries Be Decomposed? A Stage-Aware Study of Query Decomposition for Multi-Condition Retrieval](/202606/14/2606.08577v1-when-should-queries-be-decomposed-a-stage-aware-study-of-query-decomposition-for-multi-condition-retrieval)  
+   evidence：多层LLM推理中间件管理上下文窗口
+3. [Dialogue SWE-Bench: A Benchmark for Dialogue-Driven Coding Agents](/202606/15/2606.13995v1-dialogue-swe-bench-a-benchmark-for-dialogue-driven-coding-agents)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：面向对话驱动的编码智能体的基准与智能体，支持自主AI智能体
+4. [Decoupled Mixture-of-Experts for Parametric Knowledge Injection](/202606/15/2606.14243v1-decoupled-mixture-of-experts-for-parametric-knowledge-injection)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：解耦混合专家用于参数化知识注入作为RAG的替代方案
+5. [Large Language Model Based Agent for Automated Discovery in Computational Physics](/202606/15/2606.14266v1-large-language-model-based-agent-for-automated-discovery-in-computational-physics)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：基于大语言模型的自主智能体用于计算物理科学发现
+6. [Structuring agentic AI for HPC code modernization](/202606/15/2606.08710v1-structuring-agentic-ai-for-hpc-code-modernization)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：查询分解用于多条件检索，提高重排序阶段效果
-7. [ArtiFact: A Large-Scale Multi-Modal Cultural Heritage Dataset](/202606/14/2606.09648v1-artifact-a-large-scale-multi-modal-cultural-heritage-dataset)  
+   evidence：结构化手把手指导优化智能体工作流的提示
+7. [FAST-MEL: A Fast, Accurate, and Storage Efficient Solution for Multimodal Entity Linking](/202606/15/2606.11749v1-fast-mel-a-fast-accurate-and-storage-efficient-solution-for-multimodal-entity-linking)  
    标签：评分：7.0/10、query:mmkqa
-   evidence：大规模多模态文化遗产数据集，用于跨模态错误检测和多模态知识图谱推理
-8. [miniReranker: Efficient Multimodal Reranking through Visual Cache Reuse and Interaction Sparsity](/202606/14/2606.10759v1-minireranker-efficient-multimodal-reranking-through-visual-cache-reuse-and-interaction-sparsity)  
-   标签：评分：7.0/10、query:mmkqa
-   evidence：提出miniReranker，利用视觉缓存复用和交互稀疏性的高效多模态重排序器
-9. [Workflow-GYM: Towards Long-Horizon Evaluation of Computer-use Agentic tasks in Real-World Professional Fields](/202606/14/2606.11042v1-workflow-gym-towards-long-horizon-evaluation-of-computer-use-agentic-tasks-in-real-world-professional-fields)  
+   evidence：多模态实体链接用于知识库问答
+8. [Strategic Decision Support for AI Agents](/202606/15/2606.12587v1-strategic-decision-support-for-ai-agents)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：评估自主AI智能体在长期专业GUI任务上的基准
-10. [RankVR: Low-Rank Structure Perception and Value Recalibration for Robust Composed Image Retrieval](/202606/14/2606.11689v1-rankvr-low-rank-structure-perception-and-value-recalibration-for-robust-composed-image-retrieval)  
-   标签：评分：7.0/10、query:mmkqa
-   evidence：面向组合图像检索的跨模态推理与噪声鲁棒方法
-11. [When LLMs Invent Rust Crates: An Empirical Study of Hallucination Patterns and Mitigation](/202606/14/2606.08444v1-when-llms-invent-rust-crates-an-empirical-study-of-hallucination-patterns-and-mitigation)  
-   标签：评分：6.0/10、query:ma-kf
-   evidence：LLM幻觉研究及缓解启示
-12. [ARM: An AutoRegressive Large Multimodal Model with Unified Discrete Representations](/202606/14/2606.11188v1-arm-an-autoregressive-large-multimodal-model-with-unified-discrete-representations)  
+   evidence：面向自主AI智能体的战略决策支持
+9. [LoHoSearch: Benchmarking Long-Horizon Search Agents Beyond the Human Difficulty Ceiling](/202606/15/2606.12837v1-lohosearch-benchmarking-long-horizon-search-agents-beyond-the-human-difficulty-ceiling)  
+   标签：评分：7.0/10、query:agent
+   evidence：基于LLM的搜索智能体基准
+10. [Cross-Modal Masked Compositional Concept Modeling for Enhancing Visio-Linguistic Compositionality](/202606/15/2606.13288v1-cross-modal-masked-compositional-concept-modeling-for-enhancing-visio-linguistic-compositionality)  
+   标签：评分：7.0/10、query:cmv
+   evidence：跨模态掩码建模增强语义对齐，可用于跨模态证据检索
+11. [TABVERSE: Benchmarking Cross-Format Table Understanding in LLMs and VLMs](/202606/15/2606.09578v1-tabverse-benchmarking-cross-format-table-understanding-in-llms-and-vlms)  
    标签：评分：6.0/10、query:mmkqa
-   evidence：提出ARM，一个统一图像理解、生成和编辑的自回归大型多模态模型
-13. [Neuro-Relational Programs: Unifying Queries and Neural Computation over Structured Data](/202606/14/2606.11946v1-neuro-relational-programs-unifying-queries-and-neural-computation-over-structured-data)  
+   evidence：多模态表格理解基准
+12. [ECA: Efficient Continual Alignment for Open-Ended Image-to-Text Generation](/202606/15/2606.12633v1-eca-efficient-continual-alignment-for-open-ended-image-to-text-generation)  
+   标签：评分：6.0/10、query:mmkqa
+   evidence：跨模态对齐用于基于知识的持续图像到文本生成中的推理
+13. [Context-aware Modality-Topology Co-Alignment for Multimodal Attributed Graphs](/202606/15/2606.14172v1-context-aware-modality-topology-co-alignment-for-multimodal-attributed-graphs)  
+   标签：评分：6.0/10、query:mmkqa
+   evidence：多模态属性图的上下文感知模态-拓扑共对齐
+14. [OmniVideo-100K: A Dataset for Audio-Visual Reasoning through Structured Scripts and Evidence Chains](/202606/15/2606.14702v1-omnivideo-100k-a-dataset-for-audio-visual-reasoning-through-structured-scripts-and-evidence-chains)  
+   标签：评分：6.0/10、query:mmkqa
+   evidence：面向跨模态推理的音视频数据集，包含结构化脚本和证据链
+15. [A multi-agent system for spine MRI report generation from multi-sequence imaging](/202606/15/biorxiv-10-64898-2026-06-07-730703-v1-a-multi-agent-system-for-spine-mri-report-generation-from-multi-sequence-imaging)  
    标签：评分：6.0/10、query:ma-kf
-   evidence：统一结构化数据上的查询和神经计算
-14. [Bridging the Modality Gap in Forensic Image Retrieval](/202606/14/2606.12294v1-bridging-the-modality-gap-in-forensic-image-retrieval)  
-   标签：评分：6.0/10、query:cmv
-   evidence：面向法医证据的跨模态检索
-15. [PRISMR: Overcoming Parse Collapse in Multimodal Listwise Ranking via Parameterized Representation Internalization](/202606/14/2606.12942v1-prismr-overcoming-parse-collapse-in-multimodal-listwise-ranking-via-parameterized-representation-internalization)  
-   标签：评分：6.0/10、query:ma-kf
-   evidence：解决多模态列表排序中的解析崩溃，提升重排序效果
+   evidence：基于基础模型的多智能体系统用于脊柱MRI报告生成
 
 
 <div class="dpr-home-promo-card">
