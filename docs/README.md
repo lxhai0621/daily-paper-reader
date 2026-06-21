@@ -6,97 +6,95 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-20
-- 运行时间：2026-06-20 22:00:37 UTC
+- 最新运行日期：2026-06-21
+- 运行时间：2026-06-21 21:12:48 UTC
 - 运行状态：成功
 - 本次总论文数：25
 - 精读区：10
 - 速读区：15
 
 ### 今日简报（AI）
-今日精读10篇、速读15篇，聚焦检索增强生成（RAG）与多模态文档问答，其中《Retrievable Gradients》与《MODE-RAG》获9分最高分。  
-最值得关注的方向是RAG的梯度可检索克服权重漂移和基于流形异常诊断的评估方法，以及《VinQA》等三篇8分速读论文中视觉证据预对齐与事件增强图文生成。  
-建议优先精读高分RAG论文理解前沿优化策略，再通过速读中的视觉问答案例拓展多模态应用场景。
-- 详情：[/202606/20/README](/202606/20/README)
+今日聚焦Agentic AI信任路由与多模态知识接地图像描述两项高价值研究。最值得关注《TrustedARI》构建原生信任代理路由基础设施，及《Hierarchical Multi-Modal Retrieval》实现知识接地的新方法。建议后续跟进智能体主动工具发现与缓存优化方向。
+- 详情：[/202606/21/README](/202606/21/README)
 
 ### 精读区论文标签
-1. [Retrievable Gradients: Continual Post-Training Without Cumulative Weight Drift](/202606/20/2606.15734v1-retrievable-gradients-continual-post-training-without-cumulative-weight-drift)  
+1. [TrustedARI: Towards Trust-Native Agentic Routing Infrastructure for Agentic AI](/202606/21/2606.15822v1-trustedari-towards-trust-native-agentic-routing-infrastructure-for-agentic-ai)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：将梯度作为可检索知识单元，避免参数漂移的持续后训练
-2. [MODE-RAG: Manifold Outlier Diagnosis and Energy-based Retrieval-Augmented Generation Evaluation](/202606/20/2606.17449v1-mode-rag-manifold-outlier-diagnosis-and-energy-based-retrieval-augmented-generation-evaluation)  
+   evidence：自主AI代理的路由基础设施
+2. [Hierarchical Multi-Modal Retrieval for Knowledge-Grounded News Image Captioning](/202606/21/2606.18553v1-hierarchical-multi-modal-retrieval-for-knowledge-grounded-news-image-captioning)  
+   标签：评分：9.0/10、query:mmkqa
+   evidence：用于新闻图像字幕的多模态检索增强生成
+3. [Multi-Agent Transactive Memory](/202606/21/2606.19911v1-multi-agent-transactive-memory)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：多模态RAG与多智能体系统减少幻觉
-3. [Compositional Skill Routing for LLM Agents: Decompose, Retrieve, and Compose](/202606/20/2606.18051v1-compositional-skill-routing-for-llm-agents-decompose-retrieve-and-compose)  
+   evidence：将RAG扩展到多智能体知识共享，利用智能体轨迹
+4. [Beyond Static Endpoints: Tool Programs as an Interface for Flexible Agentic Web Services](/202606/21/2606.19992v1-beyond-static-endpoints-tool-programs-as-an-interface-for-flexible-agentic-web-services)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：LLM智能体的组合技能路由，通过分解和检索集成外部技能API
-4. [CoreMem: Riemannian Retrieval and Fisher-Guided Distillation for Long-Term Memory in Dialogue Agents](/202606/20/2606.18406v1-coremem-riemannian-retrieval-and-fisher-guided-distillation-for-long-term-memory-in-dialogue-agents)  
+   evidence：工具程序作为智能体网络服务的接口
+5. [Trustworthy agentic genomics through versioned skill libraries](/202606/21/biorxiv-10-64898-2026-06-11-731523-v1-trustworthy-agentic-genomics-through-versioned-skill-libraries)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：通过版本化技能库实现自主AI智能体在基因组学中的应用
+6. [Orion: Towards Lab Automation with Computer-Using Agents](/202606/21/biorxiv-10-64898-2026-06-13-732095-v1-orion-towards-lab-automation-with-computer-using-agents)  
    标签：评分：9.0/10、query:agent
-   evidence：对话代理中的长期记忆，使用黎曼检索
-5. [Lost in a Single Vector: Improving Long-Document Retrieval with Chunk Evidence Aggregation](/202606/20/2606.18781v1-lost-in-a-single-vector-improving-long-document-retrieval-with-chunk-evidence-aggregation)  
+   evidence：用于实验室自动化的基于LLM的计算机使用代理
+7. [ContinuumCellAgent: A Framework-Guided Agent for Long-Horizon Scientific Research](/202606/21/biorxiv-10-64898-2026-06-15-732409-v1-continuumcellagent-a-framework-guided-agent-for-long-horizon-scientific-research)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：通过块证据聚合改进长文档检索
-6. [AtomMem: Building Simple and Effective Memory System for LLM Agents via Atomic Facts](/202606/20/2606.19847v1-atommem-building-simple-and-effective-memory-system-for-llm-agents-via-atomic-facts)  
-   标签：评分：9.0/10、query:agent
-   evidence：基于原子事实的大语言模型智能体长期记忆系统
-7. [Multi-Agent Transactive Memory](/202606/20/2606.19911v1-multi-agent-transactive-memory)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：多智能体事务记忆，利用RAG在智能体群体间共享程序性知识
-8. [Stellar: Scalable Multimodal Document Retrieval for Natural Language Queries](/202606/20/2606.19960v1-stellar-scalable-multimodal-document-retrieval-for-natural-language-queries)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：面向RAG的可扩展多模态文档检索框架
-9. [PACMS: Submodular Context Selection as a Pluggable Engine for LLM Agents](/202606/20/2606.20047v1-pacms-submodular-context-selection-as-a-pluggable-engine-for-llm-agents)  
-   标签：评分：9.0/10、query:agent
-   evidence：子模上下文选择作为LLM Agent的可插拔引擎，用于管理上下文溢出
-10. [Performance-Driven Environment Abstraction with Multi-Timescale Learning](/202606/20/2606.17377v1-performance-driven-environment-abstraction-with-multi-timescale-learning)  
+   evidence：用于长时程科学研究的自主AI代理，具有模块化架构
+8. [Towards Pareto-Optimal Tool-Integrated Agents with Pareto Ranking Policy Optimization](/202606/21/2606.16111v1-towards-pareto-optimal-tool-integrated-agents-with-pareto-ranking-policy-optimization)  
    标签：评分：8.0/10、query:agent
-   evidence：面向自主智能体的深度强化学习算法 - 性能驱动抽象
+   evidence：面向工具集成智能体的多目标强化学习
+9. [SING: Synthetic Intention Graph for Scalable Active Tool Discovery in LLM Agents](/202606/21/2606.16591v2-sing-synthetic-intention-graph-for-scalable-active-tool-discovery-in-llm-agents)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：面向LLM代理的检索增强主动工具发现，用于集成外部API
+10. [Understanding the Behaviors of Environment-aware Information Retrieval](/202606/21/2606.16817v1-understanding-the-behaviors-of-environment-aware-information-retrieval)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：基于强化学习的查询适应用于RAG
 
 ### 速读区论文标签
-1. [VinQA: Visual Elements Interleaved Long-form Answer Generation for Real-World Multimodal Document QA](/202606/20/2606.16092v1-vinqa-visual-elements-interleaved-long-form-answer-generation-for-real-world-multimodal-document-qa)  
+1. [SING: Synthetic Intention Graph for Scalable Active Tool Discovery in LLM Agents](/202606/21/2606.16591v1-sing-synthetic-intention-graph-for-scalable-active-tool-discovery-in-llm-agents)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：使用合成意图图进行LLM智能体的检索增强工具选择
+2. [HANSEL: Extracting Breadcrumbs from Web Agent Trajectories for Interactive Verification](/202606/21/2606.18671v1-hansel-extracting-breadcrumbs-from-web-agent-trajectories-for-interactive-verification)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：Web智能体轨迹验证与交互式证据提取
+3. [CacheWeaver: Cache-Aware Evidence Ordering for Efficient Grounded RAG Inference](/202606/21/2606.19667v1-cacheweaver-cache-aware-evidence-ordering-for-efficient-grounded-rag-inference)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：缓存感知的证据排序提升RAG推理效率
+4. [Policy-aware Vector Search: A Vision for Fine Grained Access Control in Vector Databases](/202606/21/2606.19803v1-policy-aware-vector-search-a-vision-for-fine-grained-access-control-in-vector-databases)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：面向RAG的向量数据库细粒度访问控制
+5. [ELVA: Exploring Ranking-Driven Universal Multimodal Retrieval](/202606/21/2606.20280v1-elva-exploring-ranking-driven-universal-multimodal-retrieval)  
    标签：评分：8.0/10、query:mmkqa
-   evidence：多模态文档问答中交错视觉元素与文本检索
-2. [CIAN: Multi-Stage Framework for Event-Enriched Image Captioning via Retrieval-Augmented Generation](/202606/20/2606.17430v1-cian-multi-stage-framework-for-event-enriched-image-captioning-via-retrieval-augmented-generation)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：用于图像描述的检索增强生成框架
-3. [See First, Answer Later: Visual Evidence Pre-Alignment via Sufficiency-Driven RL](/202606/20/2606.17678v1-see-first-answer-later-visual-evidence-pre-alignment-via-sufficiency-driven-rl)  
-   标签：评分：8.0/10、query:mmkqa
-   evidence：使用充分性驱动强化学习进行视觉证据预对齐，增强多模态大模型在回答前对图像证据的利用
-4. [ToolChain-CRC: Conformal Risk Control for Agentic AI Under Retrieval and Tool-Use Drift](/202606/20/2606.18467v1-toolchain-crc-conformal-risk-control-for-agentic-ai-under-retrieval-and-tool-use-drift)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：面向检索增强代理AI的保形风险控制
-5. [Towards Scalable Customization and Deployment of Multi-Agent Systems for Enterprise Applications](/202606/20/2606.18502v1-towards-scalable-customization-and-deployment-of-multi-agent-systems-for-enterprise-applications)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：多智能体系统的可扩展定制与部署
-6. [The Perils of Agency: How Developers Perceive, Prioritize, and Address Risks in Agentic AI Products](/202606/20/2606.15485v1-the-perils-of-agency-how-developers-perceive-prioritize-and-address-risks-in-agentic-ai-products)  
+   evidence：利用排序驱动的通用多模态检索方法
+6. [Non-negative Elastic Net Decoding for Information Retrieval](/202606/21/2606.17910v1-non-negative-elastic-net-decoding-for-information-retrieval)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：开发者对自主AI系统风险的感知与优先级
-7. [Directory-Aware Query and Maintenance in Vector Databases](/202606/20/2606.16903v1-directory-aware-query-and-maintenance-in-vector-databases)  
-   标签：评分：7.0/10、query:ma-kf
-   evidence：向量数据库中目录感知的查询和维护用于层次化检索
-8. [Learning to Refine Hidden States for Reliable LLM Reasoning](/202606/20/2606.17524v1-learning-to-refine-hidden-states-for-reliable-llm-reasoning)  
+   evidence：改善信息检索的多样性和相关性
+7. [Formal Verification of Learned Multi-Agent Communication Policies via Decision Tree Distillation](/202606/21/2606.19632v1-formal-verification-of-learned-multi-agent-communication-policies-via-decision-tree-distillation)  
    标签：评分：7.0/10、query:agent
-   evidence：使用强化学习引导的潜在状态细化，提升大语言模型推理可靠性
-9. [Temporal Preference Optimization for Unsupervised Retrieval](/202606/20/2606.17664v1-temporal-preference-optimization-for-unsupervised-retrieval)  
+   evidence：多智能体强化学习中的通信策略形式验证
+8. [Timage: A Generative Text-in-Image Paradigm for Fine-Tuning Vision-Language Models](/202606/21/2606.19944v1-timage-a-generative-text-in-image-paradigm-for-fine-tuning-vision-language-models)  
+   标签：评分：7.0/10、query:cmv
+   evidence：生成式图文对齐用于跨模态理解
+9. [OmicsNavigator: An auditable scientific partner for scalable hypothesis validation in spatial omics](/202606/21/biorxiv-10-1101-2025-07-21-665821-v2-omicsnavigator-an-auditable-scientific-partner-for-scalable-hypothesis-validation-in-spatial-omics)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：通过时间偏好优化提升检索相关性
-10. [DecoSearch: Complexity-Aware Routing and Plan-Level Repair for Text-to-SQL](/202606/20/2606.17821v1-decosearch-complexity-aware-routing-and-plan-level-repair-for-text-to-sql)  
+   evidence：自主LLM驱动系统用于数据探索和零样本语义检索
+10. [OmicOS: A Comprehensive Omics Ecosystem Infrastructure and Agent System for the AI Era](/202606/21/biorxiv-10-64898-2026-06-11-731775-v1-omicos-a-comprehensive-omics-ecosystem-infrastructure-and-agent-system-for-the-ai-era)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：文本到SQL中的RAG架构用于查询分解
-11. [Retrieval-as-a-Service:A System-Oriented Analysis of Industrial Retrieval Pipelines in Web Systems](/202606/20/2606.14932v1-retrieval-as-a-servicea-system-oriented-analysis-of-industrial-retrieval-pipelines-in-web-systems)  
+   evidence：面向组学生态系统的智能体系统
+11. [Privacy-Preserving Text Sanitization for Distributed Agents Collaboration via Disentangled Representations](/202606/21/2606.15335v1-privacy-preserving-text-sanitization-for-distributed-agents-collaboration-via-disentangled-representations)  
    标签：评分：6.0/10、query:ma-kf
-   evidence：面向检索增强生成架构的工业级检索管道即服务
-12. [G2IA: Geometry-Guided Instance-Aware Retrieval and Refinement for Cross-Modal Place Recognition](/202606/20/2606.15287v1-g2ia-geometry-guided-instance-aware-retrieval-and-refinement-for-cross-modal-place-recognition)  
-   标签：评分：6.0/10、query:cmv
-   evidence：图像到点云地点识别中的跨模态检索与验证
-13. [Integrating Reasoning and Generalization in Text-to-SQL via Self-Enhanced Fine-Tuning](/202606/20/2606.15598v1-integrating-reasoning-and-generalization-in-text-to-sql-via-self-enhanced-fine-tuning)  
+   evidence：面向分布式多智能体协作的隐私保护文本消毒框架
+12. [LogCopilot: Automating Log Aggregation Analysis through Large Language Models](/202606/21/2606.17094v1-logcopilot-automating-log-aggregation-analysis-through-large-language-models)  
+   标签：评分：6.0/10、query:agent
+   evidence：基于大语言模型的日志分析智能体
+13. [SAMA: Semantic Anchor-aligned Augmentation for Unified Low-Resource Multimodal Information Extraction](/202606/21/2606.18780v1-sama-semantic-anchor-aligned-augmentation-for-unified-low-resource-multimodal-information-extraction)  
+   标签：评分：6.0/10、query:mmkqa
+   evidence：统一的跨模态对齐多模态信息提取
+14. [Exploring Multi-Modal Large Language Models and Two-Stage Fine-Tuning for Fashion Image Retrieval](/202606/21/2606.19684v1-exploring-multi-modal-large-language-models-and-two-stage-fine-tuning-for-fashion-image-retrieval)  
+   标签：评分：6.0/10、query:mmkqa
+   evidence：多模态大语言模型用于组合图像检索
+15. [Spectral Query-Key Product Weight Steering for Training-Free VLM Hallucination Mitigation](/202606/21/2606.20419v1-spectral-query-key-product-weight-steering-for-training-free-vlm-hallucination-mitigation)  
    标签：评分：6.0/10、query:ma-kf
-   evidence：使用检索增强和思维链提示的文本到SQL生成
-14. [Gen-VCoT: Generative Visual Chain-of-Thought Reasoning via Diffusion-Based RGB Intermediate Representations](/202606/20/2606.16783v1-gen-vcot-generative-visual-chain-of-thought-reasoning-via-diffusion-based-rgb-intermediate-representations)  
-   标签：评分：6.0/10、query:mmkqa
-   evidence：使用扩散RGB中间表示生成视觉思维链推理
-15. [Show, Don't Ask: Generative Visual Disambiguation for Composed Image Retrieval with Turn-Valid Coverage](/202606/20/2606.18992v1-show-dont-ask-generative-visual-disambiguation-for-composed-image-retrieval-with-turn-valid-coverage)  
-   标签：评分：6.0/10、query:mmkqa
-   evidence：组合图像检索中的多模态检索与视觉消歧
+   evidence：无需训练减轻视觉语言模型幻觉的技术
 
 
 <div class="dpr-home-promo-card">
