@@ -6,95 +6,94 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-21
-- 运行时间：2026-06-21 21:12:48 UTC
+- 最新运行日期：2026-06-22
+- 运行时间：2026-06-22 23:01:43 UTC
 - 运行状态：成功
-- 本次总论文数：25
+- 本次总论文数：24
 - 精读区：10
-- 速读区：15
+- 速读区：14
 
 ### 今日简报（AI）
-今日聚焦Agentic AI信任路由与多模态知识接地图像描述两项高价值研究。最值得关注《TrustedARI》构建原生信任代理路由基础设施，及《Hierarchical Multi-Modal Retrieval》实现知识接地的新方法。建议后续跟进智能体主动工具发现与缓存优化方向。
-- 详情：[/202606/21/README](/202606/21/README)
+今日日报精选10篇精读和14篇速读，重点聚焦机器人导航超快训练与LLM Agent主动工具发现两大前沿突破。
+最值得关注的是《FlashNav》实现的20秒极速导航策略训练，以及《SING》提出的可扩展合成意图图用于Agent工具发现。
+建议深入阅读这两篇高分论文，并留意生物信息学与神经科学领域Agent框架的实践启示。
+- 详情：[/202606/22/README](/202606/22/README)
 
 ### 精读区论文标签
-1. [TrustedARI: Towards Trust-Native Agentic Routing Infrastructure for Agentic AI](/202606/21/2606.15822v1-trustedari-towards-trust-native-agentic-routing-infrastructure-for-agentic-ai)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：自主AI代理的路由基础设施
-2. [Hierarchical Multi-Modal Retrieval for Knowledge-Grounded News Image Captioning](/202606/21/2606.18553v1-hierarchical-multi-modal-retrieval-for-knowledge-grounded-news-image-captioning)  
-   标签：评分：9.0/10、query:mmkqa
-   evidence：用于新闻图像字幕的多模态检索增强生成
-3. [Multi-Agent Transactive Memory](/202606/21/2606.19911v1-multi-agent-transactive-memory)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：将RAG扩展到多智能体知识共享，利用智能体轨迹
-4. [Beyond Static Endpoints: Tool Programs as an Interface for Flexible Agentic Web Services](/202606/21/2606.19992v1-beyond-static-endpoints-tool-programs-as-an-interface-for-flexible-agentic-web-services)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：工具程序作为智能体网络服务的接口
-5. [Trustworthy agentic genomics through versioned skill libraries](/202606/21/biorxiv-10-64898-2026-06-11-731523-v1-trustworthy-agentic-genomics-through-versioned-skill-libraries)  
-   标签：评分：9.0/10、query:ma-kf
-   evidence：通过版本化技能库实现自主AI智能体在基因组学中的应用
-6. [Orion: Towards Lab Automation with Computer-Using Agents](/202606/21/biorxiv-10-64898-2026-06-13-732095-v1-orion-towards-lab-automation-with-computer-using-agents)  
+1. [FlashNav: Ultra-Fast Policy Training for Robot Navigation within 20 Seconds](/202606/22/2606.15846v1-flashnav-ultra-fast-policy-training-for-robot-navigation-within-20-seconds)  
    标签：评分：9.0/10、query:agent
-   evidence：用于实验室自动化的基于LLM的计算机使用代理
-7. [ContinuumCellAgent: A Framework-Guided Agent for Long-Horizon Scientific Research](/202606/21/biorxiv-10-64898-2026-06-15-732409-v1-continuumcellagent-a-framework-guided-agent-for-long-horizon-scientific-research)  
+   evidence：深度强化学习用于自主智能体
+2. [SING: Synthetic Intention Graph for Scalable Active Tool Discovery in LLM Agents](/202606/22/2606.16591v1-sing-synthetic-intention-graph-for-scalable-active-tool-discovery-in-llm-agents)  
    标签：评分：9.0/10、query:ma-kf
-   evidence：用于长时程科学研究的自主AI代理，具有模块化架构
-8. [Towards Pareto-Optimal Tool-Integrated Agents with Pareto Ranking Policy Optimization](/202606/21/2606.16111v1-towards-pareto-optimal-tool-integrated-agents-with-pareto-ranking-policy-optimization)  
+   evidence：提出基于合成意图图的LLM智能体主动工具发现方法
+3. [Multi-Agent Transactive Memory](/202606/22/2606.19911v1-multi-agent-transactive-memory)  
+   标签：评分：9.0/10、query:ma-kf
+   evidence：利用RAG进行多智能体知识共享的交易记忆
+4. [MemGUI-Agent: An End-to-End Long-Horizon Mobile GUI Agent with Proactive Context Management](/202606/22/2606.19926v1-memgui-agent-an-end-to-end-long-horizon-mobile-gui-agent-with-proactive-context-management)  
+   标签：评分：9.0/10、query:agent
+   evidence：长周期移动GUI代理的主动上下文管理
+5. [RetailBench: Benchmarking long horizon reasoning and coherent decision making of LLM agents in realistic retail environments](/202606/22/2606.15862v2-retailbench-benchmarking-long-horizon-reasoning-and-coherent-decision-making-of-llm-agents-in-realistic-retail-environments)  
    标签：评分：8.0/10、query:agent
-   evidence：面向工具集成智能体的多目标强化学习
-9. [SING: Synthetic Intention Graph for Scalable Active Tool Discovery in LLM Agents](/202606/21/2606.16591v2-sing-synthetic-intention-graph-for-scalable-active-tool-discovery-in-llm-agents)  
+   evidence：在零售环境中评测LLM智能体的长周期决策能力
+6. [Energy-Efficient Arm Reaching for a Humanoid Robot via Deep Reinforcement Learning with Identified Power Models](/202606/22/2606.15918v1-energy-efficient-arm-reaching-for-a-humanoid-robot-via-deep-reinforcement-learning-with-identified-power-models)  
+   标签：评分：8.0/10、query:agent
+   evidence：深度强化学习用于人形机器人手臂到达运动
+7. [EventVLA: Event-Driven Visual Evidence Memory for Long-Horizon Vision-Language-Action Policies](/202606/22/2606.20092v1-eventvla-event-driven-visual-evidence-memory-for-long-horizon-vision-language-action-policies)  
+   标签：评分：8.0/10、query:agent
+   evidence：面向长时程机器人任务的事件驱动视觉证据记忆
+8. [OmicsNavigator: An auditable scientific partner for scalable hypothesis validation in spatial omics](/202606/22/biorxiv-10-1101-2025-07-21-665821-v2-omicsnavigator-an-auditable-scientific-partner-for-scalable-hypothesis-validation-in-spatial-omics)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：面向LLM代理的检索增强主动工具发现，用于集成外部API
-10. [Understanding the Behaviors of Environment-aware Information Retrieval](/202606/21/2606.16817v1-understanding-the-behaviors-of-environment-aware-information-retrieval)  
+   evidence：用于科学知识发现的自主LLM智能体系统
+9. [scIsoAgent enables autonomous isoform-resolved characterization and sequence-informed interpretation of long-read single-cell transcriptomes](/202606/22/biorxiv-10-64898-2026-06-11-731519-v1-scisoagent-enables-autonomous-isoform-resolved-characterization-and-sequence-informed-interpretation-of-long-read-single-cell-transcriptomes)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：基于强化学习的查询适应用于RAG
+   evidence：自主LLM驱动的单细胞分析科学代理
+10. [AutoZyme: An Autonomous Agentic Framework to Optimize Bioinformatics Software](/202606/22/biorxiv-10-64898-2026-06-12-731250-v1-autozyme-an-autonomous-agentic-framework-to-optimize-bioinformatics-software)  
+   标签：评分：8.0/10、query:ma-kf
+   evidence：用于软件优化的自主智能体框架
 
 ### 速读区论文标签
-1. [SING: Synthetic Intention Graph for Scalable Active Tool Discovery in LLM Agents](/202606/21/2606.16591v1-sing-synthetic-intention-graph-for-scalable-active-tool-discovery-in-llm-agents)  
+1. [FlowBench: separating planning, fault recovery and interpretation in agentic bioinformatics](/202606/22/biorxiv-10-64898-2026-06-12-731844-v1-flowbench-separating-planning-fault-recovery-and-interpretation-in-agentic-bioinformatics)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：使用合成意图图进行LLM智能体的检索增强工具选择
-2. [HANSEL: Extracting Breadcrumbs from Web Agent Trajectories for Interactive Verification](/202606/21/2606.18671v1-hansel-extracting-breadcrumbs-from-web-agent-trajectories-for-interactive-verification)  
+   evidence：提出生物信息学中智能体系统的基准测试和框架
+2. [VFB-MCP: Natural-Language Access to Drosophila Neuroscience Grounded by an Expert-Curated Ontology-Led Knowledgebase](/202606/22/biorxiv-10-64898-2026-06-16-732577-v1-vfb-mcp-natural-language-access-to-drosophila-neuroscience-grounded-by-an-expert-curated-ontology-led-knowledgebase)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：Web智能体轨迹验证与交互式证据提取
-3. [CacheWeaver: Cache-Aware Evidence Ordering for Efficient Grounded RAG Inference](/202606/21/2606.19667v1-cacheweaver-cache-aware-evidence-ordering-for-efficient-grounded-rag-inference)  
+   evidence：通过MCP将LLM与专家知识库集成
+3. [BioBrain: A Multi-Agent Framework for Natural Language Driven Quantitative Microscopy Data Analysis](/202606/22/biorxiv-10-64898-2026-06-17-732700-v1-biobrain-a-multi-agent-framework-for-natural-language-driven-quantitative-microscopy-data-analysis)  
    标签：评分：8.0/10、query:ma-kf
-   evidence：缓存感知的证据排序提升RAG推理效率
-4. [Policy-aware Vector Search: A Vision for Fine Grained Access Control in Vector Databases](/202606/21/2606.19803v1-policy-aware-vector-search-a-vision-for-fine-grained-access-control-in-vector-databases)  
-   标签：评分：8.0/10、query:ma-kf
-   evidence：面向RAG的向量数据库细粒度访问控制
-5. [ELVA: Exploring Ranking-Driven Universal Multimodal Retrieval](/202606/21/2606.20280v1-elva-exploring-ranking-driven-universal-multimodal-retrieval)  
-   标签：评分：8.0/10、query:mmkqa
-   evidence：利用排序驱动的通用多模态检索方法
-6. [Non-negative Elastic Net Decoding for Information Retrieval](/202606/21/2606.17910v1-non-negative-elastic-net-decoding-for-information-retrieval)  
-   标签：评分：7.0/10、query:ma-kf
-   evidence：改善信息检索的多样性和相关性
-7. [Formal Verification of Learned Multi-Agent Communication Policies via Decision Tree Distillation](/202606/21/2606.19632v1-formal-verification-of-learned-multi-agent-communication-policies-via-decision-tree-distillation)  
+   evidence：用于自然语言驱动显微镜数据分析的多智能体框架
+4. [FragFuse: Bypassing Access Control of Large Language Model Agents via Memory-Based Query Fragmentation and Fusion](/202606/22/2606.15609v1-fragfuse-bypassing-access-control-of-large-language-model-agents-via-memory-based-query-fragmentation-and-fusion)  
    标签：评分：7.0/10、query:agent
-   evidence：多智能体强化学习中的通信策略形式验证
-8. [Timage: A Generative Text-in-Image Paradigm for Fine-Tuning Vision-Language Models](/202606/21/2606.19944v1-timage-a-generative-text-in-image-paradigm-for-fine-tuning-vision-language-models)  
-   标签：评分：7.0/10、query:cmv
-   evidence：生成式图文对齐用于跨模态理解
-9. [OmicsNavigator: An auditable scientific partner for scalable hypothesis validation in spatial omics](/202606/21/biorxiv-10-1101-2025-07-21-665821-v2-omicsnavigator-an-auditable-scientific-partner-for-scalable-hypothesis-validation-in-spatial-omics)  
+   evidence：利用智能体长期记忆绕过访问控制
+5. [Prompt Quality and Pull Request Outcomes: A Stage-Based Empirical Study of LLM-Assisted Development](/202606/22/2606.19644v1-prompt-quality-and-pull-request-outcomes-a-stage-based-empirical-study-of-llm-assisted-development)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：自主LLM驱动系统用于数据探索和零样本语义检索
-10. [OmicOS: A Comprehensive Omics Ecosystem Infrastructure and Agent System for the AI Era](/202606/21/biorxiv-10-64898-2026-06-11-731775-v1-omicos-a-comprehensive-omics-ecosystem-infrastructure-and-agent-system-for-the-ai-era)  
+   evidence：研究提示结构与质量对结果的影响
+6. [Efficient and Sound Probabilistic Verification for AI Agents](/202606/22/2606.20510v1-efficient-and-sound-probabilistic-verification-for-ai-agents)  
    标签：评分：7.0/10、query:ma-kf
-   evidence：面向组学生态系统的智能体系统
-11. [Privacy-Preserving Text Sanitization for Distributed Agents Collaboration via Disentangled Representations](/202606/21/2606.15335v1-privacy-preserving-text-sanitization-for-distributed-agents-collaboration-via-disentangled-representations)  
+   evidence：AI代理的概率验证
+7. [MetaHarmonizer: robust biomedical metadata harmonization and a contamination control for inflated LLM performance on public benchmarks](/202606/22/biorxiv-10-64898-2026-06-13-732088-v1-metaharmonizer-robust-biomedical-metadata-harmonization-and-a-contamination-control-for-inflated-llm-performance-on-public-benchmarks)  
+   标签：评分：7.0/10、query:ma-kf
+   evidence：基于LLM的生物医学元数据协调
+8. [Formalizing and Mitigating Structural Distortion in LLM Attention for Graph Reasoning](/202606/22/2606.15633v2-formalizing-and-mitigating-structural-distortion-in-llm-attention-for-graph-reasoning)  
    标签：评分：6.0/10、query:ma-kf
-   evidence：面向分布式多智能体协作的隐私保护文本消毒框架
-12. [LogCopilot: Automating Log Aggregation Analysis through Large Language Models](/202606/21/2606.17094v1-logcopilot-automating-log-aggregation-analysis-through-large-language-models)  
+   evidence：通过缓解注意力失真管理长上下文
+9. [Continuous Cross-Domain Traffic State Prediction via Memory-Augmented Graph Liquid Time-Constant Networks](/202606/22/2606.15807v1-continuous-cross-domain-traffic-state-prediction-via-memory-augmented-graph-liquid-time-constant-networks)  
    标签：评分：6.0/10、query:agent
-   evidence：基于大语言模型的日志分析智能体
-13. [SAMA: Semantic Anchor-aligned Augmentation for Unified Low-Resource Multimodal Information Extraction](/202606/21/2606.18780v1-sama-semantic-anchor-aligned-augmentation-for-unified-low-resource-multimodal-information-extraction)  
-   标签：评分：6.0/10、query:mmkqa
-   evidence：统一的跨模态对齐多模态信息提取
-14. [Exploring Multi-Modal Large Language Models and Two-Stage Fine-Tuning for Fashion Image Retrieval](/202606/21/2606.19684v1-exploring-multi-modal-large-language-models-and-two-stage-fine-tuning-for-fashion-image-retrieval)  
-   标签：评分：6.0/10、query:mmkqa
-   evidence：多模态大语言模型用于组合图像检索
-15. [Spectral Query-Key Product Weight Steering for Training-Free VLM Hallucination Mitigation](/202606/21/2606.20419v1-spectral-query-key-product-weight-steering-for-training-free-vlm-hallucination-mitigation)  
+   evidence：记忆增强神经网络
+10. [SHIFT: Semantic Harmonization via Index-side Feature Transformation for Multilingual Information Retrieval](/202606/22/2606.18801v1-shift-semantic-harmonization-via-index-side-feature-transformation-for-multilingual-information-retrieval)  
    标签：评分：6.0/10、query:ma-kf
-   evidence：无需训练减轻视觉语言模型幻觉的技术
+   evidence：减少语言偏差的多语言检索方法，提升相关性
+11. [MixProLAP: Mixture-Induced Uncertainty Modeling for Probabilistic Language-Audio Pretraining](/202606/22/2606.20418v1-mixprolap-mixture-induced-uncertainty-modeling-for-probabilistic-language-audio-pretraining)  
+   标签：评分：6.0/10、query:mmkqa
+   evidence：用于多模态对齐的概率语言-音频预训练
+12. [Scalable Training of Spatially Grounded 2D Vision-Language Models for Radiology](/202606/22/2606.20477v1-scalable-training-of-spatially-grounded-2d-vision-language-models-for-radiology)  
+   标签：评分：6.0/10、query:mmkqa
+   evidence：用于放射学的大型多模态模型，具备VQA和空间定位
+13. [Nonlinear influence of reward volatility on arbitration between multiple learning strategies reflects cost-benefit optimization](/202606/22/biorxiv-10-64898-2026-06-15-732293-v1-nonlinear-influence-of-reward-volatility-on-arbitration-between-multiple-learning-strategies-reflects-cost-benefit-optimization)  
+   标签：评分：6.0/10、query:agent
+   evidence：强化学习策略仲裁
+14. [Flexible decisions arise from resource-rational memory sampling](/202606/22/biorxiv-10-64898-2026-06-15-732446-v1-flexible-decisions-arise-from-resource-rational-memory-sampling)  
+   标签：评分：6.0/10、query:agent
+   evidence：资源理性记忆采样框架用于灵活决策
 
 
 <div class="dpr-home-promo-card">
