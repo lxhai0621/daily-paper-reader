@@ -1,0 +1,862 @@
+Title: Bridging the Semantic-Utility Gap in Multimodal RAG via Generator-in-the-Loop Alignment
+
+URL Source: https://arxiv.org/pdf/2609.08188v1
+
+Published Time: Wed, 09 Sep 2026 03:15:30 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+> IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE 1
+
+# Bridging the Semantic-Utility Gap in Multimodal RAG via Generator-in-the-Loop Alignment 
+
+Zhan-Lun Chang, Student Member, IEEE , Dong-Jun Han, Member, IEEE , Seyyedali Hosseinalipour, Senior Member, IEEE , Mung Chiang, Fellow, IEEE , and Christopher G. Brinton, Senior Member, IEEE 
+
+Abstract —Vision-language models (VLMs) augmented with retrieval-augmented generation (RAG) benefit from access to external evidence. However, standard retrievers and rerankers optimize for semantic similarity rather than answer utility, creating a preference gap: documents that appear relevant may not help the generator produce a correct answer. Motivated by this, we propose a two-stage generator-in-the-loop alignment framework 
+
+that closes this gap without human document-level relevance annotations. Our framework consists of two stages: in Stage 1, a VLM generates a hypothetical text passage from the image-query pair, which is used as the retrieval query for dense text search, bridging the image-to-text modality gap. In Stage 2, a cross-encoder reranker adapted with low-rank adaptation (LoRA) is fine-tuned using answer-supervised preference pairs mined from the frozen VLM: given the dataset answer label, a candidate document is labeled positive if the VLM produces the correct answer when given that document as context, and negative otherwise. This generator-guided signal is compatible with multiple alignment loss functions, including contrastive (triplet) loss, pairwise direct preference optimization (DPO), and supervised fine-tuning (SFT), and supports periodic re-mining to refresh preference pairs as the reranker improves. Experiments on VQA-X and A-OKVQA with Qwen3.5-2B and Qwen3-VL-4B-Instruct show that our proposed framework consistently outperforms rank-order, random, and REPLUG-style likelihood baselines under various alignment losses and pool size settings, suggesting that answer-level generator feedback is an effective supervision signal for preference alignment. 
+
+Impact Statement —RAG-enabled multimodal systems are be-coming a key component of knowledge-intensive visual reasoning applications, where retrieving misleading evidence can cause models to produce confident yet incorrect answers. This work addresses a fundamental limitation of existing multimodal RAG pipelines by shifting retrieval optimization from semantic simi-larity toward downstream answer utility. Rather than relying on costly human document-level relevance annotations, the proposed 
+
+generator-in-the-loop alignment framework leverages a frozen VLM to automatically identify evidence that improves answer correctness and uses this signal to train a lightweight LoRA-adapted reranker. The framework is compatible with multiple alignment objectives and consistently improves performance across different datasets and model architectures, demonstrating that answer-level supervision is a more effective retrieval objective 
+
+Z.-L. Chang, M. Chiang, and C. G. Brinton are with the Elmore Family School of Electrical and Computer Engineering, Purdue University, West Lafayette, IN 47907, USA. D.-J. Han is with the Department of Computer Science and Engineering, Yonsei University, Seoul 03722, Republic of Korea. S. Hosseinalipour is with the Department of Electrical Engineering, University at Buffalo–SUNY, Buffalo, NY 14260, USA. 
+
+than semantic similarity alone. By improving the reliability and faithfulness of multimodal RAG systems, this approach has the potential to benefit high-stakes applications such as medical decision support, scientific knowledge retrieval, education, document understanding, and other VLM-empowered systems that require trustworthy multimodal reasoning while reducing the dependence on expensive manual supervision. 
+
+Index Terms —Cross-modal retrieval, Information retrieval, Retrieval-augmented generation, Visual question answering. 
+
+I. I NTRODUCTION 
+
+# LARGE language models (LLMs) and multimodal vision-language models (VLMs) have fundamentally transformed artificial intelligence, demonstrating unprecedented capabilities in natural language understanding, visual reasoning, and content generation [1], [2]. However, despite their scale, these models remain plagued by intrinsic limitations: they are prone to hallucinations, restricted by static parametric knowledge cutoffs, and lack transparency in their reasoning processes [3]. To mitigate these issues, retrieval-augmented generation (RAG) has emerged as the de facto standard by replacing reliance on static parametric knowledge alone with the retrieval of external evidence at inference time [4], [5]. By grounding generation in retrieved evidence, RAG systems significantly enhance factual accuracy and interpretability, particularly in knowledge-intensive domains where hallucination remains a persistent reliability concern [6]. The design of RAG systems has evolved from simple retrieve-then-generate pipelines to architectures that incorporate query rewriting, iterative retrieval, retrieval verification, and multi-step reasoning [7], [8], [9]. While these techniques improve candidate retrieval and evidence refinement, retrievers and rerankers continue to optimize semantic similarity rather than the generator’s downstream objective. Consequently, a document that appears highly relevant to the query may still fail to provide the evidence required for the generator to produce the correct answer. More critically, semantically relevant documents can contain incorrect or misleading information that steers the generator toward an erroneous answer. Such documents may therefore increase, rather than reduce, the likelihood of hallucination [10]. A reranker must thus distinguish documents that help the generator produce the correct answer from those that are  
+
+> This work has been submitted to the IEEE for possible publication. Copyright may be transferred without notice, after which this version may no longer be accessible. arXiv:2609.08188v1 [cs.AI] 8 Sep 2026 2IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE
+
+semantically relevant but unhelpful or misleading. Training a reranker to make this distinction typically requires document-level relevance annotations; however, manually determining whether each candidate document improves the generator’s answer correctness requires costly, task-specific annotation at scale. This motivates the central question of this work: 
+
+Q: How can we train a reranker to identify evidence that improves the generator’s answer correctness using only ground-truth answer labels with no human document-level relevance annotations? 
+
+Answering this question becomes more challenging in 
+
+multimodal RAG (MM-RAG), where retrieval must account for information contained in both visual and textual inputs. Specif-ically, visual embeddings optimized for general image-text alignment may fail to preserve fine-grained visual information, such as object relationships or structural details in scientific diagrams, that is necessary to retrieve evidence for downstream reasoning. This mismatch between the multimodal query and the retrieved textual evidence compounds the misalignment between retrieval relevance and answer correctness. Prior approaches, such as ATLAS [11] and REPLUG [12], attempt to align retrieval relevance with the generator’s downstream objective through likelihood- or perplexity-based training sig-nals. However, these signals measure how a retrieved document changes the probability of a target output rather than whether the generator actually produces the correct answer. Therefore, MM-RAG requires addressing two coupled problems: (i) translating multimodal inputs into effective retrieval queries and (ii) selecting retrieved evidence based on its contribution to downstream answer correctness. To jointly address these problems, we propose a two-stage 
+
+generator-in-the-loop alignment framework . In Stage 1, a frozen VLM converts the image-question pair into a hypothetical textual rationale using hypothetical document embeddings (HyDE). This rationale is concatenated with the original question and encoded by a Sentence Transformer [13] to retrieve a broad pool of candidate documents using Facebook AI similarity search (FAISS). Stage 2 addresses what we term the Preference Gap : conventional rerankers prioritize documents based on semantic relevance, whereas the generator requires documents that help it produce the correct answer. A semantically relevant document may therefore lack the evidence needed to answer the question [14] or may even act as a distractor that degrades performance below the closed-book baseline [15], [16]. To directly align reranking with answer correctness, we provide each candidate document to the frozen VLM as context and compare the generated answer with the ground-truth answer. A document is labeled 
+
+positive if the model produces the correct answer and negative 
+
+otherwise, yielding preference pairs without human document-level relevance annotations. We use these pairs to fine-tune a cross-encoder reranker through low-rank adaptation (LoRA) and evaluate the same generator-derived supervision under contrastive learning, direct preference optimization (DPO), and supervised fine-tuning (SFT). By comparing the same supervision signal across three training objectives, we evaluate whether reranking based on the generator’s answer correctness consistently improves evidence selection independent of the specific training objective. The main contributions of this paper can be summarized as follows: 1) We propose a two-stage multimodal RAG framework that separates multimodal query translation from generator-aligned reranking. In Stage 1, a frozen VLM generates a hypothetical textual rationale from the image-question pair using HyDE. The rationale is concatenated with the question and encoded by a Sentence Transformer to retrieve a broad pool of candidate documents using FAISS. 2) We introduce an answer-supervised preference mining 
+
+procedure that trains the Stage 2 reranker without human document-level relevance annotations. Specifically, for each candidate document, the frozen VLM generates an answer using the document as context; documents that lead to correct and incorrect answers are used to construct positive-negative preference pairs for reranker training. 3) We use the generator-derived preference pairs to fine-tune a LoRA-adapted cross-encoder reranker under three training objectives: contrastive triplet loss, DPO, and SFT. Experiments on VQA-X and A-OKVQA with Qwen3.5-2B and Qwen3-VL-4B-Instruct show that generator-guided preference mining consistently outperforms rank-order, random, and REPLUG-style likelihood preference mining across the considered training objectives and various candidate pool sizes. 4) We develop an iterative preference-alignment mechanism with periodic preference re-mining that dynamically reconstructs generator-derived preference pairs as the reranker evolves, thereby keeping the training signal aligned with the reranker’s current ranking behavior rather than relying on a fixed set of initially mined pairs. Experiments across various generators and datasets demonstrate consistent improvements over fixed-pair training, with gains of up to 2.58 percentage points. II. R ELATED WORK 
+
+We organize the related literature into the following cate-gories: (i) evolution of RAG; (ii) multimodal retrieval and the semantic gap; (iii) retriever-generator alignment. 
+
+A. Evolution of RAG 
+
+RAG has emerged as a standard method for mitigating the limitations of LLMs/VLMs, specifically their susceptibility to hallucinations and outdated parametric knowledge [4], [17]. Following recent surveys [7], [18], we summarize the progression of RAG through three phases: Naive RAG methods ,
+
+Advanced RAG methods , and Modular RAG methods .The initial phase, Naive RAG methods , followed a linear “retrieve-then-generate” protocol. These systems utilized sparse (BM25) or dense passage retrieval (DPR) retrievers to fetch context, which was then directly concatenated with the user query [19]. While effective for simple factual retrieval, Naive RAG methods struggle with low precision and noise induction, where irrelevant retrieved context degrades the generator’s MULTIMODAL RAG 3
+
+performance [20]. To mitigate these shortcomings, approaches such as Chain-of-Note [21] were introduced, teaching models to explicitly generate notes assessing the relevance of retrieved documents before answering, thereby improving robustness against noisy inputs. To further improve performance, Advanced RAG methods introduced sophisticated pre-retrieval and post-retrieval opti-mizations. Specifically, pre-retrieval techniques, such as query rewriting [9], multi-aspect query retrieval [22], and HyDE [23], aim to align the user’s intent with the document space. HyDE in particular prompts a language model to generate a hypothetical answer-oriented document from the query and uses that generated text, rather than the raw query, as the retrieval input; because this text resembles the corpus documents more closely, its embedding can have higher similarity to answer-bearing passages and improve recall without retrieval-specific training. Also, post-retrieval strategies focused on refining the context window. Notably, reranking models [24] and cross-encoder filtering [25] were developed to identify the most relevant retrieved passages, thereby reducing irrelevant context before generation. Despite these improvements, recent studies on the “lost in the middle” phenomenon [15] suggest that simply stuffing context windows is insufficient, as models struggle to access information buried in the middle of long retrieval sequences. Most recently, the field has shifted toward modular and active RAG [26]. In this paradigm, the pipeline is decomposed into independent, swappable modules orchestrated by programming frameworks such as DSPy [8], which optimizes the flow of information between modules. Beyond static retrieval, recent frameworks further employ active strategies. For instance, FLARE [27] drafts upcoming generated text and triggers retrieval when low-confidence tokens suggest that additional evidence is needed, while CRAG (corrective RAG) [28] introduces a lightweight retrieval evaluator that triggers a web search fallback when the retrieved documents are deemed incorrect. These systems improve when and how retrieval is invoked, but evidence selection often remains based on semantic similarity , meaning how closely a retrieved document matches the query in topic, wording, or embedding space. However, a semantically similar document may still be unhelpful or even misleading for answering the question. Therefore, evidence should instead be selected according to its downstream answer utility , namely whether providing that document as context actually helps the generator produce the correct answer. 
+
+B. Multimodal Retrieval and the Semantic Gap 
+
+The success of RAG in the textual domain has extended to large multimodal models, giving rise to MM-RAG [29], [30], systems that retrieve external textual or visual evidence to support reasoning over image–text queries. Unlike text-only RAG, MM-RAG must align heterogeneous query inputs, such as images and natural-language questions, with evidence stored in an external knowledge base. Standard retrieval architectures commonly rely on dual-encoder backbones such as CLIP [31] to map visual and textual content into a shared semantic space. Meanwhile, foundational models such as Flamingo [32] demonstrated the effectiveness of conditioning generation on interleaved image–text inputs. However, neither multimodal conditioning nor coarse image–text alignment alone guarantees that the retrieved evidence contains the fine-grained information needed for downstream reasoning. This leads to a critical semantic gap : visual embeddings optimized for general image–caption matching may overlook subtle objects, relationships, and structural details that are essential for retrieving answer-supporting evidence [26]. For example, Qwen-VL [33] attempts to preserve finer visual information through resolution-aware visual encoders, but still relies on conventional retrieval mechanisms. Recent efforts have therefore sought to narrow this gap by integrating stronger generative or fine-grained visual representations into retrieval. RA-CM3 [34] was among the first to jointly retrieve and generate mixed-modal content within a unified architecture. More recently, ColPali [35] avoids the lossy conversion of document pages into text by using a VLM to produce multi-vector embeddings for page patches, enabling late-interaction retrieval that better preserves visual layout and textual semantics. Our work takes a complementary approach to these methods by decoupling multimodal query alignment from evidence-utility estimation. Rather than requiring the retriever itself to learn a shared representation that preserves all task-relevant visual and textual information, we use a frozen VLM to translate the image–question pair into a hypothetical textual rationale. This converts the multimodal query into the same modality as the document corpus, enabling effective text-based dense retrieval without training a dedicated multimodal retriever. However, resolving the modality gap alone does not ensure that the retrieved documents will help the generator answer correctly. We therefore introduce a second stage in which a separately trained cross-encoder reranker is aligned with the frozen generator’s downstream behavior, prioritizing documents according to their answer utility rather than semantic similarity. 
+
+C. Retriever-Generator Alignment 
+
+The most significant challenge in RAG is the alignment gap 
+
+between retrieval or reranking objectives and the generator’s reasoning objective [7]. In particular, retrievers are typically optimized for query-document semantic similarity, an objective decoupled from whether the retrieved context actually helps the generator produce the correct answer. This mismatch frequently leads to failure in complex reasoning tasks [36], despite evidence that LLMs can effectively utilize in-context knowledge when the right documents are retrieved [37]. Several methods have sought to reduce the alignment gap by incorporating generator feedback into retrieval training. For instance, Atlas [11] jointly trains the retriever and generator using generation perplexity, while REPLUG [12] treats the language model as a black box and trains the retriever using each document’s effect on the probability of the ground-truth continuation. These methods make retrieval more generator-aware, but their likelihood-based signals remain indirect proxies for downstream correctness and were developed primarily for text-only generation settings. BGM [38] addresses a related preference gap , in which the retriever’s highest-ranked documents do not necessarily 4 IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE 
+
+produce the best generation outcomes. Rather than updating the frozen retriever and generator, BGM inserts a trainable sequence-to-sequence bridge between them. The bridge is trained using supervised learning on synthesized silver passages and reinforcement learning to rerank and reorganize the retrieved context. Although this approach moves closer to task-level optimization, it introduces an additional large trainable component into the RAG pipeline. Our framework instead aligns reranking directly with the deployed generator’s answer behavior: for each candidate document, the frozen VLM is prompted to produce the constrained dataset answer output, either yes/no or one of the provided options, and the document is labeled useful when that output matches the dataset-provided ground-truth. The resulting signal directly measures whether a document helps the generator answer correctly, rather than whether it increases the likelihood of the ground-truth answer when preceding answer tokens are supplied. These generator-specific document-level preferences are then distilled into a lightweight cross-encoder reranker. Our method therefore complements conventional semantic rerankers [24], [25], likelihood- and reward-based retrieval alignment methods [11], [12], [38], and multimodal retrieval approaches that primarily address cross-modal representation alignment [34], [ ?]. Our proposed supervision mechanism is related to LLM-as-judge and synthetic-data methods. LLM-as-judge approaches use language models to assign general quality scores or preferences to open-ended outputs [39], while self-generated instruction methods synthesize training examples to reduce dependence on manual annotation [40]. In our setting, however, the VLM neither produces a general evaluation nor generates new instructions. Instead, it reveals whether a particular retrieved document causes the same frozen generator used at deployment to produce the correct answer. The resulting labels differ from general-purpose LLM judgments or synthetic training data: they provide generator-specific, document-level utility signals tailored explicitly to reranker alignment. III. P ROPOSED ARCHITECTURE 
+
+In this section, we present the architecture of our two-stage MM-RAG system and the alignment framework used to close the gap between candidate ranking and answer utility. The key idea is to separate broad multimodal recall from generator-specific utility alignment: Stage 1 uses the frozen deployment generator as an image-to-text bridge for dense retrieval, while Stage 2 uses the same frozen generator to mine answer-level preferences for reranker training. Table I summarizes the mathematical notations used throughout. 
+
+A. Problem Formulation 
+
+We formulate reranking as an answer-utility alignment problem rather than a standard relevance-ranking problem. Formally, we presume that the corpus D consists of text documents d ∈ D (e.g., textual justifications for VQA-X or rationales for A-OKVQA) that serve as retrieval targets: each document provides external textual evidence that the generator 
+
+G can use as context to help answer a question. Each query consists of an image v and a natural-language question q;                                                 
+
+> TABLE I MATHEMATICAL NOTATIONS
+> Symbol Meaning
+> vInput image
+> qNatural-language question string
+> agold Ground-truth answer
+> GFrozen VLM generator
+> h=G(v, q )HyDE hypothetical rationale text
+> qtext =q⊕hConcatenated query string
+> ϕ(·)Qwen3-Embedding-8B text encoder
+> eq=ϕ(qtext )ℓ2-normalized query embedding
+> IFAISS IndexFlatIP index
+> CqStage 1 top-Kcandidate pool
+> KStage 1 retrieval depth (default 100)
+> K′Stage 2 preference-mining pool cap, with K′≤KEθCross-encoder ( θ=θbase ∪θLoRA )
+> Eref Frozen reference reranker (no LoRA)
+> sθ(qtext , d )Scalar relevance logit for pair (qtext , d )
+> DMined preference dataset
+> dA text document (e.g., textual justification or rationale)
+> d+Positive (preferred) document
+> d−Negative (rejected) document
+> S+,S−Correct / incorrect candidate sets
+> BmVLM mini-batch size during mining
+> NRe-mining frequency (epochs between re-mines)
+> ηAdamW learning rate
+> βDPO inverse-temperature
+> mTriplet margin
+> ΨPersistent VLM prediction cache
+
+the dataset also provides a ground-truth answer agold that is available only during preference mining. The textual query representation used by the retriever and reranker is denoted 
+
+qtext and is formed by concatenating the question q with the hypothetical rationale h generated by G. Retrieving with qtext 
+
+yields the candidate pool Cq consisting of K documents. Given a frozen generator G, a query (v, q ), and a candidate document 
+
+d ∈ C q , we define the answer utility of d as the binary indicator 
+
+u(d) = 1G(v, q, d ) = agold 
+
+, (1) which equals 1 if and only if G produces the correct answer when given d as context. We further partition the candidate pool Cq accordingly into a set of useful documents S+ = {d ∈Cq : u(d) = 1 } and a set of harmful documents S− = {d ∈Cq : u(d) = 0 }.Over this pool, a pre-trained cross-encoder Eθ scores each pair (qtext , d ) with a relevance logit sθ (qtext , d ) based on 
+
+semantic similarity , selecting d∗ = arg max d∈C q sθ (qtext , d ).However, semantic similarity does not imply answer utility: a document semantically close to the query may fail to support correct reasoning, while a document that appears less similar may provide exactly the missing evidence. This gives rise to the preference gap , which can be interpreted as follows: 
+
+Eθ is misaligned when d∗ /∈ S +. (2) 
+
+Research Problem. Given a candidate pool Cq and a frozen generator G, we aim to learn reranker parameters θ such that 
+
+sθ (qtext , d +) > s θ (qtext , d −) ∀ d+ ∈ S +, d − ∈ S −, (3) 
+
+without any human-annotated document relevance labels. In this paradigm, the supervision signal is the answer utility u(d),which is computed by querying the frozen G and comparing its output to the dataset-provided answer label. MULTIMODAL RAG 5Question (Text) :Why is the cat looking at the screen? 
+
+Image: 
+
+Multimodal Input 
+
+Hypothetical Document Embeddings 
+
+(HyDE) 
+
+Frozen 
+
+Generate  HyDE Rationale 
+
+(short neutral 
+
+text fragment) 
+
+query = concat(Question, HyDE Rationale) [TEXT] 
+
+Text Dense Encoder 
+
+encode → query vector 
+
+FAISS Index (vectors of 
+
+corpus documents) 
+
+Top-100 documents 
+
+Stage 1: Retrieval 
+
+reranks top-K 
+
+documents 
+
+Positive Doc  Negative Doc 
+
+Pair Mining 
+
+Training Pairs 
+
+LoRA fine-tune 
+
+reranker 
+
+Periodically Re-mine with the Live LoRA model 
+
+Frozen 
+
+Contrastive Learning, 
+
+Supervised Fine Tuning or Direct 
+
+Preference Optimization 
+
+Stage 2: Reranking 
+
+Trainable 
+
+scores each candidate document 
+
+Trained Reranker 
+
+1.Image 
+
+2. Question (text) 
+
+3. Top-1 document 
+
+Top-1 document 
+
+Frozen 
+
+→ Answer 
+
+VLM 
+
+VLM 
+
+VLM 
+
+1.Image 
+
+2. Question (text) 
+
+3. Each of Top-K documents 
+
+correct  incorrect 
+
+Reranker 
+
+Inference                      
+
+> Fig. 1. A schematic of our proposed two-stage multimodal RAG system. Stage 1 (Retrieval): given a multimodal input (v, q ), the frozen VLM Ggenerates a short HyDE rationale h; the composite query qtext =q⊕his encoded by a text dense encoder and used to retrieve the top-kcorpus documents from a FAISS index. Stage 2 (Reranking): a LoRA-adapted cross-encoder scores each of the kcandidate documents and is fine-tuned on preference pairs (d+, d −)
+> mined by querying the frozen VLM for answer correctness. Preference pairs are periodically re-mined using the live LoRA model, and the reranker can be trained under contrastive (triplet), SFT, or DPO losses. Inference: the trained reranker selects the top-1 document, which is passed together with the image and question to the frozen VLM to produce the final answer.
+
+B. Architecture Overview 
+
+Our proposed framework is built on a two-stage pipeline, il-lustrated in Fig. 1. This stage-wise decomposition is intentional: Stage 1 is optimized for recall across the text corpus, while Stage 2 learns which recalled evidence actually improves the frozen generator’s answer behavior. More specifically, Stage 1 converts the multimodal input (v, q ) into a short hypothetical text rationale h via HyDE, which is concatenated with the question to form the composite text query qtext = q ⊕ h. This query is encoded by a text encoder (e.g., Qwen3-Embedding-8B) ϕ and used to search a FAISS index I, producing a candidate pool Cq of up to K documents. Subsequently, Stage 2 takes Cq and applies a LoRA-adapted cross-encoder Eθ to rerank the candidates by assigning a scalar relevance logit 
+
+sθ (qtext , d ) to each text pair (qtext , d ). The reranker is fine-tuned on preference pairs mined by querying the frozen G for answer correctness; pairs are periodically re-mined using the live model to keep the training signal fresh. At inference, the top-scored document d∗ = arg max d∈C q sθ (qtext , d ) is passed together with (v, q ) to the frozen G for final answer generation. One of our key design choices is to separate multimodal understanding from reranker training. Specifically, the frozen generator G is the only component that processes the image 
+
+v: in Stage 1, it translates the image–question pair into a textual rationale that enables text-based retrieval, while in Stage 2, it evaluates whether each retrieved document helps produce the correct answer. In contrast, the cross-encoder Eθ
+
+operates exclusively on text, allowing it to leverage strong pre-trained language representations without requiring multimodal adaptation. This separation keeps the architecture lightweight: 
+
+G remains frozen and provides both modality conversion and supervision, while only the text-based reranker is trained. 
+
+C. Datasets and Document Corpora 
+
+Fig. 2 illustrates what a real-world multimodal query looks like in the two datasets considered in this work: each query consists of an image v and a natural-language question q,while the knowledge base is populated with dataset-specific textual documents (justifications for VQA-X, rationales for A-OKVQA) that serve as the retrieval targets for Stage 1. The following paragraphs briefly describe how each dataset defines the multimodal query, constructs the external knowledge base, and uses the retrieved evidence for answer generation.  
+
+> •
+
+A-OKVQA (Augmented Outside Knowledge VQA): 
+
+This dataset focuses on visual question answering tasks that require commonsense or world knowledge beyond what is directly visible in the image. As shown in Fig. 2, the pipeline accepts the query image (e.g., a cat watching TV) and the associated question text (e.g., Why is the cat looking at the screen?). The external database is populated with the dataset’s Rationales , which provide the necessary background information (e.g., The cat is intrigued by the image on the screen). The generator uses these retrieved rationales to select the correct option from multiple-choice answers or provide a direct response. 6 IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE Question : Does the giraffe  
+
+> have a goofy look on his face?
+> Textual Justification :
+> "his jaw is all out of whack he is chomping with his mouth its bottom lip is rolled up."
+> Answer: yes
+
+VQA-X 
+
+> Question : Why is the cat looking
+> at the screen?
+
+A-OKVQA   
+
+> Multiple-Choices Answers :
+> (a) warmth (b) no reason
+> (c) light (d) curiosity [CORRECT]
+> Rationale(s):
+> 1. The cat is curious about the tv.
+> 2. The cat is intrigued by the image on the screen.
+> 3. The cat is wondering about what it sees on the screen.
+> Query Text
+> Query Image
+> Documents
+> Fig. 2. Dataset Integration into the MM-RAG Pipeline. For each dataset (A-OKVQA and VQA-X), we map the original inputs to a unified query format comprising the image and question text. The external knowledge base is populated with the dataset-specific ground-truth explanations (rationales and justifications). The retrieval target is defined as the textual evidence required to bridge the reasoning gap between the visual query and the final answer.
+> •
+
+VQA-X (Visual Question Answering with eXplana-tions): This dataset extends standard VQA by providing textual justifications for answers. As shown in Fig. 2, the query is formed by the image (e.g., a giraffe) and the question (e.g., Does the giraffe have a goofy look on his face?). The Textual Justification serves as the retrievable document. By retrieving these ground-truth reasons (e.g., ...his jaw is all out of whack...), the pipeline aligns the generator’s output with the expected reasoning process. To prevent test-set evidence leakage, the retrieval corpus is constructed exclusively from the training split and fixed before Stage 2 training. For A-OKVQA, the FAISS index contains the unique, non-empty rationales from the training set, whereas for VQA-X, it contains the unique, non-empty explanations associated with yes/no training examples. Stage 1 retrieves candidates from this fixed corpus and stores them in split-specific candidate files. Stage 2 then combines these files with the corresponding dataset split to recover the images, answer choices, and ground-truth labels required for preference mining and evaluation. In this way, the reranker is trained on candidates drawn only from the training-derived corpus, while its supervision is obtained from answer correctness rather than human document-level relevance annotations. 
+
+D. (Stage 1) HyDE-Based Modality Bridge and Dense Recall 
+
+A fundamental challenge in multimodal RAG is the modality gap between the multimodal query and the text-only retrieval space: the text encoder ϕ accepts only text, while the query is inherently multimodal, comprising an image v and anatural-language question q. Using q alone therefore discards potentially essential visual information from v, while training a dedicated cross-modal retriever would require substantial amounts of aligned image–text data and additional model adaptation. To bridge this gap, we use HyDE [23] as a multimodal-to-text conversion mechanism rather than merely as a generic query-expansion technique. Specifically, rather than searching with the raw question q or training a separate multimodal retriever, the frozen generator G is first prompted with the full multimodal input (v, q ) to produce a hypothetical rationale 
+
+h = G(v, q ), (4) where h is a short, image-grounded passage that captures the visual information relevant to the question and resembles the type of evidence contained in the retrieval corpus. The rationale is then concatenated with the original question to form the composite textual query qtext = q ⊕ h. Since qtext is entirely textual, it can be processed directly by ϕ without any multimodal adaptation. HyDE thus serves as an image-to-text modality bridge, projecting the task-relevant information in v
+
+into the textual domain and enabling text-only dense retrieval for an inherently multimodal query. The resulting query embedding is computed as eq =
+
+ϕ(qtext ) ∈ Rn, where ϕ prepends an instruction prefix and applies ℓ2 normalization. The corpus documents are encoded offline using the same encoder, and their embeddings are stored in a FAISS IndexFlatIP index I that supports exact inner-product search. Because each rationale or justification is already a short, self-contained unit, no document chunking is applied; instead, each document is indexed in its entirety. At query time, the top-K candidates are retrieved as 
+
+Cq = top -K(eq , I) . (5) To avoid repeated VLM inference, the hypothetical ratio-nale h is cached per question identifier with atomic disk writes. The resulting candidate set is represented as Cq =
+
+{(d1, r 1), . . . , (dK , r K )}, where di denotes the i-th retrieved document and ri its retrieval rank. These candidate sets are then stored and passed to Stage 2 for generator-aligned reranking. 
+
+E. (Stage 2) Generator-Guided Cross-Encoder Alignment 
+
+Stage 2 is responsible for reranking the candidate pool Cq
+
+retrieved by Stage 1. Its key objective is to replace indirect supervision signals, such as semantic relevance or ground-truth-token likelihood, with direct feedback on whether the generator’s constrained answer output matches the ground-truth. Specifically, the reranker is trained to prefer documents that enable the frozen generator G to produce the dataset-provided ground-truth answer agold . To learn this preference while keeping training lightweight, we adapt a GTE-ModernBERT-base cross-encoder [41] with LoRA ( r = 16 , α = 32 , dropout 
+
+= 0 .1), where only the low-rank adapter weights θLoRA are updated during training while the pre-trained encoder θbase is kept frozen. For each query–document pair, the cross-encoder jointly processes the composite textual query qtext and the candidate document d, truncated to a maximum of 512 tokens, and produces a scalar score 
+
+sθ (qtext , d ) = Eθ
+
+ [qtext ; d] ∈ R, (6) This score represents the reranker’s learned estimate of how useful the document is for supporting the generator’s answer. To control VLM inference cost during preference mining, Stage 2 evaluates only the top-K′ prefix of the Stage 1 pool, where 
+
+K′ ≤ K.MULTIMODAL RAG 7Reranker 
+
+## 𝑤 𝑏𝑎𝑠𝑒 
+
+## Preference Pair Mining with  𝑤 𝑏𝑎𝑠𝑒 
+
+## Preference Pair  LoRA fine-tune 
+
+## reranker  𝑤 𝑏𝑎𝑠𝑒 
+
+## Reranker 
+
+## 𝑤 1D𝑏𝑎𝑠𝑒 
+
+## Preference Pair 
+
+## D𝑏𝑎𝑠𝑒 
+
+## LoRA fine-tune 
+
+## reranker  𝑤 1
+
+## Reranker 
+
+## 𝑤 2
+
+## Preference Pair Mining with  𝑤 2
+
+## Preference Pair 
+
+## D2            
+
+> Fig. 3. Iterative preference alignment with periodic re-mining. Training begins with the base reranker weights wbase . Preference pairs are first mined under
+> wbase , producing dataset Dbase . The reranker is then LoRA fine-tuned on Dbase , advancing the weights from wbase to w1and then to w2. After a fixed number of epochs, the preference pairs are re-mined under the current model w2, yielding a refreshed dataset D2that reflects the model’s updated ranking. This cycle can keep the training signal aligned with the reranker’s current behavior, although the benefit of additional refreshes may saturate once the model has stabilized. Question (Text) :Why is the cat looking at the
+> screen?
+> Image:
+> Stage 1
+> Retrieval
+> Top-100 Docs
+> VLM
+> Frozen
+> Answers
+> Correct
+> Correct
+> Incorrect
+> (Skipped)
+> Early Exit
+> Preference Pair
+> Question+ HyDE Rationale
+> Query Text:
+> Positive Doc (Explanation):
+> Negative Doc (Explanation):
+> (Query Text, Positive Doc, Negative Doc )
+> Reranked
+> Top-100 Docs
+> Trainable
+> Reranker
+
+Preference Pair Mining with Reranker weight  𝒘                    
+
+> 𝒘
+> Fig. 4. Generator-guided preference pair mining (proposed). Given a multimodal query (v, q ), Stage 1 retrieves 100 candidate documents. The trainable reranker with current weights wre-scores those candidates, and Stage 2 retains the top-K′= 10 subset for mining. The frozen VLM then evaluates each retained document in descending score order: if the generated answer is correct, the document is taken as d+and subsequent correct answers are skipped; if the answer is incorrect, the document is taken as d−. Evaluation exits immediately once both d+and d−are found, avoiding unnecessary VLM calls. The resulting training triple is (query text =question ⊕HyDE rationale, d+,d−).
+
+Training supervision is derived automatically through pref-erence mining : for each training query, the current reranker 
+
+Eθ first scores the Stage 1 candidates and retains only the top-K′ prefix for mining. A preference pair (d+, d −) is then constructed, where d+ denotes a preferred document and d−
+
+denotes a rejected one. All four mining strategies follow this same pairwise formulation but differ in how they assign the positive and negative labels. The proposed generator-guided 
+
+strategy feeds each retained candidate document to the frozen VLM G together with the image v and question q, and checks whether G produces the correct answer under the dataset answer label. The first retained candidate (in reranker-score order) that leads to a correct answer becomes d+, and the first retained candidate that leads to an incorrect answer becomes d−. If the retained pool does not contain both outcomes, the query is skipped and contributes no training pair for that epoch. The controlled baselines construct the same pairwise labels from different signals. The REPLUG-style likelihood baseline [12] does not rely on constrained answer generation; instead, it scores each retained candidate according to the likelihood of 
+
+agold when preceding ground-truth answer tokens are supplied and selects the highest- and lowest-scoring documents as d+
+
+and d−. The first baseline requires no VLM: it uses only the current reranker Eθ, assigning its highest-ranked candidate to d+ and its lowest-ranked candidate to d−. The random 
+
+baseline ignores both reranker scores and VLM feedback: d+
+
+and d− are drawn uniformly at random from the retained pool. The mined pairs are used to fine-tune Eθ under one of three alignment loss functions: triplet margin loss, SFT, or pairwise DPO [42]. To keep preference data fresh as the model improves, pairs are periodically re-mined against the current 
+
+Eθ checkpoint rather than a fixed initial ranking. Section IV provides pseudocode and walk-throughs for the training loop and mining strategies. IV. R ERANKER ALIGNMENT AND PREFERENCE MINING 
+
+Section III introduced the two-stage MM-RAG architecture, in which Stage 1 translates the multimodal query into text and retrieves a candidate document pool, while Stage 2 reranks these candidates according to their utility to the frozen generator. Building on this architecture, this section describes how the reranker is trained and evaluated. Specifically, we present the iterative LoRA-based alignment procedure with periodic re-mining, define the three alignment loss functions, and describe both the proposed generator-guided preference-mining strategy and the First, Random, and REPLUG-style likelihood baselines. Figs. 3 and 4 illustrate the two central components of our proposed alignment procedure. Specifically, Fig. 3 depicts the iterative mine–train–re-mine loop, whereas Fig. 4 shows how generator feedback is used to construct a positive–negative preference pair for an individual query. In essence, our proposed 8 IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE 
+
+procedure is enabled by three key mechanisms: generator-guided preference mining uses downstream answer correctness as the supervision signal; batching, early exit, and persistent caching reduce the cost of repeated VLM evaluation; and periodic re-mining refreshes the preference pairs as the reranker evolves. Fig. 3 shows the iterative alignment loop. At the start, the reranker Eθ is used to score the Stage 1 candidates, and a preference dataset D1 is mined from those scores. The reranker then undergoes LoRA fine-tuning using D1 for N consecutive epochs. After N epochs, the now-improved reranker is used to re-score the same candidates and produce a refreshed dataset 
+
+D2. Fine-tuning continues from D2 for another N epochs, and this mine-then-train cycle repeats until the total number of training epochs E is reached. The key intuition is that as the reranker changes, re-mining can refresh the preference pairs so that training continues to reflect the model’s current ranking behavior. Further, Fig. 4 shows how a single preference pair (d+, d −)
+
+is constructed for one query. The reranker scores all retrieved candidate documents and evaluates them in descending score order using the frozen VLM G. For each candidate, G generates an answer conditioned on the image, the question, and that candidate as context. The first candidate for which G produces the correct answer is taken as d+, and the first candidate for which G produces a wrong answer is taken as d−. Once both documents have been identified, the evaluation terminates through an early-exit mechanism, thereby avoiding unnecessary VLM calls for the remaining candidates. If the entire candidate pool is examined without finding both a positive and a negative document (e.g., when all candidates produce the same correctness outcome), the query is skipped and contributes no preference pair for that mining round. Subsection IV-A presents the iterative loop. Section IV-B defines the three alignment loss functions. Subsection IV-C details the preference mining subroutine for all four strategies. 
+
+A. Iterative Reranker Alignment 
+
+Algorithm 1 describes the reranker-alignment procedure in two phases: initialization and iterative training. In the 
+
+initialization phase (Lines 1–3), the LoRA parameters θLoRA 
+
+are randomly initialized and the preference dataset D is mined using the unmodified base cross-encoder Eθbase . In other words, the randomly initialized adapters are not used to rank candidates during the initial mining step, preventing them from introducing arbitrary ordering effects into the first set of preference pairs. The LoRA adapters are then incorporated into the reranker, and the base parameters θbase are frozen. Only θLoRA is updated during training. In the iterative training phase (Lines 4–11), the outer loop over epochs e triggers a re-mining step at the start of epoch e whenever (e − 1) mod N = 0 and e > 1. Re-mining replaces stale preference pairs (scored under an older model snapshot) with fresh pairs scored by the current Eθ,so that d+ and d− reflect the model’s present ranking. This can provide a useful refresh when the reranker has changed substantially, but additional refreshes may yield diminishing returns after the model saturates. Within each epoch, the 
+
+Algorithm 1 Iterative LoRA Fine-Tuning with Periodic Re-mining 
+
+Require: Queries Q, base cross-encoder Eθbase , frozen VLM 
+
+G
+
+Require: Pool cap K′, re-mine frequency N , epochs E,learning rate η, method  
+
+> 1:
+
+randomly initialize θLoRA ; freeze θbase  
+
+> 2:
+
+D ← PreferenceMine( Q, E θbase , G, K ′) 
+
+> 3:
+
+Eθ ← Eθbase +θLoRA  
+
+> 4:
+
+for e = 1 to E do  
+
+> 5:
+
+if N > 0 and (e − 1) mod N = 0 and e > 1 then  
+
+> 6:
+
+D ← PreferenceMine( Q, E θ , G, K ′) 
+
+> 7:
+
+for each (qtext , d +, d −) ∈ D do  
+
+> 8:
+
+s+ ← sθ (qtext , d +) 
+
+> 9:
+
+s− ← sθ (qtext , d −) 
+
+> 10:
+
+L ← ComputeLoss( s+, s −, method)  
+
+> 11:
+
+update θLoRA via AdamW on ∇θLoRA L with learning rate η 
+
+> 12:
+
+return final model Eθ
+
+training set D is iterated over sample by sample (in simulations, in mini-batches of 16). Each training sample is a triple 
+
+(qtext , d +, d −) for which the cross-encoder produces two scalar logits s+ = sθ (qtext , d +) and s− = sθ (qtext , d −), which are passed to ComputeLoss to compute the alignment loss (the specific loss depends on the chosen method: Contrastive Triplet, SFT, or Pairwise DPO, as defined in Section IV-B). The resulting gradient is then back-propagated through θLoRA ,and the parameters are updated using AdamW. After the final epoch, the aligned reranker Eθ is saved. 
+
+B. Alignment Loss Functions 
+
+Once a preference pair (d+, d −) has been mined, the reranker is trained to assign a higher score to the document that helps the frozen generator answer correctly than to the document that does not. For each pair, the cross-encoder produces two scalar logits, s+ = sθ (qtext , d +) and s− = sθ (qtext , d −). 
+
+> •
+
+SFT: The first objective treats answer utility as a super-vised regression target. The positive document is assigned the target score 1, while the negative document is assigned the target score 0:
+
+LSFT =  sθ (qtext , d +) − 12 +  sθ (qtext , d −) − 02 .
+
+(7) This objective directly pushes useful documents toward a high absolute score and unhelpful documents toward a low absolute score. However, because reranking ultimately depends on relative ordering rather than calibrated score values, these fixed targets impose a stronger constraint than is strictly necessary.  
+
+> •
+
+Contrastive Triplet Loss: The second objective focuses directly on relative preference. Rather than assigning absolute score targets, the triplet loss trains the reranker by enforcing a relative ordering constraint: the relevance score of the positive document s+ must exceed that of the negative document s− by at least a margin m:
+
+Ltriplet = max  0, m − (s+ − s−), m = 0 .2. (8) MULTIMODAL RAG 9
+
+The max(0 , ·) hinge structure implies that the loss is zero whenever s+ − s− ≥ m, i.e., the reranker already ranks 
+
+d+ sufficiently above d−. A gradient is produced only when this margin is violated, pushing s+ up and s− down until the gap is restored. This makes triplet loss a natural objective for reranking because it optimizes the positive-over-negative ordering directly without requiring the logits to take any particular absolute values. Further, the margin 
+
+m = 0 .2 discourages near-ties by encouraging a small score buffer between preferred and rejected documents.  
+
+> •
+
+Pairwise DPO: The third objective adapts DPO [42] to reranking. Following the score definition in (6), the trainable logit is mapped to a bounded DPO-style log-score, ℓθ (qtext , d ) = log σ(sθ (qtext , d )) =log σ(Eθ ([ qtext ; d])) , where σ(·) denotes the logistic sigmoid. For the frozen reference reranker Eref , the analogous logit is sref (qtext , d ) = Eref ([ qtext ; d]) , yield-ing ℓref (qtext , d ) = log σ(sref (qtext , d )) . The preference margins are then defined as 
+
+∆θ = ℓθ (qtext , d +) − ℓθ (qtext , d −),
+
+∆ref = ℓref (qtext , d +) − ℓref (qtext , d −), (9) The DPO loss is then given by 
+
+LDPO = − log σ β(∆ θ ) − (∆ ref ) . (10) This objective encourages the LoRA-adapted reranker to prefer d+ over d− more strongly than the original base reranker does. At the same time, the reference margin anchors the update to the pre-trained model, reducing unnecessary deviation from its initial ranking behavior. The parameter β controls the strength of this reference-relative preference update. Together, the above objectives provide three complementary views of alignment: SFT learns absolute utility targets, triplet loss enforces relative ordering, and DPO improves the preferred-over-rejected margin relative to the frozen base reranker. Using the same mined preference pairs across all three objectives allows the experiments to isolate the effect of the supervision signal from the effect of the loss function. 
+
+C. Preference-Mining Strategies 
+
+The previous subsection defined how a mined pair (d+, d −)
+
+is used to optimize the reranker under SFT, triplet, or DPO losses. We now describe how these positive-negative pairs are constructed. This distinction is important because all training objectives operate on the same pairwise format, while the supervision strategy determines what qualifies a document as preferred or rejected. For mining, Cq is the Stage 1 top-K pool retrieved in (5), and CK′ 
+
+> q
+
+denotes its top-K′ subset after sorting by the current reranker score, with K′ ≤ K. Algorithm 2 presents the proposed generator-guided strategy. Algorithm 3 covers the three baselines: first , random , and REPLUG-style likelihood (REPLUG-L) .
+
+1) Generator-Guided Preference Mining: Algorithm 2 speci-fies the proposed generator-guided mining strategy. Its purpose is not to estimate generic document relevance, but to ask whether each candidate changes the deployed generator’s answer behavior. For each query triple (q, v, a gold ), the retained 
+
+Algorithm 2 Generator-Guided Preference Mining (Proposed) 
+
+Require: Queries Q, reranker Eθ, frozen VLM G, cap K′,batch size Bm, cache Ψ 
+
+> 1:
+
+D ← ∅  
+
+> 2:
+
+for each (q, v, a gold ) ∈ Q do  
+
+> 3:
+
+CK′ 
+
+> q
+
+← top -K′(Cq ; sθ (qtext , ·)) ▷ descending score  
+
+> 4:
+
+d+ ← ∅ ; d− ← ∅  
+
+> 5:
+
+for i = 0 , B m, 2Bm, . . . do  
+
+> 6:
+
+batch ← C K′ 
+
+> q
+
+[i : i + Bm] 
+
+> 7:
+
+for each d ∈ batch do  
+
+> 8:
+
+key( d) ← (doc -id( d), pos( d))  
+
+> 9:
+
+if key( d) /∈ Ψ then  
+
+> 10:
+
+Ψ[key( d)] ← G (v, q, d ) 
+
+> 11:
+
+if Ψ[key( d)] = agold and d+ = ∅ then  
+
+> 12:
+
+d+ ← d 
+
+> 13:
+
+if Ψ[key( d)] ̸ = agold and d− = ∅ then  
+
+> 14:
+
+d− ← d 
+
+> 15:
+
+if d+̸ = ∅ and d−̸ = ∅ then  
+
+> 16:
+
+break ▷ Early exit: both examples identified  
+
+> 17:
+
+if d+̸ = ∅ and d−̸ = ∅ then  
+
+> 18:
+
+D ← D ∪ { (qtext , d +, d −)} 
+
+> 19:
+
+return D
+
+candidate set CK′ 
+
+> q
+
+is first sorted by sθ (qtext , ·) in descending order (Line 3), so that the most confidently ranked documents are evaluated first. The algorithm then iterates over mini-batches of Bm candidates in that order (Lines 5–16). For each candidate 
+
+d, a cache key is formed from its document identifier and position in the retrieved pool (Line 8); if the key is absent from the persistent cache Ψ, the frozen VLM G is queried with (v, q, d ) and the predicted answer is stored (Lines 9–10). If the key is already cached, the stored prediction is reused instead of prompting the VLM again. If the prediction matches 
+
+agold and no positive has been assigned yet, d is taken as d+
+
+(Lines 11–12). If it does not match and no negative has been assigned yet, d is taken as d− (Lines 13–14). Once both d+
+
+and d− are identified, an early exit terminates the remaining mini-batches immediately (Lines 15–16), avoiding superfluous VLM calls. A pair is added to D only when both d+ and d−
+
+are found (Lines 17–18); queries for which the pool contains no correct or no incorrect prediction are silently skipped. 
+
+2) Controlled Baselines: Algorithm 3 defines the three controlled baselines. All baselines use the same Stage 1 candidate pools, reranker architecture, LoRA training procedure, and alignment losses as the proposed method. The only difference is how d+ and d− are defined. By comparing the proposed method with these baselines, we can assess whether answer-utility supervision is the key source of the gains. The random baseline (Lines 4–5) draws d+ and d− uni-formly at random from CK′ 
+
+> q
+
+without replacement. It uses neither reranker scores nor VLM feedback. This baseline therefore measures how the alignment losses behave when the preference labels contain no meaningful supervision and provides a noise-sensitivity reference. The first baseline (Lines 6–8) relies only on the current reranker ordering. It selects the highest-scored candidate as d+ and the bottom-ranked candidate as 10 IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE 
+
+d−, without consulting the VLM. This strategy tests whether simply reinforcing the reranker’s existing semantic ranking is sufficient to improve performance. Because it never prompts the VLM, the selected positive may be semantically relevant without helping the generator answer correctly. The REPLUG-style likelihood baseline (REPLUG-L) 
+
+(Lines 9–15) uses the VLM differently from our generator strat-egy. Rather than asking the VLM to produce the constrained answer output, it scores every candidate with a REPLUG-style LM-likelihood signal: the log-likelihood of agold conditioned on (v, q, d ), where agold is provided token-by-token as input rather than being generated: 
+
+ℓ(d) = 1
+
+|agold |
+
+> |agold |
+
+X
+
+> t=1
+
+log pG
+
+ agold ,t | v, q, d, a gold ,<t 
+
+. (11) Here, pG denotes the frozen VLM’s next-token probability, 
+
+|agold | is the number of target answer tokens, agold ,t is the 
+
+t-th token, and agold ,<t denotes preceding target tokens. At each step t, the VLM G is conditioned on (v, q, d, a gold ,<t ),and the log probability assigned to agold ,t is averaged across the target answer tokens to produce ℓ(d). This is a REPLUG-style ranking score rather than the full REPLUG LSR objective, because we use it only to choose d+ and d− instead of training a retriever with a document-level KL loss. A higher ℓ(d) means that G assigns greater probability to the target answer when conditioned on document d and the preceding ground-truth answer tokens. The highest-scoring document is selected as d+
+
+and the lowest-scoring document as d− (Lines 14–15), so all 
+
+K′ candidates must be evaluated before selection and early exit is not possible. In contrast, our generator-guided strategy asks the VLM to produce the constrained answer output and checks whether it matches the ground-truth. Thus, a document may have a high ℓ(d) even if the VLM would fail to produce the correct constrained answer without those ground-truth answer tokens. V. E XPERIMENTS 
+
+We first describe the implementation details, followed by the results and analysis. 
+
+A. Implementation Details 
+
+We apply one default hyperparameter configuration across both datasets, summarized in Table II; experiments that deviate from these defaults state the changed value ex-plicitly. Stage 1 retrieves 100 candidates per query us-ing the Qwen3-Embedding-8B dense encoder with aFAISS index. For Stage 2, the cross-encoder backbone is Alibaba-NLP/gte-reranker-modernbert-base .Preference mining uses the top 10 retrieved candidates by default (K′ = 10 ), with re-mining disabled unless oth-erwise stated. We evaluate two frozen VLM generators, 
+
+Qwen3-VL-4B-Instruct and Qwen3.5-2B , to assess whether the proposed training-signal strategy generalizes across generators with different capacities. The reranker is fine-tuned with LoRA using rank r = 16 ,scaling factor α = 32 , and dropout 0.1. Optimization uses AdamW with a learning rate of 5 × 10 −5, batch size of 16, 
+
+Algorithm 3 Baseline Preference Mining 
+
+Require: Queries Q, reranker Eθ , cap K′, method m
+
+Require: If m = replug -l: frozen VLM G, batch size Bm,cache Ψ 
+
+> 1:
+
+D ← ∅  
+
+> 2:
+
+for each (q, v, a gold ) ∈ Q do  
+
+> 3:
+
+CK′ 
+
+> q
+
+← top -K′(Cq ; sθ (qtext , ·)) ▷ descending score  
+
+> 4:
+
+if m = random then  
+
+> 5:
+
+d+, d − ∼ Uniform( CK′ 
+
+> q
+
+) without replacement  
+
+> 6:
+
+if m = first then  
+
+> 7:
+
+d+ ← arg max d∈C K′ 
+
+> q
+
+sθ (qtext , d ) 
+
+> 8:
+
+d− ← arg min d∈C K′ 
+
+> q
+
+sθ (qtext , d ) 
+
+> 9:
+
+if m = replug -l then  
+
+> 10:
+
+for each d ∈ C K′ 
+
+> q
+
+in mini-batches of Bm do  
+
+> 11:
+
+key( d) ← (doc -id( d), pos( d))  
+
+> 12:
+
+if key( d) /∈ Ψ then  
+
+> 13:
+
+Ψ[key( d)] ← ℓ(d) 
+
+> 14:
+
+d+ ← arg max d∈C K′ 
+
+> q
+
+Ψ[key( d)]  
+
+> 15:
+
+d− ← arg min d∈C K′ 
+
+> q
+
+Ψ[key( d)]  
+
+> 16:
+
+if d+̸ = ∅ and d−̸ = ∅ then  
+
+> 17:
+
+D ← D ∪ { (qtext , d +, d −)} 
+
+> 18:
+
+return D                                 
+
+> TABLE II DEFAULT HYPERPARAMETER CONFIGURATION FOR VQA-X AND
+> A-OKVQA
+> Category Hyperparameter Value Architecture VLM Generator Qwen3-VL-4B-Instruct, Qwen3.5-2B Sentence Transformer Qwen3-Embedding-8B Reranker Backbone GTE-ModernBERT reranker Trainable Module LoRA-adapted reranker
+> LoRA Adapter Rank ( r)16 Alpha ( α)32 Dropout 0.1
+> Optimization Optimizer AdamW Learning Rate 5×10 −5
+> Training Epochs 2Batch Size 16
+> Objective DPO Beta ( β)0.1
+> Mining Stage 2 Pool Size K′= 10 of 100 candidates Mining Batch Size 16 Re-mining Frequency 0 (disabled) REPLUG-L Pool Size K′= 10 of 100 candidates
+
+and 2 epochs unless otherwise stated. For Pairwise DPO, the inverse-temperature parameter is set to β = 0 .1.We do not apply periodic re-mining in the main comparison (remine_every=0 ); re-mining frequency is studied sepa-rately in Table VII. The REPLUG-style likelihood baseline scores all 10 candidates by ground-truth-token log-likelihood. Stage 1 and Stage 2 are split-aware: the retrieval index is built from training-split documents only, while Stage 2 loads the selected dataset split to recover images and labels for the candidate question identifiers. A-OKVQA is evaluated as a multiple-choice task: the prompt lists choices as A) ,MULTIMODAL RAG 11            
+
+> TABLE III IMPACT OF TRAINING -S IGNAL CONSTRUCTION ACROSS ALIGNMENT LOSS
+> FUNCTIONS (2 E POCHS , G ENERATOR : Q WEN 3-VL-4B-I NSTRUCT ,CANDIDATE POOL : T OP 10). R ESULTS REPORTED AS MEAN ±STD ACROSS
+> 3RANDOM SEEDS .
+
+Alignment Loss Training Signal VQA-X (%) A-OKVQA (%) 
+
+Base No training 94.75 85.04 Contrastive (Triplet) First 94.72 ±0.22 85.07 ±0.11 Random 92.96 ±0.14 82.77 ±0.72 REPLUG-L 95.85 ±0.10 82.03 ±0.28 Generator 96.27 ±0.03 87.00 ±0.13 
+
+Pairwise DPO First 94.82 ±0.04 85.15 ±0.05 Random 93.84 ±0.82 83.63 ±1.16 REPLUG-L 95.79 ±0.09 82.40 ±0.27 Generator 96.11 ±0.04 87.16 ±0.03 
+
+SFT First 94.75 ±0.05 85.16 ±0.02 Random 93.35 ±0.37 80.95 ±0.72 REPLUG-L 95.69 ±0.04 82.65 ±0.14 Generator 95.73 ±0.01 85.75 ±0.08             
+
+> TABLE IV IMPACT OF TRAINING -S IGNAL CONSTRUCTION ACROSS ALIGNMENT LOSS
+> FUNCTIONS (2 E POCHS , G ENERATOR : Q WEN 3.5-2B, C ANDIDATE POOL :TOP 10). R ESULTS REPORTED AS MEAN ±STD ACROSS 3RANDOM SEEDS .
+
+Alignment Loss Training Signal VQA-X (%) A-OKVQA (%) 
+
+Base No training 90.28 79.83 Contrastive (Triplet) First 90.24 ±0.13 79.76 ±0.11 Random 89.13 ±2.01 77.02 ±1.37 REPLUG-L 92.44 ±0.30 76.98 ±0.07 Generator 94.82 ±0.11 84.67 ±0.21 
+
+Pairwise DPO First 90.20 ±0.18 79.99 ±0.08 Random 89.49 ±0.78 79.50 ±0.61 REPLUG-L 92.76 ±0.18 76.97 ±0.11 Generator 93.32 ±0.04 82.50 ±0.06 
+
+SFT First 90.12 ±0.16 79.94 ±0.08 Random 89.27 ±0.71 76.72 ±0.63 REPLUG-L 92.13 ±0.14 76.95 ±0.12 Generator 92.54 ±0.10 80.75 ±0.16 
+
+B) , etc. Although the Qwen model cards and generation configs provide sampling-oriented default or recommended values, our evaluation uses deterministic greedy decoding by setting do_sample=False with max_new_tokens=10 ;temperature and top-p sampling are therefore not used. The output is parsed first as a leading valid answer letter, with a fallback regex over standalone letters. Accuracy is exact match against correct_choice_idx . VQA-X is evalu-ated on yes/no questions: the prompt instructs the VLM to answer strictly with “yes” or “no”, generation uses the same deterministic decoding settings, outputs are lowercased, simple markers such as *, _, and periods are removed before 
+
+yes /no matching, and accuracy is the standard VQA soft score 
+
+min(# matching annotators /3, 1) . During binary preference mining for VQA-X, a prediction is treated as correct when this VQA score reaches 1. 
+
+B. Results and Analysis 
+
+We evaluate our proposed framework across three dimen-sions: (i) the superiority of the generator-guided training signal over alternative mining strategies under all three alignment losses (Tables III and IV), (ii) the robustness of the generator strategy to the size of the Stage 1 candidate pool (Tables V and VI), and (iii) the impact of periodic preference re-mining on accuracy (Table VII). We note that direct comparison with existing re-triever–generator alignment systems is difficult because prior methods often target text-only tasks, use different retrieval cor-pora and generators, or require joint retriever–generator training or an additional trainable bridge module. We therefore adopt a controlled comparison in which the Stage 1 candidate pool, reranker architecture, frozen generator, training configuration, and alignment loss are held fixed, while only the strategy used to construct (d+, d −) is varied. Under this design, the First baseline tests whether reinforcing the reranker’s existing score order is sufficient; the Random baseline measures the behavior of pairwise training under uninformative preference labels; and the REPLUG-style likelihood baseline represents likelihood-based generator-aware supervision adapted from prior work [12]. Our proposed method differs by assigning preferences according to whether each candidate enables the frozen VLM to produce the correct constrained answer output. All trained results are reported as mean ± standard de-viation over three random seeds. The seeds vary the LoRA initialization, training-data order, and random pair sampling where applicable, while the frozen generators and deterministic decoding procedure remain unchanged. We therefore assess a strategy based not only on its mean accuracy, but also on whether its gains are consistent across datasets, generators, alignment losses, and random seeds. The following subsections analyze the three dimensions in sequence. 
+
+1) Generator-Guided Mining Outperforms All Baselines: 
+
+Tables III and IV compare all training-signal strategies under three alignment losses for Qwen3-VL-4B-Instruct and Qwen3.5-2B, respectively, on VQA-X and A-OKVQA. The base cross-encoder selects the first document as the context and achieves 94.75% / 85.04% (Qwen3-VL-4B-Instruct) and 90.28% / 79.83% (Qwen3.5-2B), establishing the no-training reference that an effective strategy must surpass. Our proposed generator strategy achieves the highest ac-curacy in the evaluated cells of both tables, regardless of alignment loss, generator, or dataset. With Qwen3-VL-4B-Instruct, it reaches 96.27% / 87.00% under Contrastive (Triplet) and 96.11% / 87.16% under Pairwise DPO, with SFT trailing at 95.73% / 85.75%. With the smaller Qwen3.5-2B, Contrastive training achieves the best result (94.82% / 84.67%), followed by Pairwise DPO (93.32% / 82.50%) and SFT (92.54% / 80.75%). The consistent advantage across both generators suggests that the improvement stems from the quality of the training signal rather than any capacity-specific effect. The controlled baselines further clarify which supervision signal matters. The First strategy represents rank-order self-training: it reinforces the reranker’s own semantic ordering without answer-level feedback, and it often fails to improve over the untrained base (e.g., 94.72% / 85.07% vs. the base 94.75% 12 IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE 
+
+/ 85.04% for Qwen3-VL-4B-Instruct under Contrastive). The Random strategy tests whether gains arise merely from LoRA fine-tuning with pairwise objectives; its frequent degradation below the base (e.g., 92.96% on VQA-X for Qwen3-VL-4B-Instruct under Contrastive, and 89.13% for Qwen3.5-2B) shows that arbitrary pair construction can harm the reranker. The REPLUG-style likelihood baseline (REPLUG-L) is the closest prior-work-connected comparison, adapting likelihood-based generator-aware retrieval supervision. It improves VQA-X over the base across all configurations (e.g., 95.85%, 95.79%, and 95.69% for Qwen3-VL-4B-Instruct under the three losses), but it hurts A-OKVQA accuracy relative to the base in these experiments (e.g., 82.03%–82.65% vs. the base 85.04% for Qwen3-VL-4B-Instruct). This asymmetry suggests that ground-truth-token likelihood is an imperfect proxy for constrained-answer correctness: a high likelihood of agold when preceding answer tokens are supplied does not reliably indicate that G
+
+would produce the correct constrained answer. Across the three alignment losses, Contrastive (Triplet) emerges as a strong default: it is consistently competitive and becomes the clear best-performing objective with Qwen3.5-2B, which motivates using it in the pool-sensitivity and re-mining studies below. At the same time, Pairwise DPO reaches comparable accuracy with Qwen3-VL-4B-Instruct under the same generator-guided mining signal. Thus, the main finding is not that triplet loss universally dominates, but that answer-utility preference mining is the decisive factor, with triplet loss serving as a reliable and simple instantiation. 
+
+2) Robustness to Stage 1 Candidate Pool Size: Tables V and VI investigate how sensitive each training signal is to 
+
+K′, the number of Stage 1 candidates used during preference mining, under Contrastive (Triplet) training at 2 epochs for Qwen3-VL-4B-Instruct and Qwen3.5-2B, respectively. The results show that the generator strategy is stable across pool sizes, though the degree of stability differs by generator. For Qwen3-VL-4B-Instruct, VQA-X accuracy increases mod-estly from 95.88% at Top 2 to 96.27% at Top 10 (a range of 0.39 pp), and A-OKVQA grows from 86.22% to 87.00% (0.78 pp). For Qwen3.5-2B, the variation is more pronounced: VQA-X rises from 92.76% at Top 2 to 94.82% at Top 10 (2.06 pp), and A-OKVQA from 81.45% to 84.67% (3.22 pp), suggesting that Qwen3.5-2B, despite being smaller and from a different model generation, benefits more from a richer candidate pool when constructing preference pairs. Notably, our proposed generator strategy with the smallest pool of Top 2 already outperforms the evaluated baselines at their largest pool of Top 10 across both generators and datasets. This aligns with recent budget-aware RAG findings that the utility of retrieved chunks, not merely the number of chunks used, is central to effective retrieval augmentation [43]; in our setting, the quality of the training signal matters more than the quantity of candidates evaluated. Further inspection shows that the Random strategy has the highest variance across pool sizes (e.g., 87.73%–89.13% on VQA-X for Qwen3.5-2B), because the quality of the sampled pair depends heavily on which documents happen to fall inside the pool. The First strategy is essentially insensitive to pool size, remaining near base-level performance regardless of K′,because it always selects the top-1 and bottom-1 of the ranked                                                     
+
+> TABLE V SENSITIVITY TO STAGE 1 C ANDIDATE POOL IN CONTRASTIVE (T RIPLET )TRAINING (2 E POCHS , G ENERATOR : Q WEN 3-VL-4B-I NSTRUCT ). R ESULTS REPORTED AS MEAN ±STD ACROSS 3RANDOM SEEDS .
+> Training Signal Candidate Pool VQA-X (%) A-OKVQA (%)
+> Generator (Ours) Top 2 95.88 ±0.03 86.22 ±0.09 Top 4 96.06 ±0.03 86.68 ±0.06 Top 6 96.16 ±0.03 86.88 ±0.05 Top 8 96.18 ±0.08 86.93 ±0.06 Top 10 96.27 ±0.03 87.00 ±0.13
+> First Top 2 94.73 ±0.04 85.05 ±0.01 Top 4 94.76 ±0.09 85.05 ±0.03 Top 6 94.68 ±0.07 85.03 ±0.02 Top 8 94.61 ±0.18 85.06 ±0.05 Top 10 94.72 ±0.22 85.07 ±0.11 Random Top 2 92.62 ±1.05 82.24 ±0.60 Top 4 93.50 ±0.85 82.50 ±0.48 Top 6 93.07 ±1.31 84.15 ±0.25 Top 8 93.18 ±0.42 82.61 ±0.92 Top 10 92.96 ±0.14 82.77 ±0.72 REPLUG-L Top 2 95.52 ±0.03 81.45 ±0.20 Top 4 95.75 ±0.10 81.58 ±0.38 Top 6 95.86 ±0.10 81.89 ±0.11 Top 8 95.83 ±0.10 82.04 ±0.09 Top 10 95.85 ±0.10 82.03 ±0.28
+
+list and the pool boundary only marginally affects the bottom candidate. REPLUG-L scores all K′ candidates in the pool, so it naturally uses more information as the pool grows; even so, at Top 10 it remains below our proposed generator strategy by 0.42 pp on VQA-X and 4.97 pp on A-OKVQA for Qwen3-VL-4B-Instruct (95.85% vs. 96.27% and 82.03% vs. 87.00%). For Qwen3.5-2B the gap is even larger: 2.38 pp on VQA-X (92.44% vs. 94.82%) and 7.69 pp on A-OKVQA (76.98% vs. 84.67%). This suggests that REPLUG-L’s shortfall is not only a matter of how many candidates it evaluates, but also that its ground-truth-token likelihood signal can be a weaker proxy for downstream answer correctness than the direct binary judgment used by the generator strategy. 
+
+3) Impact of Periodic Re-mining: Table VII examines the effect of re-mining frequency on downstream accuracy over 4 training epochs using the generator strategy and Contrastive (Triplet) loss. Three configurations are compared: no re-mining (the preference dataset is fixed throughout training), re-mining twice (once at the start before training and once at mid-training), and re-mining four times (once per epoch). Periodic re-mining generally enhances the performance compared with using a fixed preference dataset, but the benefit of increasing the re-mining frequency is model- and dataset-dependent. For Qwen3-VL-4B-Instruct on VQA-X, re-mining twice and four times are effectively tied within the reported seed variation (97.45 ±0.09% vs. 97.44 ±0.09%), indicating saturation rather than a meaningful gain from additional refreshes. In contrast, re-mining four times yields the best A-OKVQA accuracy for Qwen3-VL-4B-Instruct (89.58% vs. 87.00% without re-mining, +2.58 pp). For Qwen3.5-2B, re-mining four times produces the best results on both datasets (95.16% on VQA-X, +0.73 pp; 84.67% on A-OKVQA, +2.43 MULTIMODAL RAG 13           
+
+> TABLE VI SENSITIVITY TO STAGE 1 C ANDIDATE POOL IN CONTRASTIVE (T RIPLET )TRAINING (2 E POCHS , G ENERATOR : Q WEN 3.5-2B). R ESULTS REPORTED AS MEAN ±STD ACROSS 3RANDOM SEEDS .
+
+Training Signal Candidate Pool VQA-X (%) A-OKVQA (%) 
+
+Generator (Ours) Top 2 92.76 ±0.02 81.45 ±0.02 Top 4 93.01 ±0.05 81.87 ±0.16 Top 6 93.11 ±0.06 82.02 ±0.01 Top 8 93.29 ±0.04 81.97 ±0.02 Top 10 94.82 ±0.11 84.67 ±0.21 
+
+First Top 2 90.28 ±0.05 79.85 ±0.03 Top 4 90.25 ±0.12 79.76 ±0.06 Top 6 90.24 ±0.05 79.85 ±0.01 Top 8 90.33 ±0.24 79.74 ±0.11 Top 10 90.24 ±0.13 79.76 ±0.11 Random Top 2 87.73 ±0.85 78.18 ±0.69 Top 4 88.94 ±1.64 76.64 ±1.12 Top 6 88.34 ±1.00 77.76 ±0.90 Top 8 88.80 ±1.77 78.30 ±1.12 Top 10 89.13 ±2.01 77.02 ±1.37 REPLUG-L Top 2 91.58 ±0.27 76.89 ±0.22 Top 4 91.92 ±0.23 76.91 ±0.25 Top 6 92.17 ±0.12 77.13 ±0.06 Top 8 92.33 ±0.20 77.10 ±0.07 Top 10 92.44 ±0.30 76.98 ±0.07          
+
+> TABLE VII IMPACT OF RE-MINING FREQUENCY ON DOWNSTREAM ACCURACY
+> (C ANDIDATE POOL : T OP 10). R ESULTS REPORTED AS MEAN ±STD ACROSS
+> 3RANDOM SEEDS .
+
+Generator # of Re-mines VQA-X (%) A-OKVQA (%) 
+
+Qwen3-VL-4B -Instruct 0 96.27 ±0.03 87.00 ±0.13 2 97.45 ±0.09 89.01 ±0.23 4 97.44 ±0.09 89.58 ±0.04 
+
+Qwen3.5-2B 0 94.43 ±0.09 82.24 ±0.14 2 94.82 ±0.11 84.47 ±0.30 4 95.16 ±0.13 84.67 ±0.21 
+
+pp over no re-mining). These results suggest that refreshing stale preference pairs can improve training, while the marginal gains from more frequent refreshes can saturate once the reranker stabilizes. This is also evident from the fact that the incremental gain from four rather than two re-mines is small and dataset-dependent. For Qwen3-VL-4B-Instruct, VQA-X is effectively tied (97.44% vs. 97.45%), while four re-mines add 0.57 pp on A-OKVQA (89.58% vs. 89.01%). For Qwen3.5-2B, four re-mines give modest gains over two on both datasets (+0.34 pp VQA-X, +0.20 pp A-OKVQA). Re-mining also adds cost because each refresh must re-rank the mining queries, rebuild pairs from the current top-K′ subset, and evaluate any newly reached uncached query-document pairs. Thus, re-mining twice offers a favorable accuracy-cost balance, while additional refreshes should be treated as optional. VI. L IMITATIONS 
+
+This work presents several opportunities for further devel-opment. First, although the framework eliminates the need for human document-level relevance annotations, preference mining still relies on answer-labeled training examples to determine whether a candidate document helps the frozen generator produce the correct answer. Future work could reduce this dependence by using self-supervised consistency signals, confidence-based pseudo-labels, or other forms of weak supervision. Second, preference mining introduces additional computa-tional cost because the VLM must evaluate multiple candidate documents for each query, and periodic re-mining repeats this process as the reranker evolves. This overhead can be further reduced through more selective candidate evaluation, adaptive re-mining schedules, and lightweight surrogate models that approximate the generator’s utility judgments. Third, the learned reranker is intentionally generator-specific, as it is optimized to select evidence that improves the frozen VLM’s behavior during training rather than to learn a universal notion of document relevance. Future work could improve trans-ferability by incorporating preferences from multiple generators or by developing generator-agnostic utility representations that require only limited adaptation to a new VLM. Finally, the current pairwise training procedure uses only queries whose candidate pools contain at least one helpful and one unhelpful document. While this requirement produces clean positive–negative pairs, it excludes queries for which all candidates yield the same outcome and uses only a limited portion of the available utility information. This limitation could be addressed through graded, listwise, or multi-document utility supervision that uses more of the information available in the candidate pool. VII. C ONCLUSION 
+
+This paper introduced a generator-in-the-loop alignment framework for multimodal RAG. Our proposed two-stage framework separates modality bridging from answer-utility alignment: Stage 1 uses a frozen VLM to generate a HyDE-style text query for dense recall, while Stage 2 trains a LoRA-adapted cross-encoder reranker from answer-supervised preference pairs mined with the same frozen generator. We demonstrated that across VQA-X and A-OKVQA datasets, generator-guided preferences improve over rank-order, random, and REPLUG-style likelihood baselines under multiple alignment losses, suggesting that downstream answer behavior is a useful signal for reranker alignment. The results also showed that periodic re-mining can improve accuracy by refreshing preference pairs as the reranker changes, although the marginal value of more frequent refreshes depends on the model and dataset. Overall, the findings support a generator-centered view of RAG reranking: the most useful evidence is not the passage semantically closest to the query, but the passage that helps the deployed generator answer correctly. VIII. A CKNOWLEDGMENTS 
+
+Generative AI tools, including ChatGPT (OpenAI) [44] and Claude (Anthropic) [45], were used to assist with the preparation and refinement of manuscript text, including sentence-level language improvement. All technical content was developed by the authors, and the full manuscript was carefully 14 IEEE TRANSACTIONS ON ARTIFICIAL INTELLIGENCE 
+
+reviewed and verified by the authors to ensure accuracy and correctness. REFERENCES [1] L. Yuan, D.-J. Han, S. Wang, and C. Brinton, “Local-cloud inference offloading for llms in multi-modal, multi-task, multi-dialogue settings,” in Proceedings of the Twenty-sixth International Symposium on Theory, Algorithmic Foundations, and Protocol Design for Mobile Networks and Mobile Computing , 2025, pp. 201–210. [2] W. Fang, D.-J. Han, L. Yuan, E. Chen, and C. Brinton, “Bridging on-device and cloud llms for collaborative reasoning: A unified methodology for local routing and post-training,” in Forty-third International Confer-ence on Machine Learning , 2026. [3] L. Huang, W. Yu, W. Ma, W. Zhong, Z. Feng, H. Wang, Q. Chen, W. Peng, X. Feng, B. Qin et al. , “A survey on hallucination in large language models: Principles, taxonomy, challenges, and open questions,” 
+
+ACM transactions on information systems , vol. 43, no. 2, pp. 1–55, 2025. [4] P. Lewis, E. Perez, A. Piktus, F. Petroni, V. Karpukhin, N. Goyal, H. K¨ uttler, M. Lewis, W.-t. Yih, T. Rockt¨ aschel et al. , “Retrieval-augmented generation for knowledge-intensive nlp tasks,” Advances in Neural Information Processing Systems , vol. 33, pp. 9459–9474, 2020. [5] S. Borgeaud, A. Mensch, J. Hoffmann, T. Cai, E. Rutherford, K. Millican, G. B. Van Den Driessche, J.-B. Lespiau, B. Damoc, A. Clark et al. ,“Improving language models by retrieving from trillions of tokens,” in 
+
+International conference on machine learning . PMLR, 2022, pp. 2206– 2240. [6] T. R. McIntosh, T. Liu, T. Susnjak, P. Watters, A. Ng, and M. N. Halgamuge, “A culturally sensitive test to evaluate nuanced GPT hallucination,” IEEE Transactions on Artificial Intelligence , vol. 5, no. 6, pp. 2739–2751, 2023. [7] Y. Gao, Y. Xiong, X. Gao, K. Jia, J. Pan, Y. Bi, Y. Dai, J. Sun, H. Wang, and H. Wang, “Retrieval-augmented generation for large language models: A survey,” arXiv preprint arXiv:2312.10997 , vol. 2, no. 1, 2023. [8] O. Khattab, A. Singhvi, P. Maheshwari, Z. Zhang, K. Santhanam, S. Vardhamanan, S. Haq, A. Sharma, T. T. Joshi, H. Moazam et al. ,“DSPy: Compiling declarative language model calls into self-improving pipelines,” arXiv preprint arXiv:2310.03714 , 2023. [9] X. Ma, Y. Gong, P. He, H. Zhao, and N. Duan, “Query rewriting in retrieval-augmented large language models,” in Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , 2023, pp. 5303–5315. [10] F. Cuconasu, G. Trappolini, F. Siciliano, S. Filice, C. Campagnano, Y. Maarek, N. Tonellotto, and F. Silvestri, “The power of noise: Redefining retrieval for RAG systems,” in Proceedings of the 47th International ACM SIGIR Conference on Research and Development in Information Retrieval , 2024, pp. 719–729. [11] G. Izacard, P. Lewis, M. Lomeli, L. Hosseini, F. Petroni, T. Schick, J. Dwivedi-Yu, A. Joulin, S. Riedel, and E. Grave, “Atlas: Few-shot learning with retrieval augmented language models,” Journal of Machine Learning Research , vol. 24, no. 251, pp. 1–43, 2023. [12] W. Shi, S. Min, M. Yasunaga, M. Seo, R. James, M. Lewis, L. Zettle-moyer, and W.-t. Yih, “REPLUG: Retrieval-augmented black-box lan-guage models,” in Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) , 2024, pp. 8371–8384. [13] Y. Zhang, M. Li, D. Long, X. Zhang, H. Lin, B. Yang, P. Xie, A. Yang, D. Liu, J. Lin et al. , “Qwen3 embedding: Advancing text embedding and reranking through foundation models,” arXiv preprint arXiv:2506.05176 ,2025. [14] L. Wang, N. Yang, and F. Wei, “Learning to retrieve in-context examples for large language models,” in Proceedings of the 18th Conference of the European Chapter of the Association for Computational Linguistics (Volume 1: Long Papers) , 2024, pp. 1752–1767. [15] N. F. Liu, K. Lin, J. Hewitt, A. Paranjape, M. Bevilacqua, F. Petroni, and P. Liang, “Lost in the middle: How language models use long contexts,” 
+
+Transactions of the association for computational linguistics , vol. 12, pp. 157–173, 2024. [16] O. Yoran, T. Wolfson, O. Ram, and J. Berant, “Making retrieval-augmented language models robust to irrelevant context,” in International Conference on Learning Representations , vol. 2024, 2024, pp. 29 862– 29 883. [17] K. Guu, K. Lee, Z. Tung, P. Pasupat, and M. Chang, “Retrieval augmented language model pre-training,” in International conference on machine learning . PMLR, 2020, pp. 3929–3938. [18] S. Gupta, R. Ranjan, and S. N. Singh, “A comprehensive survey of retrieval-augmented generation (RAG): Evolution, current landscape and future directions,” arXiv preprint arXiv:2410.12837 , 2024. [19] V. Karpukhin, B. Oguz, S. Min, P. S. Lewis, L. Wu, S. Edunov, D. Chen, and W.-t. Yih, “Dense passage retrieval for open-domain question answering.” in EMNLP (1) , 2020, pp. 6769–6781. [20] K. Shuster, S. Poff, M. Chen, D. Kiela, and J. Weston, “Retrieval augmentation reduces hallucination in conversation,” in Findings of the Association for Computational Linguistics: EMNLP 2021 , 2021, pp. 3784–3803. [21] W. Yu, H. Zhang, X. Pan, P. Cao, K. Ma, J. Li, H. Wang, and D. Yu, “Chain-of-note: Enhancing robustness in retrieval-augmented language models,” in Proceedings of the 2024 conference on empirical methods in natural language processing , 2024, pp. 14 672–14 685. [22] Z. Xu, G. Pang, X. Chen, M. Ding, B. Vucetic, Y. Li, and Z. Li, “Maq-retrieval: Multi-aspect queries retrieval for large language models,” IEEE Transactions on Artificial Intelligence , 2026. [23] L. Gao, X. Ma, J. Lin, and J. Callan, “Precise zero-shot dense retrieval without relevance labels,” in Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,2023, pp. 1762–1777. [24] R. Nogueira and K. Cho, “Passage re-ranking with bert,” arXiv preprint arXiv:1901.04085 , 2019. [25] W. Sun, L. Yan, X. Ma, S. Wang, P. Ren, Z. Chen, D. Yin, and Z. Ren, “Is ChatGPT good at search? investigating large language models as re-ranking agents,” in Proceedings of the 2023 conference on empirical methods in natural language processing , 2023, pp. 14 918–14 937. [26] A. J. Oche, A. G. Folashade, T. Ghosal, and A. Biswas, “A systematic review of key retrieval-augmented generation (RAG) systems: Progress, gaps, and future directions,” arXiv preprint arXiv:2507.18910 , 2025. [27] Z. Jiang, F. F. Xu, L. Gao, Z. Sun, Q. Liu, J. Dwivedi-Yu, Y. Yang, J. Callan, and G. Neubig, “Active retrieval augmented generation,” in 
+
+Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , 2023, pp. 7969–7992. [28] S.-Q. Yan, J.-C. Gu, Y. Zhu, and Z.-H. Ling, “Corrective retrieval augmented generation,” arXiv preprint arXiv:2401.15884 , 2024. [29] D. Zhu, X. Shen, X. Li, M. Elhoseiny et al. , “Minigpt-4: Enhancing vision-language understanding with advanced large language models,” in 
+
+International Conference on Learning Representations , vol. 2024, 2024, pp. 18 378–18 394. [30] H. Liu, C. Li, Q. Wu, and Y. J. Lee, “Visual instruction tuning,” Advances in Neural Information Processing Systems , vol. 36, pp. 34 892–34 916, 2023. [31] A. Radford, J. W. Kim, C. Hallacy, A. Ramesh, G. Goh, S. Agarwal, G. Sastry, A. Askell, P. Mishkin, J. Clark et al. , “Learning transferable visual models from natural language supervision,” in International conference on machine learning . PmLR, 2021, pp. 8748–8763. [32] J.-B. Alayrac, J. Donahue, P. Luc, A. Miech, I. Barr, Y. Hasson, K. Lenc, A. Mensch, K. Millican, M. Reynolds et al. , “Flamingo: a visual language model for few-shot learning,” Advances in Neural Information Processing Systems , vol. 35, pp. 23 716–23 736, 2022. [33] J. Bai, S. Bai, Y. Chu, Z. Cui, K. Dang, X. Deng, Y. Fan, W. Ge, Y. Han, F. Huang et al. , “Qwen technical report,” arXiv preprint arXiv:2309.16609 , 2023. [34] M. Yasunaga, A. Aghajanyan, W. Shi, R. James, J. Leskovec, P. Liang, M. Lewis, L. Zettlemoyer, and W.-t. Yih, “Retrieval-augmented multi-modal language modeling,” arXiv preprint arXiv:2211.12561 , 2022. [35] M. Faysse, H. Sibille, T. Wu, B. Omrani, G. Viaud, C. Hudelot, and P. Colombo, “Colpali: Efficient document retrieval with vision language models,” in International Conference on Learning Representations , vol. 2025, 2025, pp. 61 424–61 449. [36] B. He, N. Chen, X. He, L. Yan, Z. Wei, J. Luo, and Z.-H. Ling, “Retrieving, rethinking and revising: The chain-of-verification can improve retrieval augmented generation,” in Findings of the Association for Computational Linguistics: EMNLP 2024 , 2024, pp. 10 371–10 393. [37] O. Ram, Y. Levine, I. Dalmedigos, D. Muhlgay, A. Shashua, K. Leyton-Brown, and Y. Shoham, “In-context retrieval-augmented language models,” 
+
+Transactions of the Association for Computational Linguistics , vol. 11, pp. 1316–1331, 2023. [38] Z. Ke, W. Kong, C. Li, M. Zhang, Q. Mei, and M. Bendersky, “Bridging the preference gap between retrievers and LLMs,” in Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2024, pp. 10 438–10 451. [39] Y. Liu, D. Iter, Y. Xu, S. Wang, R. Xu, and C. Zhu, “G-Eval: NLG evaluation using GPT-4 with better human alignment,” in Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing , 2023, pp. 2511–2522. MULTIMODAL RAG 15 
+
+[40] Y. Wang, Y. Kordi, S. Mishra, A. Liu, N. A. Smith, D. Khashabi, and H. Hajishirzi, “Self-Instruct: Aligning language models with self-generated instructions,” in Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,2023, pp. 13 484–13 508. [41] B. Warner, A. Chaffin, B. Clavi´ e, O. Weller, O. Hallstr¨ om, S. Taghadouini, A. Gallagher, R. Biswas, F. Ladhak, T. Aarsen et al. , “Smarter, better, faster, longer: A modern bidirectional encoder for fast, memory efficient, and long context finetuning and inference,” in Proceedings of the 63rd annual meeting of the association for computational linguistics (volume 1: Long papers) , 2025, pp. 2526–2547. [42] R. Rafailov, A. Sharma, E. Mitchell, C. D. Manning, S. Ermon, and C. Finn, “Direct preference optimization: Your language model is secretly a reward model,” Advances in Neural Information Processing Systems ,vol. 36, pp. 53 728–53 741, 2023. [43] S. Al-Maliki, A. Gharaibeh, M. Rahouti, M. R. Amin, M. Abdallah, J. Qadir, and A. Al-Fuqaha, “Budget-constrained online retrieval-augmented generation: The chunk-as-a-service model,” IEEE Transac-tions on Artificial Intelligence , 2026. [44] OpenAI, “ChatGPT,” [Online]. Available: https://chatgpt.com/. [45] Anthropic, “Claude,” [Online]. Available: https://claude.ai/.

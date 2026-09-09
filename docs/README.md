@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-01 ~ 2026-08-10</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-09</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 51 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 50 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>37</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>36</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-10 09:41:44 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-09 22:46:16 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>8月1-10日共处理51篇论文，精读37篇、速读14篇，覆盖检索增强生成与语义分块等前沿方向。最值得关注的是满分论文《RING》提出的持续大规模知识注入方法，以及9分论文对结构感知语义分块的系统评估。建议普通读者优先精读这两篇，并留意速读中企业级LLM部署与轻量级RAG插件等实践性工作。</p>
+<p>今日精读36篇、速读14篇，共50篇，核心聚焦RAG鲁棒性与多模态知识冲突。最值得看的是两篇9.0分RAG工作：等周噪声控制与基于反馈的信任传播，均显著提升检索生成质量。建议优先精读这两篇，若关注科学问答或艺术描述，可顺带浏览EGT-KG与ExpArt-KG。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">37 篇</strong>
+    <strong class="dpr-home-dashboard-count">36 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RING: Retrieval-Internalized Generation for Continual Large-Scale Knowledge Injection">RING: Retrieval-Internalized Generation for Continual Large-Scale Knowledge Injection</span></li><li><span class="dpr-home-dashboard-paper-title" title="Structure-Aware Semantic Chunking with Title-Chain Prefixes: A 1600-Query Evaluation and the Measurement Trap in Text-Transform Ablations">Structure-Aware Semantic Chunking with Title-Chain Prefixes: A 1600-Query Evaluation and the Measurement Trap in Text-Transform Ablations</span></li><li><span class="dpr-home-dashboard-paper-title" title="Practical Online KV Cache Compaction for LLM Agents: An Empirical Study">Practical Online KV Cache Compaction for LLM Agents: An Empirical Study</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ISO-RAG: Isoperimetric Noise Control for Retrieval-Augmented Generation">ISO-RAG: Isoperimetric Noise Control for Retrieval-Augmented Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Feedback-Assisted Trust Propagation over Document Relation Graphs for Retrieval-Augmented Generation">Feedback-Assisted Trust Propagation over Document Relation Graphs for Retrieval-Augmented Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Control-Data Flow Separation: Stable Prompt Optimization in Multi-Agent LLMs">Control-Data Flow Separation: Stable Prompt Optimization in Multi-Agent LLMs</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>18</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>16</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>21</strong></span><span class="dpr-home-dashboard-tag">agent <strong>13</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +87,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Unleashing the Potential of Large Language Models: A Blueprint for Real-Time, Enterprise-Ready Deployments">Unleashing the Potential of Large Language Models: A Blueprint for Real-Time, Enterprise-Ready Deployments</span></li><li><span class="dpr-home-dashboard-paper-title" title="CeQe: Grounding Lexical Retrieval in Semantic Evidence">CeQe: Grounding Lexical Retrieval in Semantic Evidence</span></li><li><span class="dpr-home-dashboard-paper-title" title="Select-And-Extract: A Lightweight Plugin for Retrieval-Augmented Generation">Select-And-Extract: A Lightweight Plugin for Retrieval-Augmented Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="EGT-KG: Evidence-Grounded Typed KG Retrieval for Practical Scientific QA with Small Language Models">EGT-KG: Evidence-Grounded Typed KG Retrieval for Practical Scientific QA with Small Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Same Semantics, Different Outcome: On the Modality Robustness of Multimodal LLMs under Knowledge Conflict">Same Semantics, Different Outcome: On the Modality Robustness of Multimodal LLMs under Knowledge Conflict</span></li><li><span class="dpr-home-dashboard-paper-title" title="ExpArt-KG: Artwork Image Description Generation through Iterative Exploration of Knowledge Graphs">ExpArt-KG: Artwork Image Description Generation through Iterative Exploration of Knowledge Graphs</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>12</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>8</strong></span><span class="dpr-home-dashboard-tag">agent <strong>4</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>2</strong></span></div>
 </section>
 </div>
 
