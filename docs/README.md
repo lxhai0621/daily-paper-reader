@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-09</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-10</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 50 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 23 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>36</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-09 22:46:16 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-10 22:30:52 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,10 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读36篇、速读14篇，共50篇，核心聚焦RAG鲁棒性与多模态知识冲突。最值得看的是两篇9.0分RAG工作：等周噪声控制与基于反馈的信任传播，均显著提升检索生成质量。建议优先精读这两篇，若关注科学问答或艺术描述，可顺带浏览EGT-KG与ExpArt-KG。</p>
+<p>今日共生成 23 篇推荐（精读 9 篇，速读 14 篇）</p>
+<p>精读：《APEx: Distillation of Agent Procedural Experience for Adaptive Deep Research Question Answering》（9.0/10）, 《NS-ST-GraphRAG: Neuro-Symbolic Spatio-Temporal GraphRAG for Literary Knowledge Processing》（9.0/10）</p>
+<p>速读：《MASkills: Continual Skills Optimization for Multi-Agent LLM Systems》（8.0/10）, 《NE-R1: Enhancing Named Entity Recognition Model via Reinforcement Learning》（8.0/10）, 《ViSAR: Training-Free Adaptive-$k$ Retrieval for Visual Document Question Answering》（8.0/10）</p>
+<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +74,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">36 篇</strong>
+    <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ISO-RAG: Isoperimetric Noise Control for Retrieval-Augmented Generation">ISO-RAG: Isoperimetric Noise Control for Retrieval-Augmented Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Feedback-Assisted Trust Propagation over Document Relation Graphs for Retrieval-Augmented Generation">Feedback-Assisted Trust Propagation over Document Relation Graphs for Retrieval-Augmented Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Control-Data Flow Separation: Stable Prompt Optimization in Multi-Agent LLMs">Control-Data Flow Separation: Stable Prompt Optimization in Multi-Agent LLMs</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="APEx: Distillation of Agent Procedural Experience for Adaptive Deep Research Question Answering">APEx: Distillation of Agent Procedural Experience for Adaptive Deep Research Question Answering</span></li><li><span class="dpr-home-dashboard-paper-title" title="NS-ST-GraphRAG: Neuro-Symbolic Spatio-Temporal GraphRAG for Literary Knowledge Processing">NS-ST-GraphRAG: Neuro-Symbolic Spatio-Temporal GraphRAG for Literary Knowledge Processing</span></li><li><span class="dpr-home-dashboard-paper-title" title="Fine-Tuning a KV Cache Concatenation-Aware Model or Recomputing KV Caches? Why Not Both?">Fine-Tuning a KV Cache Concatenation-Aware Model or Recomputing KV Caches? Why Not Both?</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>21</strong></span><span class="dpr-home-dashboard-tag">agent <strong>13</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>4</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +90,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="EGT-KG: Evidence-Grounded Typed KG Retrieval for Practical Scientific QA with Small Language Models">EGT-KG: Evidence-Grounded Typed KG Retrieval for Practical Scientific QA with Small Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Same Semantics, Different Outcome: On the Modality Robustness of Multimodal LLMs under Knowledge Conflict">Same Semantics, Different Outcome: On the Modality Robustness of Multimodal LLMs under Knowledge Conflict</span></li><li><span class="dpr-home-dashboard-paper-title" title="ExpArt-KG: Artwork Image Description Generation through Iterative Exploration of Knowledge Graphs">ExpArt-KG: Artwork Image Description Generation through Iterative Exploration of Knowledge Graphs</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MASkills: Continual Skills Optimization for Multi-Agent LLM Systems">MASkills: Continual Skills Optimization for Multi-Agent LLM Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="NE-R1: Enhancing Named Entity Recognition Model via Reinforcement Learning">NE-R1: Enhancing Named Entity Recognition Model via Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="ViSAR: Training-Free Adaptive-$k$ Retrieval for Visual Document Question Answering">ViSAR: Training-Free Adaptive-$k$ Retrieval for Visual Document Question Answering</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>8</strong></span><span class="dpr-home-dashboard-tag">agent <strong>4</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>6</strong></span><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>3</strong></span></div>
 </section>
 </div>
 
