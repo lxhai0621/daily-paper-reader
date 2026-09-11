@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-10</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-11</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 23 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-10 22:30:52 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-11 21:58:53 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -63,8 +63,8 @@
   </div>
   <div class="dpr-home-dashboard-body">
 <p>今日共生成 23 篇推荐（精读 9 篇，速读 14 篇）</p>
-<p>精读：《APEx: Distillation of Agent Procedural Experience for Adaptive Deep Research Question Answering》（9.0/10）, 《NS-ST-GraphRAG: Neuro-Symbolic Spatio-Temporal GraphRAG for Literary Knowledge Processing》（9.0/10）</p>
-<p>速读：《MASkills: Continual Skills Optimization for Multi-Agent LLM Systems》（8.0/10）, 《NE-R1: Enhancing Named Entity Recognition Model via Reinforcement Learning》（8.0/10）, 《ViSAR: Training-Free Adaptive-$k$ Retrieval for Visual Document Question Answering》（8.0/10）</p>
+<p>精读：《VikingRAG: Accurate and Token-efficient Retrieval-augmented Generation over Structured Documents》（9.0/10）, 《PAGR: Proof-Carrying Algebraic-Geometric Retrieval: A Quiver-, Provenance-, and Sheaf-Theoretic Framework for Grounded LLM Retrieval》（8.0/10）</p>
+<p>速读：《ConvMem: Convolutional Memory for Long-Context Reasoning》（8.0/10）, 《MOSAIC: Query-Aware Exploration Policy Adaptation for GraphRAG》（8.0/10）, 《REVA: Reusable Evidence View Aggregation for Context-Efficient RAG Serving》（8.0/10）</p>
 <p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
@@ -77,9 +77,9 @@
     <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="APEx: Distillation of Agent Procedural Experience for Adaptive Deep Research Question Answering">APEx: Distillation of Agent Procedural Experience for Adaptive Deep Research Question Answering</span></li><li><span class="dpr-home-dashboard-paper-title" title="NS-ST-GraphRAG: Neuro-Symbolic Spatio-Temporal GraphRAG for Literary Knowledge Processing">NS-ST-GraphRAG: Neuro-Symbolic Spatio-Temporal GraphRAG for Literary Knowledge Processing</span></li><li><span class="dpr-home-dashboard-paper-title" title="Fine-Tuning a KV Cache Concatenation-Aware Model or Recomputing KV Caches? Why Not Both?">Fine-Tuning a KV Cache Concatenation-Aware Model or Recomputing KV Caches? Why Not Both?</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="VikingRAG: Accurate and Token-efficient Retrieval-augmented Generation over Structured Documents">VikingRAG: Accurate and Token-efficient Retrieval-augmented Generation over Structured Documents</span></li><li><span class="dpr-home-dashboard-paper-title" title="PAGR: Proof-Carrying Algebraic-Geometric Retrieval: A Quiver-, Provenance-, and Sheaf-Theoretic Framework for Grounded LLM Retrieval">PAGR: Proof-Carrying Algebraic-Geometric Retrieval: A Quiver-, Provenance-, and Sheaf-Theoretic Framework for Grounded LLM Retrieval</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Hierarchical Consistency Framework for Auditing Retrieval-Augmented Generation Systems">A Hierarchical Consistency Framework for Auditing Retrieval-Augmented Generation Systems</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>6</strong></span><span class="dpr-home-dashboard-tag">agent <strong>3</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -90,9 +90,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MASkills: Continual Skills Optimization for Multi-Agent LLM Systems">MASkills: Continual Skills Optimization for Multi-Agent LLM Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="NE-R1: Enhancing Named Entity Recognition Model via Reinforcement Learning">NE-R1: Enhancing Named Entity Recognition Model via Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="ViSAR: Training-Free Adaptive-$k$ Retrieval for Visual Document Question Answering">ViSAR: Training-Free Adaptive-$k$ Retrieval for Visual Document Question Answering</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ConvMem: Convolutional Memory for Long-Context Reasoning">ConvMem: Convolutional Memory for Long-Context Reasoning</span></li><li><span class="dpr-home-dashboard-paper-title" title="MOSAIC: Query-Aware Exploration Policy Adaptation for GraphRAG">MOSAIC: Query-Aware Exploration Policy Adaptation for GraphRAG</span></li><li><span class="dpr-home-dashboard-paper-title" title="REVA: Reusable Evidence View Aggregation for Context-Efficient RAG Serving">REVA: Reusable Evidence View Aggregation for Context-Efficient RAG Serving</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>6</strong></span><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>12</strong></span><span class="dpr-home-dashboard-tag">agent <strong>2</strong></span></div>
 </section>
 </div>
 
