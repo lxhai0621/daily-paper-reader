@@ -41,7 +41,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-11</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-12</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 23 篇</strong>
@@ -51,7 +51,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-11 21:58:53 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-12 21:24:41 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,10 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 23 篇推荐（精读 9 篇，速读 14 篇）</p>
-<p>精读：《VikingRAG: Accurate and Token-efficient Retrieval-augmented Generation over Structured Documents》（9.0/10）, 《PAGR: Proof-Carrying Algebraic-Geometric Retrieval: A Quiver-, Provenance-, and Sheaf-Theoretic Framework for Grounded LLM Retrieval》（8.0/10）</p>
-<p>速读：《ConvMem: Convolutional Memory for Long-Context Reasoning》（8.0/10）, 《MOSAIC: Query-Aware Exploration Policy Adaptation for GraphRAG》（8.0/10）, 《REVA: Reusable Evidence View Aggregation for Context-Efficient RAG Serving》（8.0/10）</p>
-<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
+<p>今日23篇：精读9篇、速读14篇，焦点聚向自进化智能体一致性与Agentic RAG检索。</p>
+<p>最值得看的是“智能体不跑偏”的自进化一致性方法，以及Q2D-Web式Agentic RAG检索基准和TimelyRAG时效检索。</p>
+<p>普通读者可先读两篇精读，再按场景速览TimelyRAG或隐私向量检索</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -77,9 +76,9 @@
     <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="VikingRAG: Accurate and Token-efficient Retrieval-augmented Generation over Structured Documents">VikingRAG: Accurate and Token-efficient Retrieval-augmented Generation over Structured Documents</span></li><li><span class="dpr-home-dashboard-paper-title" title="PAGR: Proof-Carrying Algebraic-Geometric Retrieval: A Quiver-, Provenance-, and Sheaf-Theoretic Framework for Grounded LLM Retrieval">PAGR: Proof-Carrying Algebraic-Geometric Retrieval: A Quiver-, Provenance-, and Sheaf-Theoretic Framework for Grounded LLM Retrieval</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Hierarchical Consistency Framework for Auditing Retrieval-Augmented Generation Systems">A Hierarchical Consistency Framework for Auditing Retrieval-Augmented Generation Systems</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Closing the Consistency Gap: Self-Evolving Agents That Learn to Stay on Course">Closing the Consistency Gap: Self-Evolving Agents That Learn to Stay on Course</span></li><li><span class="dpr-home-dashboard-paper-title" title="Q2D-Web: A Large-Scale Benchmark for Retrieval in Agentic RAG Systems">Q2D-Web: A Large-Scale Benchmark for Retrieval in Agentic RAG Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Procedural Graphs: Self-Evolving Execution Structures for LLM Agents">Procedural Graphs: Self-Evolving Execution Structures for LLM Agents</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>6</strong></span><span class="dpr-home-dashboard-tag">agent <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>4</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>4</strong></span><span class="dpr-home-dashboard-tag">cmv <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -90,9 +89,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ConvMem: Convolutional Memory for Long-Context Reasoning">ConvMem: Convolutional Memory for Long-Context Reasoning</span></li><li><span class="dpr-home-dashboard-paper-title" title="MOSAIC: Query-Aware Exploration Policy Adaptation for GraphRAG">MOSAIC: Query-Aware Exploration Policy Adaptation for GraphRAG</span></li><li><span class="dpr-home-dashboard-paper-title" title="REVA: Reusable Evidence View Aggregation for Context-Efficient RAG Serving">REVA: Reusable Evidence View Aggregation for Context-Efficient RAG Serving</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TimelyRAG: Semantic-Temporal Hybrid Retrieval for Time-Critical Question Answering in Overlapping-Evolving Documents">TimelyRAG: Semantic-Temporal Hybrid Retrieval for Time-Critical Question Answering in Overlapping-Evolving Documents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Shadow Queries for Private Retrieval in Vector Databases">Shadow Queries for Private Retrieval in Vector Databases</span></li><li><span class="dpr-home-dashboard-paper-title" title="From Language Models to World-Acting Systems: Progress and Limits of Agentic AI across Digital, Social, Virtual, and Physical Environments">From Language Models to World-Acting Systems: Progress and Limits of Agentic AI across Digital, Social, Virtual, and Physical Environments</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>12</strong></span><span class="dpr-home-dashboard-tag">agent <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>11</strong></span><span class="dpr-home-dashboard-tag">agent <strong>2</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>1</strong></span></div>
 </section>
 </div>
 

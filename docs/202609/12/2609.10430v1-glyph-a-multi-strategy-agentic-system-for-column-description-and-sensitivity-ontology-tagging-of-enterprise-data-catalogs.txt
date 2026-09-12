@@ -1,0 +1,322 @@
+Title: Glyph: A Multi-Strategy Agentic System for Column Description and Sensitivity-Ontology Tagging of Enterprise Data Catalogs
+
+URL Source: https://arxiv.org/pdf/2609.10430v1
+
+Published Time: Thu, 10 Sep 2026 01:32:45 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# Glyph: A Multi-Strategy Agentic System for Column Description and Sensitivity-Ontology Tagging of Enterprise Data Catalogs 
+
+# Kostia Kudriavtsev, Parvez Rafi, Sha Sundaram 
+
+Apple Seattle, WA and Cupertino, CA, USA k_kudriavtsev@apple.com, p_rafi@apple.com, shas@apple.com 
+
+Abstract 
+
+Enterprise data lakes accumulate tables faster than human stewards can document or classify them, leaving columns with missing descriptions and unassigned governance labels. This documentation debt undermines data discovery, access control, and regulatory compliance. We present Glyph , a pro-duction system that frames two coupled problems, column 
+
+description generation and column type annotation for data classification , as cooperating LLM agents orchestrated as stateful graphs. The Descriptor grounds generation in the pipeline source code that produces each column, retrieved on demand from an enterprise GitHub via a reasoning–acting tool loop (active Retrieval-Augmented Generation). The Tag-ger assigns labels from a governed 275-leaf Data Classifica-tion Ontology by running three complementary strategies in parallel (a description tagger, a line-of-business regex tagger, and a metadata tagger backed by a fine-tuned contrastive en-coder over a vector database), then fuses their ranked outputs with Reciprocal Rank Fusion (RRF). We fine-tune a 6-layer MiniLM metadata encoder with an in-batch contrastive objec-tive, lifting same-tag retrieval on an in-distribution held-out split from NDCG@10 0.55 to 0.92 (MAP@100 0.19 → 0.90 )relative to the stock base encoder. We report end-to-end multi-label tagging quality under a recall-weighted F2 objective across three evaluation groups, an ablation isolating each strategy and the RRF fusion, and the engineering decisions that distinguish Glyph from prior column-type-annotation work and from commercial value/regex sensitivity scanners: value-free and code-grounded design, per-tag provenance, and graceful degradation. Together these make multi-agent LLM cataloging auditable and operable as a production service. 
+
+# 1 Introduction 
+
+Modern analytics organizations operate data catalogs con-taining tens of thousands of tables and millions of columns. Two questions must be answered for every column before the data can be safely used: what the column means (documen-tation) and what category of data it holds (classification and governance). In practice both are answered manually, if at all: descriptions are missing or stale, and sensitive-data tag-ging, needed for access control and privacy compliance, lags discovery by months. The cost is concrete: undocumented 
+
+Copyright © 2027, Association for the Advancement of Artificial Intelligence (www.aaai.org). All rights reserved. 
+
+personally identifiable information (PII) is discovered reac-tively after incidents rather than proactively, and new engi-neers cannot reason about datasets they did not build. One central challenge is the scale of dataset tagging. In practice, datasets are not confined to a single storage tech-nology: the same logical catalog may span Apache Ice-berg tables, relational databases (RDBMS), and Cassandra column-family stores. Consistently tagging metadata across these heterogeneous backends, at the volume encountered in a production environment, is intractable by hand. A sin-gle organization’s production catalog spans ∼3.4M columns across ∼98,000 tables, distributed over four lines of business and the three storage backends above. At this scale, manual annotation is not merely slow but economically infeasible: even a highly optimistic rate of one column per minute would require roughly 30 person-years of expert effort for this cat-alog alone, and the catalog drifts faster than any team can keep pace. This combination of volume and backend hetero-geneity , neither of which is addressed by point solutions tied to one storage engine, is precisely what motivates an auto-mated, learning-based approach: only a system that general-izes across backends and improves without per-table human labeling can bring documentation and sensitivity tagging to catalog scale. The second task is an instance of column type annotation (CTA) , the assignment of a semantic label to a column. It is a problem studied for over fifteen years, from joint graphical models over web tables (Limaye, Sarawagi, and Chakrabarti 2010) through supervised deep classifiers (Hulsebos et al. 2019; Zhang et al. 2020), pre-trained table encoders (Suhara et al. 2022; Deng et al. 2021), and, most recently, large lan-guage models (Korini and Bizer 2023; Feuer et al. 2024; Kayali et al. 2024). Glyph differs from this lineage in three ways that define its contribution. First, its target is not an open-domain type vocabulary (DBpedia/Schema.org) but a 
+
+governed enterprise sensitivity ontology : 275 leaf anno-tations organized by and sensitivity level, where the dom-inant class (internal non-sensitive) covers roughly 72% of columns. Second, Glyph is privacy-preserving by design :it never reads cell values. The encoder sees only the structural key catalog.database.table.column , and the De-scriptor grounds in the producing source code rather than the data. Reasoning about sensitive tables without ever access-ing their data is a first-class capability, not a limitation: it arXiv:2609.10430v1 [cs.MA] 9 Sep 2026 satisfies enterprise privacy and data-access policy by con-struction. Third, Glyph couples heterogeneous-strategy rank fusion with an LLM-as-Judge self-refinement loop and per-tag provenance , so every label carries the source, score, and reasoning behind it, a finer-grained provenance than the rule logs of commercial scanners or the bare labels of academic CTA systems. Four requirements shaped the design and distinguish Glyph from a naive “ask the model” prototype: (1) ground-ing over guessing . Ambiguous names, such as a column 
+
+name that may denote either a PII-sensitive person name or a misnomer for a movie title, must be resolved from authoritative evidence rather than parametric guesses. (2) 
+
+Defense in depth . Since no single signal suffices, Glyph combines descriptions, structural metadata, historical assign-ments, and naming conventions in a principled way. (3) Mea-surable, self-improving quality . Output is verified automat-ically against an explicit bar and refined when it falls short. (4) Production discipline : stateless horizontal scaling, de-terministic decoding, per-request authentication, structured tracing, and reproducible training. 
+
+Contributions. (a) A two-agent architecture that separates 
+
+meaning generation (Descriptor) from category assignment (Tagger), connected by a shared state and ontology, and, to our knowledge, the first published account of multi-strategy CTA targeting a governed enterprise sensitivity on-tology with sensitivity levels. (b) A multi-strategy tagger that fuses dense retrieval, LLM reasoning, and rule-based sig-nals with Reciprocal Rank Fusion (RRF) (Cormack, Clarke, and Büttcher 2009) and a candidate-constrained LLM re-ranker, with full per-tag provenance. (c) A contrastive fine-tuning recipe (Henderson et al. 2017) for a metadata-specific encoder, improving in-distribution candidate recall of the metadata tagger (NDCG@10 0.55 → 0.92 , MAP@100 
+
+0.19 → 0.90 ) on a per-tag, column-level held-out split of the training corpus. (d) An end-to-end evaluation methodol-ogy built on steward-curated, per-line-of-business sets under strict and expanding regimes, plus a strategy ablation, and a documented production stack that turns the prototype into a reliable service. 
+
+# 2 Related Work 
+
+Glyph sits at the intersection of two literatures: se-mantic column type annotation and enterprise meta-data/governance catalogs , which we survey in turn. 
+
+## 2.1 Semantic Column Type Annotation 
+
+Classical and supervised CTA. Assigning a category la-bel to a column was pioneered by Limaye, Sarawagi, and Chakrabarti (2010), whose graphical model jointly anno-tates cells, column types, and inter-column relations against a knowledge base via collective inference; T2K Match (Ritze, Lehmberg, and Bizer 2015) is the reference unsupervised matcher to DBpedia. Sherlock (Hulsebos et al. 2019) re-framed CTA as supervised learning over character-, word-, and statistics-level features of column values , predicting one of 78 types at support-weighted F1 ≈ 0.89 on VizNet, and Sato (Zhang et al. 2020) added table context and a CRF for ≈ 0.92 . Pham et al. (2016) rank candidate labels by similarity of an unseen column to labeled examples, and Meimei (Takeoka et al. 2019) is one of the few classical methods that is explicitly multi-label per column. 
+
+Pre-trained table encoders. TURL (Deng et al. 2021), TaBERT (Yin et al. 2020), and TABBIE (Iida et al. 2021) pre-train structure-aware Transformers over web tables; Do-duo (Suhara et al. 2022) serializes an entire table and fine-tunes a single BERT in a multi-task setup to predict col-umn types and relations, reaching ≈ 0.92 micro-F1 on VizNet and remaining the canonical fine-tuned baseline. RECA (Sun, Xin, and Chen 2023) enriches a target column with related tables retrieved by entity-schema matching, and Watchog (Miao and Wang 2024) pre-trains column represen-tations contrastively for label efficiency. Every system in this family consumes cell values , though Doduo and TURL read headers alongside them. 
+
+LLM-era CTA. Korini and Bizer (2023) frame CTA as text classification and prompt ChatGPT, finding that few-shot, label-narrowing prompts approach fine-tuned baselines on SOTAB. ArcheType (Feuer et al. 2024) maps free-form LLM output back to a fixed vocabulary by label remapping , reach-ing near-SOTA with open models. CHORUS (Kayali et al. 2024) shows one foundation model can subsume table-class detection, CTA, and join discovery via prompt assembly, and RACOON (Wei, Xiao, and Balazinska 2024) retrieval-augments LLM CTA with a knowledge graph. Table-GPT (Li et al. 2024) and TableLlama (Zhang et al. 2024) instead 
+
+instruction-tune LLMs for table tasks. 
+
+How Glyph differs. Glyph’s metadata tagger (Section 4.3.3) descends from the similarity-to-labeled-examples line but uses a fine-tuned neural encoder and ANN search over a curated corpus rather than hand-engineered features; its regex tagger (Section 4.3.2) is a T2K-style matcher (Ritze, Lehmberg, and Bizer 2015); and its description tagger (Sec-tion 4.3.1) is a retrieval-constrained, candidate-validated variant of single-prompt LLM CTA (Korini and Bizer 2023) with ArcheType-style label grounding (Feuer et al. 2024). Three differences are structural. Generation is constrained to 
+
+retrieved ontology candidates rather than remapped post hoc. Three heterogeneous strategies are fused by RRF rather than one prompt being trusted, a per-column trade against the collective inference of Limaye, Sarawagi, and Chakrabarti (2010) and Sato (Zhang et al. 2020) that we revisit in Sec-tion 6. And none of these systems targets a governed sensi-tivity taxonomy from metadata alone, without cell values. 
+
+## 2.2 Benchmarks 
+
+The dominant CTA benchmarks measure open-domain types: VizNet (Hu et al. 2019) supplies the 78-type Sher-lock/Sato corpus; SOTAB (Korini, Peeters, and Bizer 2022) labels web tables with 91 Schema.org types; Git-Tables (Hulsebos, Demiralp, and Groth 2023) annotates 
+
+∼1M repository-mined tables and documents that CTA ac-curacy drops on realistic relational tables; SemTab (Jiménez-Ruiz et al. 2019) runs the annual CEA/CTA/CPA challenge against DBpedia/Wikidata. None measures a
+
+sensitivity/data-classification taxonomy, none is multi-label in Glyph’s sense, and all treat cell values as the primary sig-nal even where headers are present. Because SOTAB and GitTables do ship column headers, they remain a usable out-of-distribution probe for Glyph’s metadata-only encoder (Section 7) — concrete near-term work. 
+
+## 2.3 Industrial Catalogs and Data-Security Posture 
+
+Goods (Halevy et al. 2016) is the canonical account of au-tomatic enterprise metadata enrichment at scale, crawling billions of datasets to infer schema, provenance, and sum-maries, but not LLM-generated descriptions or governed sensitivity labels. Aurum (Castro Fernández et al. 2018) and Table-Union search (Nargesian et al. 2018) link columns by content signatures for discovery ; Glyph’s fine-tuned en-coder plus ANN search is the neural analogue used for 
+
+tagging rather than join discovery. Open catalogs such as DataHub (LinkedIn 2019) and Amundsen (Grover et al. 2020) store column tags and lineage but rely on rule/keyword classifiers and human-authored descriptions, and Apache At-las (Apache Software Foundation 2015) propagates sensi-tivity classifications along lineage without inferring the seed label. Commercial governance and value-scanning tools (Mi-crosoft 2021; Informatica 2018; Microsoft 2018; Google Cloud 2017; BigID, Inc. 2016; Immuta, Inc. 2015) auto-apply classifications predominantly via regex, dictionaries, and value-pattern matching over cell values. Glyph is the enrichment engine that produces the descriptions and seed labels those catalogs store and propagate; by reasoning from the producing source code and structural metadata it can clas-sify columns whose sensitivity is contextual rather than format-detectable — a generic recommendations col-umn holding a list of recommended apps, which a value scanner sees only as high-entropy noise. 
+
+# 3 Problem Formulation and the Data Classification Ontology 
+
+We formalize the two problems Glyph solves, description generation and multi-label sensitivity classification, and then describe the governed ontology that makes the classification task fundamentally unlike open-domain column-type anno-tation. 
+
+Task. Let a column be identified by its metadata key 
+
+x = ⟨LOB , database , table , column ⟩ (1) and (optionally) a natural-language description dx, where LOB stands for line of business (a representation of the com-pany’s enterprise hierarchy). Glyph solves two problems: (i) 
+
+description generation , producing dx from authoritative ev-idence; and (ii) multi-label classification (Tsoumakas and Katakis 2007), assigning a subset Yx ⊆ O of an ontology 
+
+O of sensitivity annotations, each with a confidence and a justification. 
+
+The ontology. O is the Data Classification Ontology , a gov-erned taxonomy of 275 leaf annotations (e.g., USER_NAME ,
+
+USER_ID , EMAIL_ADDR )1 grouped under classification categories. The categories form a hierarchy from generic (e.g., the PII category) to specific (e.g., the EMAIL_ADDR 
+
+leaf annotation). Each annotation additionally carries several dimensions, such as a sensitivity-level scale, so the ontology encodes not only what a column is but how sensitive it is and 
+
+to whom .This makes Glyph’s target fundamentally unlike the open-domain type vocabularies of VizNet (Hu et al. 2019), SOTAB (Korini, Peeters, and Bizer 2022), GitTables (Hulse-bos, Demiralp, and Groth 2023), and SemTab (Jiménez-Ruiz et al. 2019): the labels are governance decisions, the task is multi-label, and the distribution is severely skewed. The 
+
+internal non-sensitive class ( NON_SENSITIVE ) alone ac-counts for ≈ 72% of columns. This imbalance is the central learning challenge and motivates both class-balanced train-ing and an evaluation that does not let the majority class mask minority-class errors (Sections 4.4 and 5). 
+
+Why values are off-limits. Reading cell values to clas-sify enterprise columns is, for many of the most sensitive datasets, precisely the action governance forbids before clas-sification exists, a chicken-and-egg constraint absent from value-driven CTA (Hulsebos et al. 2019; Zhang et al. 2020; Suhara et al. 2022). Glyph therefore operates on metadata and code (which engineers may read) rather than data, trading a signal for deployability on restricted-access tables where Sherlock/Doduo-style scanners cannot run. 
+
+# 4 Approach 
+
+## 4.1 System Overview 
+
+Glyph is a graph-structured agent application: each agent is a directed graph of nodes (pure functions over a typed state) connected by ordinary and conditional edges, built with LangGraph (Chase and LangChain Inc. 2024). Nodes are produced by a builder pattern that injects dependencies (catalog client, LLM handles, search services) through an 
+
+ApplicationConfig , decoupling node logic from I/O. State is a Pydantic (Colvin et al. 2023) model, validated at every hop, and configuration is layered in three tiers (en-vironment defaults → per-deployment AgentConfig →
+
+per-request HyperParams ). Fig. 1 depicts the two agents and their nodes. The two agents are independently deployable REST ser-vices but compose naturally: the Descriptor’s generated de-scriptions are the ideal input to the description tagger. Both decode at temperature 0.0 for determinism, cap token usage, and create LLM handles per request so model choice and credentials can vary by call. Glyph is assembled from components whose behavior is well characterized — active retrieval-augmented generation, contrastive dense retrieval, multi-label classification, rank fu-sion, and LLM-as-Judge critique. This is a deliberate choice for a governed sensitivity ontology, where auditable com-ponents with known failure modes matter more than novel          
+
+> 1Ontology tag names shown throughout this paper (e.g.,
+> USER_ID ,EMAIL_ADDR ,NON_SENSITIVE ) are illustrative placeholders; the production Data Classification Ontology uses dif-ferent internal codes, which are withheld for confidentiality.
+
+Descriptor     
+
+> fetch_schema analyze_batch
+> GitHub RAG grade_results
+> LLM-as-Judge generate_dataset_ description format_output
+> retry w/ feedback
+
+Tagger     
+
+> prepare_columns llm_desc_tagger
+> description-based
+> regex_tagger
+> rule-based
+> llm_metadata_tagger
+> metadata-only
+> evaluate_metrics
+> LLM-as-Judge
+> merge_all_tags
+> RRF k= 60 tag_normalizer
+> tier-weighted format_output
+> retry failed cols
+
+Figure 1: Glyph as two independently deployable LangGraph agents. The Descriptor grounds column descriptions in the pro-ducing source code via an active-RAG tool loop, with an LLM-as-Judge refinement cycle. The Tagger runs three complementary strategies in parallel and fuses their ranked tag lists with Reciprocal Rank Fusion ( k = 60 ), then re-scores them by sensitivity tier; a separate judge refines the description tagger. Orange boxes are LLM-as-Judge stages, grey boxes are I/O. machinery. The contribution is the composition: which sig-nals are fused, how they are validated against the ontology, and what it takes to serve them. Each mechanism is described below with its lineage cited in place. 
+
+## 4.2 The Descriptor Agent 
+
+The Descriptor answers “what does this column mean?” as a four-stage pipeline (top panel of Fig. 1). 
+
+Schema Discovery. fetch_schema queries the enterprise data registry (the organization’s internal metadata catalog) to collect table details: column names, types, existing descrip-tions, etc. 
+
+Source-grounded generation (RAG). analyze_batch 
+
+is the core. To avoid the latency and inconsistency of per-column calls, all columns are analyzed in a single LLM invocation, in batches of at most 50 columns. The model is given the schema and a tool , GitHub Enterprise code search, that it may call autonomously; the evidence is code, not data 
+
+— the Descriptor never reads column values. This realizes active RAG (Lewis et al. 2020; Yao et al. 2023), with the in-terleaved reasoning of chain-of-thought prompting (Wei et al. 2022) and in contrast to a fixed dense retriever (Karpukhin et al. 2020): the LLM decides which queries to run (a de-fault budget of 3 tool calls per column, capped per batch with forced finalization), reads context around each match, and grounds descriptions in the application code that actu-ally produces each column. 2 A heuristic confidence score is assigned to each description from observable signals (length, presence of technical and business terms, whether the pro-ducing job was identified, and PII awareness), capped at 1.0. 
+
+PII flagging. A first-class objective: columns such as 
+
+user_id are prefixed with explicit PII warnings, and the autograder scores PII awareness directly. Whereas value-level scanners such as Presidio (Microsoft 2018) and Cloud DLP (Google Cloud 2017) detect PII from recognizable value formats , Glyph reasons about sensitivity from the code and metadata , catching identifiers whose values are opaque hashes that format detectors miss. 
+
+Dataset description. A generate_dataset_ description node synthesizes a table-level sum-mary of business purpose from the per-column results, giving downstream consumers a self-documenting catalog entry. 
+
+Grading and refinement. When enabled, 
+
+grade_results invokes a judge model over the descriptions in batches. The judge scores four criteria — plausibility, specificity, completeness, and PII awareness — aggregated with fixed weights ( 0.35 , 0.25 , 0.25 , 0.15 ), and is configured by default to be a different model family from the generator, since LLM judges exhibit self-enhancement bias 
+
+> 2Code search is rate-limit aware: a proactive 2 s pause after 25 calls in a 60 s window, plus exponential back-off (30 s initial, doubling, up to 5 attempts).
+
+when scoring their own output (Zheng et al. 2023). Columns that fall below threshold are returned to analyze_batch 
+
+with the judge’s per-criterion feedback; on retry the agent re-searches GitHub for the worst-scoring columns. The loop runs up to a small fixed cap (2 passes by default). 
+
+## 4.3 The Tagger Agent 
+
+The Tagger answers “what category of data is this?” by assigning ontology tags (e.g., USER_ID , EMAIL_ADDR )with confidence scores and reasoning. Its defining feature is multi-strategy parallelism with principled fusion : three strategies run concurrently over the columns (each fanned out into worker batches), and their ranked tag lists are merged by a dedicated fusion node (bottom panel of Fig. 1). The three are chosen so that their failure modes are uncorrelated, allowing fusion to reconcile them. 
+
+4.3.1 Description Tagger The description tagger works from the meaning of a column and is retrieval-constrained : for each column it forms the query "{name}: {description}" (where the description is the column’s human-authored entry in the enterprise data registry when one exists, and the column name alone otherwise), retrieves the most similar ontology annotations from semantic search above a cosine threshold C, and asks the LLM to select and rank the best tags from those candidates , with reasoning. Be-cause candidates are constrained to real ontology entries and validated afterward, hallucinated tags are rejected. This is a retrieval-constrained, candidate-validated variant of single-prompt LLM CTA (Korini and Bizer 2023) with ArcheType-style label grounding (Feuer et al. 2024); constraining gener-ation to retrieved candidates (rather than ArcheType’s post-hoc remapping) is consistent with RACOON’s finding that retrieval improves LLM CTA (Wei, Xiao, and Balazinska 2024). The ontology annotations (for example, EMAIL_ADDR :
+
+an electronic mail address, typically written as user@domain ) are rich natural-language records, so this search uses a general-purpose 
+
+all-MiniLM-L6-v2 (Reimers and Gurevych 2019; Wang et al. 2020) (384-dim) sentence encoder as-is. 
+
+Grading and refinement. When grading is enabled, an 
+
+evaluate_metrics node scores the description tagger’s tags with a combination of zero-cost deterministic metrics and a batched LLM-as-Judge (Zheng et al. 2023); columns whose tags fall below the configured threshold are returned to 
+
+llm_desc_tagger for another attempt, a bounded Self-Refine (Madaan et al. 2023; Shinn et al. 2023) loop. The refined output then joins the regex and metadata taggers at fusion (Section 4.3.4); only the description tagger passes through this judge. 
+
+4.3.2 Regex Tagger The regex tagger encodes institu-tional knowledge by applying domain expert defined line-of-business-specific pattern rules over column names; for example, a column email has a hardcoded rule that assigns the tag EMAIL_ADDR . The strategy provides high-precision anchors in the T2K matching lineage (Ritze, Lehmberg, and Bizer 2015) that complement the learned signals. 
+
+4.3.3 Metadata Tagger The metadata tagger works from structural metadata alone, the fully qualified key 
+
+catalog.database.table.column , without need-ing a human description, a metadata-only descendant of value-feature classifiers (Hulsebos et al. 2019) and similarity-to-example rankers (Pham et al. 2016). It is itself a RAG system (Lewis et al. 2020): the metadata key is encoded with a fine-tuned sentence encoder (Section 4.4) and searched against an exact inner-product (flat) vector index of veri-fied training-corpus assignments built from human labeled corpus. Vectors are L2-normalized so inner product equals exact cosine similarity; candidates above a configured simi-larity S1 carry the tags of their nearest historical neighbors. Long, deeply nested types are truncated to 200 characters at clean delimiter boundaries to match training-time formatting and reduce embedding noise. A worker then presents the retrieved candidates, with inline similarity attribution, to the LLM, which selects and ranks the final tags from these candidates. Each se-lected tag carries a reasoning record noting exactly which source contributed at what confidence (e.g., [sources: ann=0.92] ). To our knowledge, this per-tag, multi-source provenance is absent from prior CTA systems (Hulsebos et al. 2019; Zhang et al. 2020; Suhara et al. 2022; Deng et al. 2021; Yin et al. 2020; Iida et al. 2021; Sun, Xin, and Chen 2023; Miao and Wang 2024; Korini and Bizer 2023; Feuer et al. 2024; Kayali et al. 2024; Wei, Xiao, and Balazinska 2024; Li et al. 2024; Zhang et al. 2024), which emit labels without source attribution, and finer-grained than the rule-hit logs of commercial scanners (Microsoft 2021; Informatica 2018; Microsoft 2018; Google Cloud 2017; BigID, Inc. 2016; Im-muta, Inc. 2015). 
+
+4.3.4 Cross-Strategy Fusion with Reciprocal Rank Fu-sion The three strategies produce independent ranked lists per column on incomparable score scales (an ANN cosine, an LLM confidence, a binary rule hit). To combine them without calibration, merge_all_tags applies Recipro-cal Rank Fusion (Cormack, Clarke, and Büttcher 2009), which needs no score calibration — and which, unlike self-consistency ensembling (Wang et al. 2023), fuses ranked lists 
+
+rather than voting over samples. For a tag appearing at rank 
+
+ri (1-indexed) in each active source’s list, 
+
+rrf( t) = X   
+
+> i∈lists containing t
+
+1
+
+k + ri
+
+, k = 60 ,
+
+normalized by the theoretical maximum nactive /(k + 1) (the score of a tag ranked #1 by every active source), yield-ing a confidence in [0 , 1] that equals 1.0 only under unan-imous top agreement. When several strategies nominate the same tag, a fixed priority order ( llm_desc_tagger >
+
+llm_metadata_tagger > regex_tagger ) selects whose provenance fields (reasoning, ontology, grades) are inherited, while the confidence is the cross-strategy RRF score. The fused list is deduplicated by annotation name, with the priority order above deciding which source’s prove-nance is retained, and sorted with a deterministic tie-break on the annotation name. Finally, tag_normalizer re-scores the fused list Source INTERNAL COUNTRY NON_SENSITIVE        
+
+> Regex tagger ✓
+> Description tagger ✓
+> Metadata tagger ✓✓
+> RRF score 0.333 0.667 0.328
+
+Table 1: Tagger votes and fused confidence for a country 
+
+column — “The 2-letter ISO 3166-1 alpha-2 country code.” The fused row is the normalized RRF confidence (k = 60 ); the metadata tagger ranks COUNTRY above 
+
+NON_SENSITIVE .against the governed sensitivity tiers of Section 3: it blends the RRF confidence c with the annotation’s ontology tier weight w as α c + (1 − α) w, where untiered and higher-sensitivity annotations are unweighted ( w = 1 .0) and lower-sensitivity tiers (levels 2, 3, 4) carry weights 0.75 , 0.5, 0.25 ,respectively. Tags below a minimum normalized score are dropped and the remainder re-sorted, so the final ranking re-flects both cross-strategy agreement and governed sensitivity level. Table 1 works this scoring through for a single column. 
+
+## 4.4 Domain-Specific Embedding Fine-Tuning 
+
+The metadata tagger’s ANN search (Section 4.3.3) is the one component of the Tagger that a general-purpose en-coder cannot serve well. Its queries are metadata keys that are terse, abbreviation-laden, and non-linguistic, and a stock model does not know that uat.core_db.users.uid 
+
+and prod.analytics.events.user_id denote the same concept; abbreviations, catalog prefixes, and type vari-ants are opaque to it, and the off-the-shelf model leaves sub-stantial same-tag recall unrealized in our training-corpus re-trieval diagnostic (MAP@100 ≈ 0.19 ; Table 2, pre-tuning). We therefore fine-tune a compact all-MiniLM-L6-v2 
+
+encoder (a 6-layer distillation of BERT (Devlin et al. 2019), a Transformer (Vaswani et al. 2017) with 384 hidden units, 
+
+∼90 MB) with an in-batch contrastive objective. This en-coder is specific to the metadata index; the description tag-ger’s ontology search uses a stock encoder unchanged (Sec-tion 4.3.1). 
+
+Training data. A training corpus of 
+
+metadata_key → tags assignments is extracted from a production system and represents already tagged and verified assignments. Pairs are constructed within tag groups: any two columns sharing a tag form an (anchor, pos-itive) pair. Because a few tags (notably NON_SENSITIVE ,
+
+≈72%) dominate, we cap pairs per tag (3 000 for the reported encoder) and require a minimum group size, yielding 70 948 
+
+balanced training pairs. 
+
+Objective. We use MultipleNegativesRanking Loss (Henderson et al. 2017) (scale 20, cosine similar-ity): for each (anchor, positive) pair, all other positives in the batch act as negatives, pulling same-tag columns to-gether and pushing different-tag columns apart — the in-batch-negatives recipe that also underpins dense passage re-trieval (Karpukhin et al. 2020). 
+
+Metric Pre-tuning Post-tuning ∆
+
+NDCG@10 0.5497 0.9225 +0 .3728 
+
+MRR@10 0.7875 0.9469 +0 .1594 
+
+Accuracy@1 0.7138 0.9229 +0 .2091 
+
+Accuracy@5 0.8812 0.9797 +0 .0986 
+
+MAP@100 0.1888 0.9009 +0 .7121 
+
+Table 2: In-distribution retrieval quality of the metadata candidate-generation encoder on a per-tag, column-level held-out split of the training corpus, before and after con-trastive fine-tuning. These are retrieval , not tagging , metrics. 
+
+Evaluation. A per-tag random 10% column-level held-out query set, with each tag’s contribution capped at 500 keys to bound memory (9,242 queries against an 83,229-entry corpus), is scored with an Information-Retrieval evalua-tor (Reimers and Gurevych 2019; Järvelin and Kekäläinen 2002) using NDCG, MRR, MAP, and Accuracy@k. Be-cause the hold-out is at column granularity, columns from the same table may appear in both the query set and the corpus, so these numbers are an in-distribution upper bound 
+
+that does not control for within-table leakage (Kaufman et al. 2012). Table-disjoint splitting, at (catalog, db, table) gran-ularity, with floors of ≥ 30 test / ≥ 90 train samples per tag, is applied separately to the training corpus, to index the vector-search corpus; the encoder fine-tuning itself uses the column-level hold-out described above. Table 2 quantifies how well the encoder surfaces same-tag historical neighbors and therefore upper-bounds the candidate recall of the meta-data tagger; end-to-end tagging accuracy on unseen tables (Section 5) and out-of-distribution generalization (Section 7) are addressed separately. The relevant set for a query is all same-tag corpus entries, so its size varies enormously by tag: huge for NON_SENSITIVE , a handful for rare tags. This is why recall@k is small while accuracy@k stays high ( ≥ 0.92 
+
+post-tuning). MAP@100 is the most informative line because it rewards recovering the full same-tag pool regardless of its size: its +0 .71 gain shows the model surfaces far more of the relevant neighbors that the metadata tagger’s LLM then re-ranks. Both the encoder and the vector index are versioned and published to S3-compatible object storage under times-tamped paths; the vector index is rebuilt from the same train-ing corpus (embedding the metadata_key without the tag suffix to avoid train/serve skew) and loaded read-only on con-tainer cold start. We use an exact inner-product (flat) index because the metadata tagger runs as a stateless, ephemeral container at modest scale ( 10 2–10 5 vectors); scaling past 
+
+∼10 6 vectors would require a quantized or graph-based in-dex. 
+
+# 5 End-to-End Evaluation 
+
+Table 2 measures retrieval, not tagging. This section reports the metric that is comparable in spirit to the CTA literature: end-to-end multi-label tagging quality of the full Tagger (all three taggers plus RRF) against curated expectations. 
+
+Harness and metrics. Glyph ships a tag-evaluation harness F1 F2                                             
+
+> Configuration G1 G2 G3 Overall G1 G2 G3 Overall p50 (s) Regex tagger only 0.062 0.103 0.128 0.077 0.040 0.067 0.085 0.050 0.30 Description tagger only, Claude Sonnet 4.5 †0.122 0.326 0.411 0.205 0.250 0.325 0.590 0.238 47.31 Metadata tagger only 0.890 0.969 0.956 0.912 0.853 0.957 0.937 0.880 40.41 Fusion, Claude Sonnet 4.5 0.878 0.951 0.932 0.897 0.878 0.961 0.938 0.890 57.80
+> †The description tagger is evaluated only over columns that carry a description; columns without one are out of scope for this strategy.
+
+Table 3: Measured micro-averaged F1 and F2 per curated dataset group, overall F1/F2, and p50 request latency for each configuration (higher F1/F2 / lower latency is better). All runs cover the same 4 evaluation files. Per-group F1/F2 is aggregated from per-file confusion counts. The best F2 per group is in bold. that compares predicted tags against curated expectations per column over the universe of candidate tags, computing the confusion quantities and the derived accuracy , precision ,
+
+recall , and the Fβ family (Manning, Raghavan, and Schütze 2008). While we report precision, recall, F0.5, and F1 for completeness, we adopt F2 as the primary selection met-ric . The choice of β in Fβ = (1 + β2) P R β2P +R encodes a cost model, and sensitivity tagging has a sharply asymmetric 
+
+one. A false negative, a sensitive or PII-bearing column left 
+
+untagged , silently defeats access control and privacy com-pliance and is typically discovered only reactively, after an incident. A false positive, an over-applied tag, is cheap to remediate and dismissed by a data steward during review. We therefore select on F2 (β=2 ), which weights recall twice as heavily as precision and aligns the headline number with the governance reality that missing a sensitive column is far costlier than over-tagging a benign one. 
+
+Evaluation sets. These sets are curated by line of business and span multiple LOBs , each a collection of {column metadata, expected-tags} cases authored with data stewards. The evaluation sets are table-disjoint from the training corpus of Section 4.4: none of their 1,905 ta-bles appears in the 15,205-table vector index, though the two draw on overlapping catalogs and databases, so no evaluated column was seen at training or indexing time. 
+
+## 5.1 Per-Dataset Tagging Quality ( F2)
+
+Table 3 reports measured, micro-averaged F2 per curated dataset group (Group 1–3) for four end-to-end configura-tions, isolating (i) each strategy in isolation, and (ii) the full multi-strategy fusion. Per-group figures are micro-averaged from the per-file confusion counts within each group ( F2 =5 TP /(5 TP + 4 FN + FP )); the table also reports the over-all F2 and the p50 request latency of each configuration. We lead with F2 (Section 5): the ranking of configurations by F2 is the ranking that minimizes missed sensitive-data classifications. Three findings stand out. First, no single strategy is suffi-cient : the regex tagger alone collapses to near-zero F2 across every group (it fires on almost nothing outside its hand-written patterns), and the strongest lone strategy, the meta-data tagger, reaches only 0.880 overall. Second, fusion ranks above every single strategy under F2: the best fused con-figuration lifts overall F2 to 0.890 . This ordering is metric-dependent, and deliberately so: the three metrics disagree on which system to ship — under F1 the fusion and the meta-data tagger are tied, and under F0.5 the single strategy leads — so the choice of β is a deployment decision, not a cos-metic one. Third, quality trades against latency : fusion’s 
+
+F2 comes at a p50 of 57 .8 s. The description tagger is the outlier: at 47 .3 s it spends 82% of fusion’s latency to reach only 0.238 , below the metadata tagger’s 0.880 , so it is not a viable standalone configuration and earns its place only as an input to the fusion. The operative deployment choice is therefore metadata-only versus full fusion. 
+
+## 5.2 Deployed Impact: Steward Acceptance 
+
+Glyph runs in production behind the governance workflow: human stewards adjudicate its suggestions, and each accepted or rejected column–tag pair is written back to a data store. The training pipeline re-exports that store, re-fine-tunes the metadata encoder (Section 4.4) — a human-feedback loop that closes on a weekly cadence.      
+
+> 50 75 100 accepted % 63.3% 99.8% 123456consecutive week
+
+Figure 2: Weekly steward acceptance of Glyph’s tag sugges-tions over six consecutive weeks of production operation. The vertical axis begins at 50%. Figure 2 plots every steward decision to date: acceptance rises from 63 .3% to 99 .8% across ∼ 24 , 000 adjudicated pairs. Decision volume grows 21 × over the same window and the population under review broadens alongside it, so we report the trend as an association rather than a causal effect. Because a steward only ever sees tags the system emitted, acceptance is a precision-like measure and is blind to false negatives; it complements rather than replaces the recall-weighted F2 of Table 3. Dimension Glyph (this work) Sherlock Sato Doduo Korini & Bizer Input signal Metadata only; no cell values                                    
+
+> Cell values Values + table topic Serialized table values Values + name Learning paradigm Fine-tuned contrastive encoder + rules + commercial LLM Supervised deep neural network (DNN) DNN + CRF Fine-tuned PLM (multi-task) Zero-/few-shot LLM Target taxonomy 275 curated tags 78 open types 78 open types 78 open types SOTAB types Fusion RRF none CRF joint multi-task head none Deployment commercial research research research research Reported eval F1 ≈0.897 and F2 ≈
+> 0.890 F1 ≈0.89 (VizNet) F1 ≈0.92 micro-F1 ≈0.92 F1 ≈0.85 (SOTAB)
+
+Table 4: Positioning of Glyph against representative CTA systems. Systems, in column order: Sherlock (Hulsebos et al. 2019), Sato (Zhang et al. 2020), Doduo (Suhara et al. 2022) and Korini and Bizer (2023). 
+
+## 5.3 Positioning Against the CTA Literature 
+
+These numbers are not directly comparable to published CTA F1 (Sherlock (Hulsebos et al. 2019), Sato (Zhang et al. 2020), Doduo (Suhara et al. 2022), and the near-fine-tuned accu-racy of ArcheType (Feuer et al. 2024) with open models across several label spaces), because the taxonomy (a cu-rated enterprise list of tags with sensitivity levels vs. 78–91 open-domain types without sensitivity levels), the label car-dinality (multi-label, dominated by a few specific tags), and the information available (metadata + code vs. cell values) all differ; prior-work figures are reproduced from each pa-per’s best-reported configuration and serve only as in-spirit reference points. Table 4 positions Glyph against representative CTA sys-tems and commercial sensitivity scanners across the dimen-sions that matter for enterprise deployment. 
+
+# 6 Discussion and Future Work 
+
+Glyph’s central bet is that redundancy plus principled fu-sion beats any single clever signal: a rule engine that is pre-cise but brittle, a dense retriever that generalizes but drifts, and an LLM that reasons but hallucinates, reconciled by RRF and an ontology validator, with an autograder convert-ing open-ended generation into a measurable, self-improving task. We are candid about what this paper does and does not establish. 
+
+Operational lessons. Two design choices proved decisive in production and generalize beyond Glyph. (1) Value-free, code-grounded design (Section 1) lets Glyph run at all on restricted-access tables that value/regex scanners (Microsoft 2021; Informatica 2018; Microsoft 2018; Google Cloud 2017; BigID, Inc. 2016; Immuta, Inc. 2015) cannot touch. (2) Batching for cost : analyzing a whole table’s columns in one LLM call rather than one call per column is the ratio that dominates latency and cost at catalog scale. 
+
+Future work. Two directions to extend Glyph. (1) Collec-tive inference. Glyph fuses per-column signals and ignores the inter-column and inter-tag correlation exploited since Li-maye, Sarawagi, and Chakrabarti (2010), Sato (Zhang et al. 2020), and Meimei (Takeoka et al. 2019); evaluating such joint models under our NON_SENSITIVE tag dominance is a promising direction. (2) A reinforcement-learning loop for the Tagger : treating tag selection as a learned policy (Schul-man et al. 2017) optimized against a reward model (Chris-tiano et al. 2017; Ouyang et al. 2022), so that a persistent policy learns to rank rare tags, attacking class imbalance, and internalizes steward feedback rather than re-deriving quality per request. 
+
+# 7 Conclusion 
+
+Glyph shows that automated, auditable data cataloging at en-terprise scale is achievable by composing well-understood techniques inside a disciplined agentic framework, and by adapting the column-type-annotation tradition to a governed 
+
+sensitivity ontology under an enterprise privacy constraint that forbids reading values. By grounding descriptions in source code, fusing complementary value-free tagging sig-nals, validating against an authoritative ontology, and grading its own output, Glyph produces descriptions and tags that are not only useful but explainable and auditable : every tag car-ries its provenance, confidence, and reasoning. We have been deliberate about the boundary between what is demonstrated (strong in-distribution retrieval, a deployed multi-strategy system) and what remains to be shown (public-benchmark generalization, judge–human agreement), and we see clos-ing that gap as the natural next step toward substantially reducing the manual stewardship burden of enterprise data governance. 
+
+# References 
+
+Apache Software Foundation. 2015. Apache Atlas: Data Governance and Metadata Framework. https://atlas.apache. org. BigID, Inc. 2016. BigID Data Discovery and Classification Platform. Product documentation. Castro Fernández, R.; Abedjan, Z.; Koko, F.; et al. 2018. Aurum: A Data Discovery System. In Proc. IEEE ICDE .Chase, H.; and LangChain Inc. 2024. LangGraph: Building Stateful, Multi-Actor Applications with LLMs. Software framework. Christiano, P. F.; Leike, J.; Brown, T. B.; et al. 2017. Deep Re-inforcement Learning from Human Preferences. In Advances in Neural Information Processing Systems (NeurIPS) .Colvin, S.; et al. 2023. Pydantic: Data Validation Using Python Type Hints. https://docs.pydantic.dev. Cormack, G. V.; Clarke, C. L. A.; and Büttcher, S. 2009. Re-ciprocal Rank Fusion Outperforms Condorcet and Individual Rank Learning Methods. In Proc. ACM SIGIR .Deng, X.; Sun, H.; Lees, A.; Wu, Y.; and Yu, C. 2021. TURL: Table Understanding through Representation Learn-ing. Proc. VLDB Endowment (PVLDB) , 14(3): 307–319. Devlin, J.; Chang, M.-W.; Lee, K.; and Toutanova, K. 2019. BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding. In Proc. NAACL-HLT .Feuer, B.; Liu, Y.; Hegde, C.; and Freire, J. 2024. ArcheType: A Novel Framework for Open-Source Column Type Annota-tion using Large Language Models. Proc. VLDB Endowment (PVLDB) , 17. Google Cloud. 2017. Sensitive Data Protection (Cloud DLP): infoType Detection. Product documentation. Grover, M.; et al. 2020. Amundsen: A Data Discovery and Metadata Platform. Lyft / open source, https://www. amundsen.io. Halevy, A.; Korn, F.; Noy, N. F.; et al. 2016. Goods: Orga-nizing Google’s Datasets. In Proc. ACM SIGMOD .Henderson, M.; Al-Rfou, R.; Strope, B.; et al. 2017. Effi-cient Natural Language Response Suggestion for Smart Re-ply. arXiv preprint arXiv:1705.00652. Hu, K.; Bako, S.; Hofman, J.; et al. 2019. VizNet: To-wards a Large-Scale Visualization Learning and Benchmark-ing Repository. In Proc. ACM CHI .Hulsebos, M.; Demiralp, Ç.; and Groth, P. 2023. GitTables: A Large-Scale Corpus of Relational Tables. Proc. ACM on Management of Data (SIGMOD) , 1(1). Hulsebos, M.; Hu, K.; Bakker, M.; et al. 2019. Sherlock: A Deep Learning Approach to Semantic Data Type Detection. In Proc. ACM SIGKDD .Iida, H.; Thai, D.; Manjunatha, V.; and Iyyer, M. 2021. TAB-BIE: Pretrained Representations of Tabular Data. In Proc. NAACL-HLT .Immuta, Inc. 2015. Immuta Sensitive Data Discovery and Policy Enforcement. Product documentation. Informatica. 2018. CLAIRE: AI-Powered Metadata Intelli-gence and Automatic Data Classification. Product documen-tation. Järvelin, K.; and Kekäläinen, J. 2002. Cumulated Gain-Based Evaluation of IR Techniques. ACM Transactions on Information Systems , 20(4): 422–446. Jiménez-Ruiz, E.; Hassanzadeh, O.; Efthymiou, V.; Chen, J.; and Srinivas, K. 2019. SemTab: Tabular Data to Knowledge Graph Matching (CEA/CTA/CPA). In SemTab @ ISWC / ESWC .Karpukhin, V.; Oğuz, B.; Min, S.; et al. 2020. Dense Passage Retrieval for Open-Domain Question Answering. In Proc. EMNLP .Kaufman, S.; Rosset, S.; Perlich, C.; and Stitelman, O. 2012. Leakage in Data Mining: Formulation, Detection, and Avoid-ance. ACM Transactions on Knowledge Discovery from Data ,6(4): 1–21. Kayali, M.; Lykov, A.; Fountalis, I.; et al. 2024. CHORUS: Foundation Models for Unified Data Discovery and Explo-ration. Proc. VLDB Endowment (PVLDB) , 17. Korini, K.; and Bizer, C. 2023. Column Type Annotation using ChatGPT. In VLDB Workshops (TaDA) .Korini, K.; Peeters, R.; and Bizer, C. 2022. SOTAB: The WDC Schema.org Table Annotation Benchmark. In SemTab @ ISWC, CEUR-WS Vol-3320 .Lewis, P.; Perez, E.; Piktus, A.; et al. 2020. Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. In Advances in Neural Information Processing Systems (NeurIPS) .Li, P.; He, Y.; Yashar, D.; et al. 2024. Table-GPT: Table Fine-tuned GPT for Diverse Table Tasks. Proc. ACM on Management of Data (SIGMOD) .Limaye, G.; Sarawagi, S.; and Chakrabarti, S. 2010. Anno-tating and Searching Web Tables Using Entities, Types and Relationships. Proc. VLDB Endowment (PVLDB) , 3(1–2): 1338–1347. LinkedIn. 2019. DataHub: A Generalized Metadata Search & Discovery Tool. https://datahubproject.io. Madaan, A.; Tandon, N.; Gupta, P.; et al. 2023. Self-Refine: Iterative Refinement with Self-Feedback. In Advances in Neural Information Processing Systems (NeurIPS) .Manning, C. D.; Raghavan, P.; and Schütze, H. 2008. In-troduction to Information Retrieval . Cambridge University Press. Miao, Z.; and Wang, J. 2024. Watchog: A Light-weight Con-trastive Learning based Framework for Column Annotation. In Proc. EDBT .Microsoft. 2018. Presidio: Context-aware, pluggable PII detection and anonymization. https://github.com/microsoft/ presidio. Microsoft. 2021. Microsoft Purview Data Map: Automated Data Classification and Sensitivity Labeling. Product docu-mentation. Nargesian, F.; Zhu, E.; Pu, K. Q.; and Miller, R. J. 2018. Table Union Search on Open Data. Proc. VLDB Endowment (PVLDB) , 11(7): 813–825. Ouyang, L.; Wu, J.; Jiang, X.; et al. 2022. Training Language Models to Follow Instructions with Human Feedback. In Ad-vances in Neural Information Processing Systems (NeurIPS) .Pham, M.; Alse, S.; Knoblock, C. A.; and Szekely, P. 2016. Semantic Labeling: A Domain-Independent Approach. In 
+
+Proc. Int. Semantic Web Conf. (ISWC) .Reimers, N.; and Gurevych, I. 2019. Sentence-BERT: Sen-tence Embeddings using Siamese BERT-Networks. In Proc. EMNLP-IJCNLP .Ritze, D.; Lehmberg, O.; and Bizer, C. 2015. Matching HTML Tables to DBpedia. In Proc. Int. Conf. on Web Intel-ligence, Mining and Semantics (WIMS) .Schulman, J.; Wolski, F.; Dhariwal, P.; Radford, A.; and Klimov, O. 2017. Proximal Policy Optimization Algorithms. arXiv:1707.06347. Shinn, N.; Cassano, F.; Berman, E.; et al. 2023. Reflex-ion: Language Agents with Verbal Reinforcement Learn-ing. In Advances in Neural Information Processing Systems (NeurIPS) .Suhara, Y.; Li, J.; Li, Y.; et al. 2022. Annotating Columns with Pre-trained Language Models. In Proc. ACM SIGMOD .Sun, Y.; Xin, H.; and Chen, L. 2023. RECA: Related Tables Enhanced Column Semantic Type Annotation Framework. 
+
+Proc. VLDB Endowment (PVLDB) , 16(6): 1319–1331. Takeoka, K.; Oyamada, M.; Nakadai, S.; and Okadome, T. 2019. Meimei: An Efficient Probabilistic Approach for Se-mantically Annotating Tables. In Proc. AAAI .Tsoumakas, G.; and Katakis, I. 2007. Multi-Label Classifi-cation: An Overview. International Journal of Data Ware-housing and Mining , 3(3): 1–13. Vaswani, A.; Shazeer, N.; Parmar, N.; et al. 2017. Attention Is All You Need. In Advances in Neural Information Processing Systems (NeurIPS) .Wang, W.; Wei, F.; Dong, L.; et al. 2020. MiniLM: Deep Self-Attention Distillation for Task-Agnostic Compression of Pre-Trained Transformers. In Advances in Neural Information Processing Systems (NeurIPS) .Wang, X.; Wei, J.; Schuurmans, D.; et al. 2023. Self-Consistency Improves Chain-of-Thought Reasoning in Lan-guage Models. In Proc. ICLR .Wei, J.; Wang, X.; Schuurmans, D.; et al. 2022. Chain-of-Thought Prompting Elicits Reasoning in Large Language Models. In Advances in Neural Information Processing Sys-tems (NeurIPS) .Wei, L. L.; Xiao, G.; and Balazinska, M. 2024. RACOON: An LLM-based Framework for Retrieval-Augmented Col-umn Type Annotation with a Knowledge Graph. arXiv preprint arXiv:2409.14556. Yao, S.; Zhao, J.; Yu, D.; et al. 2023. ReAct: Synergizing Reasoning and Acting in Language Models. In Proc. ICLR .Yin, P.; Neubig, G.; Yih, W.-t.; and Riedel, S. 2020. TaBERT: Pretraining for Joint Understanding of Textual and Tabular Data. In Proc. ACL .Zhang, D.; Suhara, Y.; Li, J.; Hulsebos, M.; Demiralp, Ç.; and Tan, W.-C. 2020. Sato: Contextual Semantic Type Detection in Tables. Proc. VLDB Endowment (PVLDB) , 13(12). Zhang, T.; Yue, X.; Li, Y.; and Sun, H. 2024. TableLlama: Towards Open Large Generalist Models for Tables. In Proc. NAACL .Zheng, L.; Chiang, W.-L.; Sheng, Y.; et al. 2023. Judging LLM-as-a-Judge with MT-Bench and Chatbot Arena. In 
+
+NeurIPS Datasets and Benchmarks Track .

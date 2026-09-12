@@ -1,0 +1,782 @@
+Title: BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference
+
+URL Source: https://arxiv.org/pdf/2609.04971v1
+
+Published Time: Mon, 07 Sep 2026 00:49:11 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 
+
+Janghyeon Kim 1 Minsoo Kim 1 Kyuhong Shim 2 Jungwook Choi 1
+
+## Abstract 
+
+Large Reasoning Models (LRMs) achieve supe-rior problem-solving through extended Chain-of-Thought (CoT) generation, but the resulting key-value (KV) cache grows linearly with se-quence length and creates severe memory bot-tlenecks—often exceeding GPU capacity for long reasoning traces. Existing KV cache compression methods rely on recent queries to estimate fu-ture token importance, implicitly assuming these serve as reliable proxies for future attention pat-terns. We demonstrate that this assumption fails in long-horizon reasoning: certain decoding steps generate Thought Revisiting Tokens (TRT) that re-attend to distant previous context, such as task-solving plans formulated early in the trace. Through systematic analysis, we discover that queries corresponding to the TRT cluster into a small number of similarity groups in the embed-ding space. Based on this insight, we propose BeaconKV, a training-free KV cache compression method that maintains beacon queries—compact representatives for each global query cluster—to anticipate which KV pairs will be revisited with-out storing the entire query history. Across four open-source LRMs and diverse reasoning bench-marks, BeaconKV generally outperforms existing compression methods, achieving up to 5.8× mem-ory reduction while nearly preserving full cache accuracy and improving throughput by over 4.3×.
+
+## 1. Introduction 
+
+Large Reasoning Models (LRMs) (Guo et al., 2025; OpenAI, 2024; Anthropic, 2025) have emerged as a transformative paradigm in artificial intelligence, demonstrating remark-able capabilities across tasks that demand sophisticated log-
+
+> 1
+
+Hanyang University 2Sungkyunkwan University. Correspon-dence to: Jungwook Choi <choij@hanyang.ac.kr >.
+
+Proceedings of the 43 rd International Conference on Machine Learning , Seoul, South Korea. PMLR 306, 2026. Copyright 2026 by the author(s). 
+
+ical thinking, including mathematics, science, and coding. Models such as o1 (OpenAI, 2024), Claude Opus 4.5 (An-thropic, 2025), GPT-5.2 (OpenAI, 2025), and Gemini 3 Pro (Google, 2025) have achieved unprecedented perfor-mance on challenging reasoning benchmarks, while open-source alternatives like DeepSeek-R1 (Guo et al., 2025) and Qwen3 (Yang et al., 2025) have rapidly expanded access to these powerful reasoning capabilities. The potential of LRMs to tackle complex, multi-step problems positions them as foundational technology for next-generation AI applications. The superior reasoning capabilities of LRMs fundamentally stem from inference-time scaling through extended Chain-of-Thought (CoT) generation (Wei et al., 2022). Unlike conventional language models that produce concise outputs, LRMs deliberately generate lengthy reasoning traces—often spanning tens of thousands of tokens—to systematically de-velop task-solving strategies before arriving at final answers. While this prolonged generation is essential for reasoning quality, it introduces severe computational challenges. In Transformer architectures (Vaswani et al., 2017), autoregres-sive decoding requires caching key-value (KV) pairs for all previously generated tokens, leading to a KV cache that grows linearly with sequence length. For instance, when Qwen3-4B generates 32K tokens with a batch size of 16, the KV cache alone can exceed 77GB—bringing a single 80GB GPU close to its memory limit. This memory bot-tleneck fundamentally limits the practical deployment of LRMs under constrained GPU resources. Recent efforts have attempted to address this challenge through KV cache compression methods tailored for LRMs. RPC (Song et al., 2025) compresses KV caches by scoring token importance based on attention weights computed from recent queries, while R-KV (Cai et al., 2025) augments this approach by incorporating redundancy scores based on key similarity. However, these methods share a fundamental limitation rooted in a critical distinction between LRM in-ference and conventional long-context processing: in LRMs, tokens are generated on-the-fly during the reasoning pro-cess, making it inherently difficult to predict which tokens will become important in subsequent decoding steps. Ex-isting methods attempt to approximate future importance 1arXiv:2609.04971v1 [cs.LG] 4 Sep 2026 BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 
+
+by relying on recent queries at eviction time, implicitly as-suming that these queries serve as reliable proxies for future attention patterns. As we demonstrate in this work, this assumption fails to capture a crucial phenomenon in long-horizon reasoning, leading to premature eviction of tokens that prove essential later in the reasoning trace. In this paper, we introduce BeaconKV, a training-free KV cache compression method motivated by a novel observa-tion we term Thought Revisiting Tokens (TRT). Through systematic analysis of attention dynamics during LRM in-ference, we discover that certain decoding steps generate tokens that re-attend to distant previous context—such as task-solving plans formulated early in the reasoning pro-cess—to maintain global coherence throughout extended reasoning (Figures 1 and 2). We observe that queries can be categorized into two distinct types: local queries, which predominantly attend to nearby keys, and global queries, which correspond to TRT and attend to distant keys across the reasoning trace. Crucially, we find that global queries are not randomly dis-tributed but instead cluster into a small number of similarity groups in the query embedding space (Figure 4). This ge-ometric structure suggests that the diverse set of global queries can be effectively represented by a compact set of 
+
+beacon queries —representative queries for each cluster. By maintaining beacon queries alongside recent queries, Bea-conKV can anticipate which KV pairs will be revisited by future global queries without storing the entire query history. To enable memory-efficient beacon query identification dur-ing inference, we propose Continual Farthest Point Sam-pling (FPS), an online algorithm that progressively selects geometrically diverse queries while maintaining a bounded memory footprint. We evaluate BeaconKV across four open-source LRMs (R1-Distill-Qwen-7B, R1-Distill-Llama-8B, Qwen3-4B, and Qwen3-14B) on diverse reasoning benchmarks, includ-ing AIME24, MATH-500, LiveCodeBench, and GPQA-Diamond. Experimental results demonstrate that BeaconKV generally outperforms other KV cache compression meth-ods, including RPC and R-KV, across a broad range of budget configurations. In terms of accuracy, BeaconKV achieves gains of up to 31.7 percentage points over existing methods. Under aggressive compression, BeaconKV re-duces peak GPU memory usage by up to 5.8× while nearly preserving accuracy comparable to full KV inference, and achieves throughput improvements of over 4.3× compared to the uncompressed baseline. These results establish Bea-conKV as an effective solution for deploying LRMs under constrained memory budgets. 
+
+## 2. Background 
+
+2.1. Attention Formulation with KV Caching 
+
+We review the attention formulation in Transform-ers (Vaswani et al., 2017) and the use of key-value (KV) caching during autoregressive decoding. Given an input sequence with hidden states X ∈ RN ×d, where N denotes the sequence length and d the hidden dimension, a single attention head projects each token into queries, keys, and values as 
+
+Q = XW Q, K = XW K , V = XW V , (1) where WQ, W K , W V ∈ Rd×d. Let qi, k j , v j denote the query, key, and value corresponding to tokens i and j, re-spectively. The attention output is then computed as 
+
+Oattn = Softmax 
+
+
+
+QK ⊤/√d + M
+
+
+
+V, (2) where M denotes the causal attention mask. In autoregressive decoding, the key-value pairs of previously generated tokens are stored in a KV cache. Let (K, V ) de-note the cached keys and values accumulated up to decoding step t. At step t+1 , only the query, key, and value of the new token are computed, and attention is evaluated as 
+
+oattn  
+
+> t+1
+
+= Softmax 
+
+
+
+qt+1 
+
+K∥kt+1 
+
+⊤/√d + M
+
+ V ∥vt+1 
+
+.
+
+(3) The newly generated KV pair (kt+1 , v t+1 ) is appended to the KV cache, causing the cache size to grow linearly with the decoding length, which becomes a major memory bot-tleneck in long-context and reasoning tasks. 
+
+2.2. Attention-Based KV Scoring with Recent Queries 
+
+To mitigate the memory overhead caused by KV cache growth during long decoding, recent KV cache eviction methods (Li et al., 2024; Song et al., 2025; Cai et al., 2025) compress the cache by assigning importance scores to cached KV pairs and evicting those deemed less relevant. A common design choice in these methods is to estimate KV importance using attention weights induced by a small set of recently generated queries, motivated by the intuition that recent queries provide informative signals for near-future decoding. Concretely, let qτ ∈ Rd denote the query at decoding step τ
+
+and kj ∈ Rd denote a cached key at index j. The attention weight from qτ to kj is computed using scaled dot-product attention: 
+
+wτ,j =exp 
+
+
+
+q⊤ 
+
+> τ
+
+kj /√d
+
+P
+
+> l
+
+exp 
+
+
+
+q⊤ 
+
+> τ
+
+kl/√d
+
+ . (4) 2BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 0 150 300 450 600 750 900 1092          
+
+> Key Cache Index (0 ~ 1092)
+> 1066 1071 1076 1081 1086 1091
+> Query Index (1066 ~ 1092) Query-1068 Query-1090
+> 0612 Layer-6, Head-18 Local Queries Global Queries
+> 0300 600 900 1200 1500 1800 2100
+> Attention Distance Between Query and Key
+> 0612
+> Frequency Layer-10, Head-19
+> 10 - 4
+> 10 - 3
+> 10 - 2
+> 10 - 1
+> 10 0
+> Figure 1. (a) Attention weight distribution at layer 18, head 16 and (b) attention distance between query and key (AIME24 sample-0 on R1-Distill-Qwen-7B).
+
+Recent attention-based KV scoring methods (Li et al., 2024; Song et al., 2025; Cai et al., 2025) aggregate such attention weights over a set of observation queries , denoted as Qobs .Observation queries are defined as a set of queries from the most recent decoding steps, where the window size Nobs 
+
+controls how many recent queries are used to estimate KV importance. Formally, when KV eviction is triggered at decoding step t, the observation query set is defined as 
+
+Qobs := {qτ | τ ∈ T obs }, Tobs = {t − Nobs + 1 , . . . , t }.
+
+(5) Given the observation query set Qobs , the importance score 
+
+sj of a cached key kj is computed by aggregating the cor-responding attention weights induced by queries in Qobs ,either by taking the maximum or the average across the observation window. 
+
+smax  
+
+> j
+
+= max  
+
+> τ∈T obs
+
+wτ,j , smean  
+
+> j
+
+= 1
+
+Nobs 
+
+X 
+
+> τ∈T obs
+
+wτ,j . (6) Using the resulting importance scores {sj }Lj=1 and a KV cache budget BKV , KV cache eviction is performed by re-taining the top-BKV KV pairs. Let I ⊂ { 1, . . . , L } denote the index set of the top-BKV scores: 
+
+I = TopK  {sj }Lj=1 , B KV 
+
+ . (7) The compressed KV cache is then obtained by indexing along the sequence dimension as 
+
+ˆK ← K[: , I, :] , ˆV ← V [: , I, :] . (8) 
+
+## 3. Observation 
+
+In this section, we analyze attention patterns during ex-tended reasoning and identify a recurring phenomenon that we term Thought Revisiting Tokens (TRT). We demonstrate that existing KV cache compression methods fundamentally fail to capture this phenomenon and reveal that queries that induce TRT exhibit a geometric structure that enables a compact representation using a small set of beacon queries. 
+
+3.1. Thought Revisiting Tokens in Reasoning Trace 
+
+We begin by categorizing queries generated during LRM inference based on their attention patterns. We define local queries as those that predominantly attend to keys in their im-mediate neighborhood, reflecting the typical pattern where each token focuses on recent context for local coherence. In contrast, we define global queries as those that attend to keys at substantially distant positions, spanning across the rea-soning trace to access earlier context. Tokens whose queries exhibit this global attention pattern—revisiting previously established reasoning context, such as problem statements or task-solving plans—are referred to as Thought Revisiting Tokens (TRT). Figure 1(a) visualizes the attention weight distribution be-tween queries and cached keys for a representative attention head during LRM inference. The majority of queries (e.g., tokens 1066–1092) attend predominantly to nearby keys within a local window (approximately tokens 900–1092), exhibiting the characteristic local attention pattern. How-ever, queries at tokens 1068 and 1090 deviate markedly from this pattern: they redirect attention toward globally dis-tant keys (approximately tokens 100–450), corresponding to earlier segments of the reasoning trace. These tokens exem-plify TRT, in which the model revisits previously formulated reasoning contexts to maintain global coherence. To quantify this distinction, we measure the attention dis-tance for each query, defined as the distance between the query position and the positions of its top-K attended keys. Figure 1(b) presents the distribution of attention distances for local and global queries across multiple attention heads. Local queries exhibit concentrated distance distributions centered near zero, reflecting attention focused on neigh-boring positions. In contrast, global queries attend to a substantially wider range of key positions, resulting in distri-butions that are clearly separated from those of local queries. This separation confirms that TRT represents a qualitatively distinct attention behavior that cannot be captured by meth-3BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference Query 1068 (Global) Query 1089 (Local) Query 1090 (Global) Query 1091 (Local) Query Position Top-K Attended 
+
+> <|Assistant|><think>\nAlright, let's tackle this problem ... Now, they want to find out how long the trip takes when she walks at s + 1/2 km/h, including the t minutes at the coffee shop.\n\nOkay, so the key here is to find the value of t and the walking speed s. Once we have those, we can calculate the time when her speed is s + 1/2 km/h.\n\nLet me structure this. There are two scenarios:\n\n1. Walking ... Simplify numerator inside the brackets:\n\n4 - x - 2.4 + x = ( 4 - 2.4) + (-x + x) = 1.6 + 0 = 1.6\n\nSo, we have:\n\n9 * [1.6 / ((2.4 - x)(4 - x))] = 2\n\nSo:\n\n14.4 / ((2.4
+
+Figure 2. Output text tokens with Top-K attention weights for each query at layer 18, head 16 (AIME24 sample-0 on R1-Distill-Qwen-7B). The full text is provided in Appendix E. 
+
+ods focusing solely on local context. Figure 2 provides a concrete illustration of this phenomenon. For local queries (tokens 1089 and 1091), the top-K at-tended tokens are concentrated on recent positions involved in ongoing calculations. For global queries corresponding to TRT (tokens 1068 and 1090), attention is redirected to earlier segments containing task-solving plans and problem constraints formulated at the beginning of the reasoning process. This re-attention to distant context is essential for maintaining coherence across extended reasoning traces. Figure 3 shows the number of global queries over output to-ken positions 512–639 for each layer and head on AIME24 sample-0 using R1-Distill-Qwen-7B. Global queries appear with varying frequencies across multiple layers and heads, rather than being concentrated in a single layer or attention head. This indicates that the global attention patterns asso-ciated with TRT are not an isolated behavior of a particular model component, but a recurring phenomenon that can emerge across different parts of the model throughout the reasoning trace. 
+
+Implications for existing methods. The existence of TRT reveals a fundamental limitation of prior KV cache compres-sion methods. Approaches such as RPC (Song et al., 2025) and R-KV (Cai et al., 2025) rely on recent queries—queries collected from tokens immediately preceding the eviction step—to estimate which KV pairs will be important in subse-quent decoding. While recent queries predominantly consist of local queries, they occasionally include global queries by chance. However, because global queries corresponding to 0 7 14 21 
+
+> Head Index
+> 0714 21
+> Layer Index
+> 030 60 90 120
+> # Global Queries
+
+Figure 3. Occurrence distribution of global queries across layers and heads (AIME24 sample-0 on R1-Distill-Qwen-7B). Additional details are provided in Appendix B. Query Index (1066 ~ 1092) Query Index (1066 ~ 1092)  Query-1068 Query-1090 
+
+> High Cosine Similarity
+
+(a) Cosine similarity of queries   
+
+> 0.0 0.2 0.4 0.6 0.8 1.0 -10 010
+> Principal Component 1
+> -10 -5 0510 15
+> Principal Component 2
+
+(b) PCA of queries 
+
+> 1068 1090
+> 1025 1050 1075 1100 1125 1150 1175
+> Query Index
+
+Figure 4. (a) Cosine similarity between queries within a specific decoding-step interval at layer 18, head 16. (b) PCA of queries with low average cosine similarity at layer 18, head 16. 
+
+TRT occur sporadically and unpredictably throughout the reasoning trace, recent-query-based methods systematically fail to anticipate which distant KV pairs will be revisited by future TRT. This leads to premature eviction of KV pairs that prove essential later, degrading reasoning quality under constrained memory budgets. 
+
+3.2. Geometric Structure of Global Queries 
+
+We now investigate whether global queries share structural properties that could enable their efficient representation. Specifically, we analyze the similarity structure of global queries in the embedding space. Figure 4(a) shows the pairwise cosine similarity between queries within a decoding interval, computed using pre-RoPE query states to isolate geometric similarity from po-sitional effects. While most queries exhibit high similarity to their immediate neighbors—reflecting the dominance of local queries—global queries, such as those at tokens 1068 and 1090, stand out by having substantially lower similarity to their surrounding queries. Crucially, despite their dis-similarity to their neighbors, these global queries exhibit high mutual similarity. This observation suggests that global queries form a coherent subset that is geometrically distinct from the majority of local queries. To further characterize this structure, we project query states across decoding steps into a two-dimensional space using 4BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference Recent  Queries              
+
+> FPS
+> FPS
+> Beacon Queries Recent Queries
+> 567345634511 12 13 11 121224856514
+> Decoding Step 6 Decoding Step 7 Decoding Step 8 and Eviction
+> Decoding Step 9 Decoding Step 14 and Eviction
+
+... 
+
+> KV Cache Observation Query Set
+> 814
+> Top-K Selection via Attention-based KV Scoring
+
+... 
+
+(a) KV cache compression with  only recent queries  (prior methods)                  
+
+> 3412Decoding Step 5
+> 814 76536713 8157345634559 13 12122815114 8111 10 29
+
+... 
+
+(b) KV cache compression with beacon queries and recent queries  (ours)           
+
+> 3412814 7316713
+> KV Cache Observation Query Set
+> 35565795912 512
+> Retained Output KV Cache Query Evicted Output KV Cache
+> 10 82
+
+... ...         
+
+> 875854121763
+> RoPE with Current Position 8RoPE with Original Positions 7 and 8
+> KV Cache
+> 8136752
+> Attention-based Scores Compressed KV Cache
+
+(c) Top-K selection via  attention-based KV scoring with beacon  queries and recent  queries (ours)   
+
+> 8878
+> Max Aggregation Top-K Selection
+> 4443
+> Beacon Queries and Recent Queries
+> Attention Weights
+> Top-K Selection via Attention-based KV Scoring
+> 76957659
+> Continual FPS
+
+Figure 5. Illustration of KV cache compression methods for LRMs during long decoding. (a) Prior methods (e.g., RPC) compute attention-based scores for KV cache eviction relying solely on recent queries. (b) BeaconKV (ours) computes the attention-based scores using beacon queries and recent queries. (c) BeaconKV performs top-K selection via max aggregation of attention-based scores. 
+
+Principal Component Analysis (PCA). Figure 4(b) visual-izes the resulting projections, revealing that global queries cluster into a small number of similarity groups rather than being randomly scattered. Notably, queries at tokens 1068 and 1090—both corresponding to TRT—are located in close proximity within the same cluster, confirming that global queries with similar attention patterns share consistent geo-metric properties in the query embedding space. 
+
+Beacon queries. The observed clustering pattern moti-vates the notion of beacon queries. The diverse set of global queries that may arise throughout extended reasoning can be effectively represented by a compact set of beacon queries—representative queries for each global query clus-ter. By maintaining beacon queries alongside recent queries, a KV cache compression method can anticipate which KV pairs will be revisited by future global queries, even with-out storing the complete query history. The beacon queries serve as geometric landmarks in the query space, indicat-ing which distant KV pairs should be retained to support TRT during subsequent decoding. This insight forms the foundation of our proposed method, BeaconKV. 
+
+## 4. Method 
+
+Building on these observations, we propose BeaconKV, a training-free KV cache compression framework that miti-gates the memory bottleneck of LRMs by leveraging bea-con queries. Our key insight is that reasoning-critical con-text is revisited by global queries that form clusters in the pre-RoPE query space. BeaconKV therefore augments the standard “recent query” baseline with beacon queries—a compact set of representative queries that anticipate future attention shifts. The detailed algorithm is provided in Ap-pendix D. 
+
+4.1. Periodic KV Cache Eviction for LRMs 
+
+LRMs generate extended CoT to solve complex problems, resulting in a KV cache that grows linearly with decoding length. To operate within constrained GPU memory, the KV cache must be compressed periodically. Prior compression methods (Li et al., 2024; Song et al., 2025; Cai et al., 2025) typically perform eviction when the cache size reaches a budget Bmax  
+
+> KV
+
+. As illustrated in Figure 5(a), these methods construct an observation query set Qobs utilizing only the most recent queries (e.g., the last 32 tokens). Consequently, they assign low importance scores to distant tokens that are not currently attended to, leading to the permanent loss of critical context. BeaconKV addresses this by expanding the observation window to include historical reference points, as shown in Figure 5(b), ensuring that “Thought Revisit-ing Tokens” are preserved even when they are temporally distant. 
+
+4.2. Observation Query Selection via Continual FPS 
+
+To capture the attention patterns of TRTs, BeaconKV con-structs a more comprehensive observation query set contain-ing two components: (1) recent queries ( Qpre recent ) to maintain local coherence, and (2) beacon queries ( Qpre beacon ) to repre-sent the global query clusters identified in our geometric analysis. 
+
+Empirical Motivation for FPS-based Selection. Bea-conKV leverages beacon queries selected from previously generated pre-RoPE queries for KV scoring. To identify a representative subset, we employ FPS based on cosine simi-larity across all pre-RoPE queries generated up to a given decoding step. Subsequently, we instantiate the observation query set Qobs by integrating these FPS-selected queries with recent queries. Figure 6(a) reports the maximum co-5BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 1540 1550 1560 1570 1580 1590 1600 Decoding Step Index 0.2 0.4 0.6 0.8 Max Cosine Similarity 
+
+(a) Maximum cosine similarity between observation query set and query at the decoding step after eviction     
+
+> 16 Recent and 16 FPS-Selected Queries 16 Recent and 16 Random Queries 32 Recent Queries 16 Recent Queries
+> 1K 1.5K 2K 2.5K 3K Max KV Cache Budget 30 40 50 AIME24 Accuracy (%)
+
+(b) Comparison of AIME24 accuracy across observation query set selections 
+
+> Full KV
+
+Figure 6. (a) Maximum cosine similarity to future decoding step queries and (b) AIME24 accuracy on R1-Distill-Qwen-7B under different past query set selections. 
+
+sine similarity between the observation query set and the query at each decoding step after eviction. Among several construction strategies, the configuration of 16 Recent + 16 FPS-Selected Queries exhibits high maximum cosine similarity for most decoding steps, indicating that its obser-vation queries remain geometrically close to future queries. Figure 6(b) compares the accuracy under a constrained KV cache budget across these strategies. Consistent with the similarity analysis, the 16 Recent + 16 FPS strategy achieves the highest accuracy across all budgets. This suggests that effective KV scoring is driven more by query representative-ness (geometric coverage) than by simply increasing recent query quantity. 
+
+Efficient Implementation: Continual FPS. While FPS is effective, running it over the entire history of accumulated queries (Naive FPS) is memory-intensive, particularly for LRMs using Grouped Query Attention (GQA), where query states are numerous. To mitigate this, we introduce Contin-ual FPS, a memory-efficient online algorithm illustrated in Figure 5(b). Rather than storing all queries, each attention head maintains a small, bounded buffer. When this buffer reaches a maximum capacity Bmax  
+
+> Q
+
+, we trigger an FPS step to downsample it back to a minimum size Bmin  
+
+> Q
+
+, retaining only the most geometrically distinctive queries: 
+
+Qpre obs ← FPS  Qpre obs , B min 
+
+> Q
+
+, (9) This “fill-and-compress” procedure ensures that Qpre beacon con-K-Means Centroids Centroid-Nearest Data Points Naive FPS  
+
+> Continual FPS
+> Observation Query Selection Method
+> 010 20 30 40 50
+> Peak GPU Memory (GB)
+> Peak GPU Memory (GB) Accuracy Degradation
+> 0510 15 20 25
+> Accuracy Degradation
+
+Figure 7. Peak GPU memory and accuracy degradation on R1-Distill-Qwen-7B under different observation query selection meth-ods. We compare Continual FPS against K-Means Centroids, Centroid-Nearest Data Points, and Naive FPS. 
+
+tinuously evolves to represent the span of the reasoning trace without unbounded memory growth. We validate this design in Figure 7, which demonstrates that Continual FPS achieves accuracy comparable to ideal offline sampling (e.g., K-Means or Naive FPS) while reducing peak GPU memory usage by significantly minimizing the query history foot-print. 
+
+4.3. Attention-Based KV Scoring with Beacon Queries 
+
+When the KV cache limit is reached at decoding step t,BeaconKV computes importance scores to determine which pairs to retain. 
+
+Query Construction and Alignment. We construct the observation query set Qobs by combining the accumulated beacon queries and the most recent queries. Crucially, we apply Rotary Positional Embeddings (RoPE) differentially to align these queries with the current reasoning state. Bea-con queries are aligned to the current decoding step t. This allows us to simulate whether a future TRT (represented by the beacon) that occurs now would access the cached keys. Recent queries are kept at their original generation positions 
+
+τ . This preserves the standard local attention signals. 
+
+Importance Scoring via Max-Aggregation. Using Qobs ,we compute the attention weights W ∈ R|Qobs |× L against the current KV cache. For models using GQA, where mul-tiple query heads share a single KV head group g, we ag-gregate scores across all queries and heads in the group. Figure 5(c) illustrates our aggregation strategy. We employ max-pooling rather than mean-pooling across the observa-tion queries. Since TRTs are sparse, event-driven by specific global queries, their attention signals are high-magnitude but rare. Mean-pooling would dilute these critical signals against the background noise of other queries. Max-pooling ensures that if any beacon query identifies a KV pair as important, that pair is preserved. Based on these scores, we retain the top-K KV pairs alongside a small window of recent tokens (to ensure local fluency) and evict the rest. 6BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 256 512 1024 2048 4096 020 40 60 
+
+> Accuracy (%)
+
+AIME24     
+
+> 128 256 512 1024 2048 60 80
+
+MATH-500     
+
+> 256 512 1024 2048 4096 20 40
+
+GPQA-Diamond     
+
+> 256 512 1024 2048 4096 20 40
+
+LiveCodeBench                                                     
+
+> 256 512 1024 2048 4096 20 40
+> Accuracy (%)
+> 128 256 512 1024 2048 60 80 256 512 1024 2048 4096 20 40 256 512 1024 2048 4096 20 40 256 512 1024 2048 4096 020 40 60 80
+> Accuracy (%)
+> 128 256 512 1024 2048 40 60 80 100 256 512 1024 2048 4096 20 40 256 512 1024 2048 4096 20 40 60 256 512 1024 2048 4096
+> Max KV Cache Budget
+> 020 40 60 80
+> Accuracy (%)
+> 128 256 512 1024 2048
+> Max KV Cache Budget
+> 60 80 100 256 512 1024 2048 4096
+> Max KV Cache Budget
+> 40 60 256 512 1024 2048 4096
+> Max KV Cache Budget
+> 20 40 60
+> R1-Distill-Qwen-7B R1-Distill-Llama-8B Qwen3-4B Qwen3-14B
+> Full KV BeaconKV (ours) RPC SnapKV R-KV
+
+Figure 8. Accuracy comparison of BeaconKV against RPC, SnapKV, and R-KV. We evaluate the accuracy on R1-Distill-Qwen-7B, R1-Distill-Llama-8B, Qwen3-4B and Qwen3-14B across four reasoning tasks: AIME24, MATH-500, GPQA-Diamond, and LiveCodeBench. 
+
+This strategy allows BeaconKV to aggressively compress memory while preserving the “thought revisiting” pathways essential for deep reasoning. 
+
+## 5. Experiments 
+
+5.1. Experimental Setup Models and Datasets. We evaluate BeaconKV on four open-source large reasoning models (LRMs): R1-Distill-Qwen-7B, R1-Distill-Llama-8B (Guo et al., 2025), Qwen3-4B, and Qwen3-14B (Yang et al., 2025). We consider var-ious reasoning domains and use AIME24 (AIME, 2025) and MATH-500 (Hendrycks et al., 2021) for mathematics, LiveCodeBench (Jain et al., 2025) for coding, and GPQA-Diamond (Rein et al., 2024) for biology, physics, and chem-istry. We report the average pass@1 accuracy over 8 runs for AIME24 and over 4 runs for the remaining benchmarks. We set the maximum number of generated tokens to 32,768 and use Top-p sampling with p = 0 .95 and temperature 0.6.
+
+Budget Configuration. We manage KV cache compression with a maximum cache budget Bmax  
+
+> KV
+
+and set the minimum budget to Bmin  
+
+> KV
+
+= 78 Bmax  
+
+> KV
+
+. When the cache size of the output tokens reaches Bmax  
+
+> KV
+
+, we evict the KV cache corre-sponding to the 18 Bmax  
+
+> KV
+
+output tokens. 
+
+Baselines. We evaluate the accuracy of BeaconKV against several competitive KV cache compression meth-ods. SnapKV and RPC perform KV cache eviction using attention-based scores, while R-KV employs a joint eviction strategy that integrates per-token redundancy scores. 
+
+Implementation Details. For BeaconKV, we set the maxi-mum beacon query token budget to 32 and the minimum to 16. The recent query token budget is fixed at 16. When KV cache compression is enabled, R-KV retains the KV cache for the most recent 8 tokens, following the configuration used in the original R-KV paper. For all other methods, we retain the most recent 32 tokens. 
+
+5.2. Performance on Reasoning Tasks 
+
+Figure 8 reports accuracy under varying KV cache bud-gets. Across most benchmarks and models, BeaconKV achieves the highest accuracy at the same budget, with the largest gains in the low-budget regime, substantially out-performing reasoning-oriented methods such as RPC and R-KV. The largest accuracy gain over existing compres-sion methods reaches 31.7 percentage points, observed on Qwen3-14B for AIME24 with a maximum KV cache budget of 1024. This advantage arises from BeaconKV’s beacon queries—geometrically distinctive past queries selected via Continual FPS—that capture global attention patterns asso-ciated with Thought Revisiting Tokens (TRT). In contrast, recent-query–based methods rely on locally concentrated queries and thus tend to evict distant yet reusable reasoning trajectories, whereas BeaconKV retains such KV pairs to 7BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference                       
+
+> Method (nrecent , n beacon )Accuracy (%) ↑Latency (s) ↓
+> BeaconKV (1, 31) 63.5 10871.3 (4, 28) 66.5 5624.5 (8, 24) 64.8 4762.1
+> (16, 16) 64.6 4355.7
+> (24, 8) 62.3 4194.5 (28, 4) 58.1 4179.5 (31, 1) 55.6 4192.3 RPC (32, 0) 51.3 4127.2
+
+Table 1. Ablation study on the number of beacon queries ( nbeacon )and recent queries ( nrecent ) on Qwen3-4B for AIME24, with the maximum KV cache budget set to 2048. We report both accuracy and latency to identify the optimal configuration. The setting 
+
+(nrecent = 16 , n beacon = 16) achieves the best trade-off. Aggregation Max KV Cache Budget 4096 2048 1024 512 256 Max 55.4 46.7 39.2 30.0 23.3 
+
+Mean 52.5 50.8 36.7 27.5 18.8 
+
+Table 2. Ablation study on aggregation in BeaconKV under dif-ferent maximum KV cache budgets on R1-Distill-Qwen-7B for AIME24. We compare using Max vs. Mean aggregation consis-tently across heads and queries. 
+
+maintain robust reasoning accuracy under tight budgets. 
+
+5.3. Ablation Study 
+
+We first study the trade-off between beacon queries ( nbeacon )and recent queries ( nrecent ) for observation query selection. As shown in Table 1, over-allocating queries to beacons reduces the capacity to capture short-term context, result-ing in both higher latency and lower accuracy (e.g., (1 , 31) 
+
+yields 63.5% accuracy with 10871.3s latency). In contrast, a balanced configuration (nrecent , n beacon ) = (16 , 16) achieves the favorable trade-off, attaining 64.6% accuracy with sub-stantially lower latency (4355.7s), highlighting the impor-tance of jointly preserving global and local query signals. We further ablate aggregation strategies for KV importance scoring under different KV cache budgets. Table 2 shows that Max aggregation generally outperforms Mean aggrega-tion, with larger gaps observed in most low-budget settings (e.g., 23.3 for Max aggregation compared to 18.8 for Mean aggregation at a 256-token budget). This behavior arises because important KV pairs are often emphasized by indi-vidual beacon queries; Mean aggregation dilutes such sparse but high-value signals, whereas Max aggregation preserves them, ensuring that the most salient features are retained. To examine whether BeaconKV’s gains arise from dynami-cally capturing evolving global query patterns, we compare it with Initial+Recent, a query-based scoring baseline that preserves both initial and recent queries. Unlike standard recent-query-based eviction methods that estimate KV im-portance only from the most recent queries, Initial+Recent                                       
+
+> Model Method AIME 24 MATH -500 GPQA -Diamond LiveCode Bench
+> R1-Distill-7B BeaconKV 39.17 87.45 45.20 33.33 Initial+Recent 20.42 70.60 42.80 28.95 R1-Distill-8B BeaconKV 45.00 86.70 48.23 36.11 Initial+Recent 44.58 81.40 45.07 33.16 Qwen3-4B BeaconKV 33.33 79.75 50.25 42.21 Initial+Recent 19.58 55.95 49.87 33.93 Qwen3-14B BeaconKV 57.92 84.20 61.11 49.46 Initial+Recent 23.75 67.30 60.23 40.23
+
+Table 3. Accuracy comparison between BeaconKV and Ini-tial+Recent across models and reasoning tasks under a maximum KV cache budget of 1024. Method Max KV Budget Batch Size Throughput (tokens/s) Decode Latency Peak Mem. Acc. Full KV – 14 82.3 5573.4 77.0 54.4 BeaconKV 2K 14 356.4 1287.3 13.3 51.1 RPC vs. BeaconKV RPC 2K 192 725.4 8672.5 79.0 44.8 BeaconKV 2K 192 704.8 8926.9 79.3 51.1 RPC 1K 320 1380.8 7593.7 72.0 29.9 BeaconKV 1K 320 1345.9 7790.9 72.5 42.2 
+
+Table 4. Efficiency evaluation on Qwen3-4B with a generation length of 32K. We compare the throughput, decoding latency (s), peak GPU memory usage (GB), and LiveCodeBench accuracy of Full KV, RPC, and BeaconKV. 
+
+builds the observation query set from both initially generated queries and recent queries. The resulting attention weights are then used to score KV pairs and determine which entries should be retained. As shown in Table 3, BeaconKV consistently outperforms Initial+Recent across the evaluated models and reasoning tasks. This indicates that simply preserving queries from the beginning of the context is not sufficient to explain Bea-conKV’s gains. Although initial queries provide access to early reasoning context, they form a fixed and limited set of historical references and cannot capture the diverse global revisiting patterns that emerge during long-horizon reasoning. In contrast, BeaconKV continually selects geo-metrically diverse beacon queries from the evolving query history, allowing it to identify KV pairs that are likely to be revisited by future Thought Revisiting Tokens. These results suggest that the gains from Continual FPS mainly stem from its ability to dynamically capture emerging global query pat-terns, rather than from merely preserving the beginning of the reasoning trajectory. 
+
+5.4. Efficiency Evaluation 
+
+We evaluate system efficiency by comparing BeaconKV with Full KV and RPC on Qwen3-4B with a generation length of 32K tokens using a single NVIDIA A100 80GB GPU. Table 4 reports throughput, decoding latency, peak 8BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 
+
+GPU memory, and LiveCodeBench accuracy across differ-ent batch sizes and KV cache budgets. Full KV exhibits a severe memory bottleneck under long decoding, reach-ing 77.0 GB peak memory at batch size 14 and failing to scale further. In contrast, BeaconKV with a 2K KV budget reduces peak memory from 77.0 GB to 13.3 GB ( 5.8×), leading to higher throughput (82.3 → 356.4 tokens/s) and lower decoding latency (5573.4 → 1287.3s), and enabling larger batch sizes. Under matched KV budgets, BeaconKV achieves system efficiency comparable to RPC while delivering higher accu-racy. At a 2K budget (batch size 192), BeaconKV matches RPC in throughput and memory usage, while improving LiveCodeBench accuracy by +6.3 points. At a tighter 1K budget (batch size 320), BeaconKV again achieves similar throughput and memory, but yields a larger accuracy gain of +12.3 points. These results demonstrate that BeaconKV pre-serves system-level efficiency while substantially improving generation quality under constrained KV cache budgets. 
+
+## 6. Related Work 
+
+KV Cache Compression. To mitigate the memory over-head of the KV cache in long-context inference, prior KV cache compression methods evict the cache using attention-based importance scores (Zhang et al., 2023; Oren et al., 2024; Li et al., 2024; Kim et al., 2024; 2025; 2026b; Yan et al., 2026). More recent work targets large reasoning mod-els (LRMs), where long generations with extended Chain-of-Thought rapidly expand the KV cache. For instance, RPC (Song et al., 2025) applies attention-based scoring for KV compression in LRMs. Beyond attention-based scores, several approaches incorporate redundancy or recurrence signals. KeyDiff (Park et al., 2025) proposes a compression strategy driven by key similarity. R-KV (Cai et al., 2025) combines an attention-based score with a redundancy score through a joint selection rule. LazyEviction (Zhang et al., 2025a) performs lagged eviction by leveraging recurring importance patterns. Another line of work uses a lightweight trainable module to learn policies for KV cache eviction. TRIM-KV (Bui et al., 2026), LightThinker (Zhang et al., 2025b), and Fast KVzip (Kim et al., 2026a) each introduce small gating or compression modules—trained via distillation or supervised fine-tuning on top of frozen backbone weights—to predict token-level importance or compress reasoning context dur-ing long reasoning with extended Chain-of-Thought. How-ever, these methods require task-specific training and may exhibit limited generalization across diverse reasoning do-mains. In contrast, BeaconKV requires no training, instead exploiting the intrinsic geometric structure of query embed-dings to identify critical KV pairs without any task-specific optimization. 
+
+Sparse Attention for Large Reasoning Models. For large reasoning models (LRMs), sparse attention methods reduce attention computation by restricting each query to attend only to a subset of the KV cache of the reasoning pro-cess (Tang et al., 2024; Jiang et al., 2024), while retaining the full KV cache in memory. Multipole Attention (Hooper et al., 2025) clusters the KV cache, attends exactly to se-lected KV entries, and approximates the rest. ReSA (Sun et al., 2025) mitigates accumulated errors via periodic dense rectification. SeerAttention-R (Gao et al., 2026) learns spar-sity patterns using a self-distilled gating module. 
+
+Adaptive Control of Reasoning Length. Orthogonal to KV cache compression, adaptive reasoning control strate-gies optimize the reasoning path by analyzing the character-istics of the Chain-of-Thought. DEER (Yang et al., 2026) proposes a training-free dynamic early exit mechanism at transition points, while SEAL (Chen et al., 2025) calibrates reasoning paths via steerable interventions. InftyThink (Yan et al., 2026) employs a training-based framework to enable deeper reasoning by interleaving short reasoning steps with intermediate summarization. 
+
+Memory-Augmented Architectures. While the KV cache compression and sparse attention methods discussed above primarily optimize inference within the standard decoder-only transformer architecture, another paradigm expands long-context capability by introducing memory modules into the model architecture. Memory-augmented architectures such as Titans (Behrouz et al., 2026) and GNM (Bennett et al., 2026) use such memory modules as con-text storage, enabling the model to dynamically compress, store, and reuse important context. In contrast, BeaconKV does not introduce additional memory modules or modify the model architecture. Instead, it provides a training-free framework in which beacon queries, identified from the intrinsic geometry of the query space, serve as selectors that distinguish contextually important KV cache entries for retention. 
+
+## 7. Conclusion 
+
+We introduce BeaconKV, a training-free KV cache compres-sion approach that alleviates memory bottlenecks in Large Reasoning Models (LRMs). Motivated by the observation of Thought Revisiting Tokens—where models re-attend to prior context to maintain reasoning coherence—BeaconKV leverages geometrically distinctive past queries to preserve critical KV cache. Across models and benchmarks, Bea-conKV generally outperforms existing compression meth-ods, reducing memory by up to 5.8× while achieving accu-racy close to full KV inference and improving throughput by over 4.3×.9BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 
+
+## Acknowledgements 
+
+This work was supported by the National Research Foun-dation of Korea (NRF) grant funded by the Korea govern-ment (MSIT) (No. RS-2025-00561961 and No. RS-2023-00260527). This work was also supported by the Institute of Information & Communications Technology Planning & Evaluation (IITP) grant funded by the Korea government (MSIT) (under the Artificial Intelligence Semiconductor Support Program to Nurture the Best Talents (IITP-2026-RS-2023-00253914), and No. RS-2025-02214497, Develop-ment of low-level optimization program API technology for AI semiconductors, and No. RS-2019-II190421, AI Gradu-ate School Support Program (Sungkyunkwan University)). This research was also supported by the Advanced GPU Utilization Support Program funded by the Government of the Republic of Korea (Ministry of Science and ICT). 
+
+## Impact Statement 
+
+This work advances the field of efficient Large Reasoning Model (LRM) inference by addressing the critical mem-ory bottlenecks associated with extended Chain-of-Thought generation. By reducing peak GPU memory usage and significantly enhancing throughput, BeaconKV lowers the hardware barrier for deploying advanced reasoning models, thereby broadening access to capabilities that previously re-quired high-end GPU clusters. In addition, our training-free compression method contributes to sustainable AI develop-ment by improving the energy efficiency of long-horizon reasoning, helping to mitigate the environmental footprint associated with the large-scale deployment of foundation models. At the same time, making long-horizon reason-ing more cost-efficient may also lower the cost of scaling unintended or undesirable uses. Furthermore, since our eval-uation is conducted primarily on open-source LRMs and benchmark settings, further assessment is needed to under-stand how the benefits of BeaconKV transfer to broader generation workloads. 
+
+## References 
+
+AIME. AIME problems and solutions, 2025. URL 
+
+https://artofproblemsolving.com/wiki/ index.php/AIME_Problems_and_Solutions .Anthropic. System card: Claude opus 4.5. 
+
+https://www-cdn.anthropic.com/ bf10f64990cfda0ba858290be7b8cc6317685f47. pdf , 2025. [Accessed 25-01-2026]. Behrouz, A., Zhong, P., and Mirrokni, V. Titans: Learning to memorize at test time. In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,2026. URL https://openreview.net/forum? id=8GjSf9Rh7Z .Bennett, M. S., Zollo, T. P., and Zemel, R. Tell me what to learn: Generalizing neural memory to be controllable in natural language. arXiv preprint arXiv:2602.23201 ,2026. Bui, N., Sharma, S., Lamba, S., Mishra, S., and Ying, R. Cache what lasts: Token retention for memory-bounded KV cache in LLMs. In The Fourteenth In-ternational Conference on Learning Representations ,2026. URL https://openreview.net/forum? id=qCaq3jGb0S .Cai, Z., Xiao, W., Sun, H., Luo, C., Zhang, Y., Wan, K., Li, Y., Zhou, Y., Chang, L.-W., Gu, J., Dong, Z., Anand-kumar, A., Asi, A., and Hu, J. R-KV: Redundancy-aware KV cache compression for reasoning models. In The Thirty-ninth Annual Conference on Neural In-formation Processing Systems , 2025. URL https: //openreview.net/forum?id=2jwAjomEDB .Chen, R., Zhang, Z., Hong, J., Kundu, S., and Wang, Z. SEAL: Steerable reasoning calibration of large language models for free. In Second Conference on Language Modeling , 2025. URL https://openreview.net/ forum?id=klPszYDIRT .Gao, Y., Guo, S., Cao, S., Xia, Y., Cheng, Y., Wang, L., Ma, L., Sun, Y., Ye, T., Dong, L., So, H. K.-H., Hua, Y., Cao, T., Yang, F., and Yang, M. Sparse attention adaptation for long reasoning. In The Fourteenth International Confer-ence on Learning Representations , 2026. URL https: //openreview.net/forum?id=c5BOcHM6J8 .Google. Gemini 3 pro model card. https://storage. googleapis.com/deepmind-media/ Model-Cards/Gemini-3-Pro-Model-Card. pdf , 2025. [Accessed 25-01-2026]. Guo, D., Yang, D., Zhang, H., Song, J., Zhang, R., Xu, R., Zhu, Q., Ma, S., Wang, P., Bi, X., et al. Deepseek-r1: In-centivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 , 2025. Hendrycks, D., Burns, C., Kadavath, S., Arora, A., Basart, S., Tang, E., Song, D., and Steinhardt, J. Measuring mathematical problem solving with the MATH dataset. In Thirty-fifth Conference on Neural Information Process-ing Systems Datasets and Benchmarks Track (Round 2) ,2021. URL https://openreview.net/forum? id=7Bywt2mQsCe .Hooper, C. R. C., Zhao, S., Manolache, L., Kim, S., Ma-honey, M. W., Shao, S., Keutzer, K., and Gholami, A. Multipole attention for efficient long context reasoning. 10 BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 
+
+In The Thirty-ninth Annual Conference on Neural In-formation Processing Systems , 2025. URL https: //openreview.net/forum?id=5Qe7AGO3Eq .Jain, N., Han, K., Gu, A., Li, W.-D., Yan, F., Zhang, T., Wang, S., Solar-Lezama, A., Sen, K., and Stoica, I. Live-codebench: Holistic and contamination free evaluation of large language models for code. In The Thirteenth International Conference on Learning Representations ,2025. URL https://openreview.net/forum? id=chfJJYC3iL .Jiang, H., Li, Y., Zhang, C., Wu, Q., Luo, X., Ahn, S., Han, Z., Abdi, A. H., Li, D., Lin, C.-Y., Yang, Y., and Qiu, L. Minference 1.0: Accelerating pre-filling for long-context llms via dynamic sparse attention. In Globerson, A., Mackey, L., Belgrave, D., Fan, A., Paquet, U., Tomczak, J., and Zhang, C. (eds.), Advances in Neural Information Processing Systems , volume 37, pp. 52481–52515. Cur-ran Associates, Inc., 2024. doi: 10.52202/079017-1663. Kim, J.-H., Kim, J., Kwon, S., Lee, J. W., Yun, S., and Song, H. O. KVzip: Query-agnostic KV cache compression with context reconstruction. In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,2025. URL https://openreview.net/forum? id=JFygzwx8SJ .Kim, J.-H., Han, D., and Yun, S. Fast kvzip: Efficient and accurate llm inference with gated kv eviction, 2026a. URL https://arxiv.org/abs/2601.17668 .Kim, M., Shim, K., Choi, J., and Chang, S. InfiniPot: Infi-nite context processing on memory-constrained LLMs. In Al-Onaizan, Y., Bansal, M., and Chen, Y.-N. (eds.), Pro-ceedings of the 2024 Conference on Empirical Methods in Natural Language Processing , pp. 16046–16060, Miami, Florida, USA, November 2024. Association for Compu-tational Linguistics. doi: 10.18653/v1/2024.emnlp-main. 897. URL https://aclanthology.org/2024. emnlp-main.897/ .Kim, M., Kundu, A., Kim, H.-B., Dixit, R., and Cho, M. Epi-cache: Episodic kv cache management for long-term con-versation on resource-constrained environments, 2026b. URL https://arxiv.org/abs/2509.17396 .Li, Y., Huang, Y., Yang, B., Venkitesh, B., Locatelli, A., Ye, H., Cai, T., Lewis, P., and Chen, D. Snapkv: Llm knows what you are looking for before generation. In 
+
+Proceedings of the 38th International Conference on Neural Information Processing Systems , NIPS ’24, Red Hook, NY, USA, 2024. Curran Associates Inc. ISBN 9798331314385. OpenAI. Openai o1 system card. https://cdn. openai.com/o1-system-card-20241205. pdf , 2024. [Accessed 25-01-2026]. OpenAI. Update to gpt-5 system card: Gpt-5.2. https://cdn.openai.com/pdf/ 3a4153c8-c748-4b71-8e31-aecbde944f8d/ oai_5_2_system-card.pdf , 2025. [Accessed 25-01-2026]. Oren, M., Hassid, M., Yarden, N., Adi, Y., and Schwartz, R. Transformers are multi-state RNNs. In Al-Onaizan, Y., Bansal, M., and Chen, Y.-N. (eds.), Proceedings of the 2024 Conference on Empirical Methods in Nat-ural Language Processing , pp. 18724–18741, Miami, Florida, USA, November 2024. Association for Compu-tational Linguistics. doi: 10.18653/v1/2024.emnlp-main. 1043. URL https://aclanthology.org/2024. emnlp-main.1043/ .Park, J., Jones, D., Morse, M. J., Goel, R., Lee, M., and Lott, C. Keydiff: Key similarity-based KV cache eviction for long-context LLM inference in resource-constrained envi-ronments. In The Thirty-ninth Annual Conference on Neu-ral Information Processing Systems , 2025. URL https: //openreview.net/forum?id=uBaFH7aQnC .Rein, D., Hou, B. L., Stickland, A. C., Petty, J., Pang, R. Y., Dirani, J., Michael, J., and Bowman, S. R. GPQA: A graduate-level google-proof q&a benchmark. In First Conference on Language Modeling , 2024. URL https: //openreview.net/forum?id=Ti67584b98 .Song, J., Jo, D., Kim, Y., and Kim, J.-J. Reasoning path compression: Compressing generation trajectories for efficient LLM reasoning. In The Thirty-ninth Annual Conference on Neural Information Processing Systems ,2025. URL https://openreview.net/forum? id=894Yo61h1P .Sun, Y., Ye, T., Dong, L., Xia, Y., Chen, J., Gao, Y., Cao, S., Wang, J., and Wei, F. Rectified sparse attention. arXiv preprint arXiv:2506.04108 , 2025. Tang, J., Zhao, Y., Zhu, K., Xiao, G., Kasikci, B., and Han, S. Quest: query-aware sparsity for efficient long-context llm inference. In Proceedings of the 41st International Conference on Machine Learning , ICML’24. JMLR.org, 2024. Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, L., and Polosukhin, I. Attention is all you need. In Proceedings of the 31st International Conference on Neural Information Processing Systems ,NIPS’17, pp. 6000–6010, Red Hook, NY, USA, 2017. Curran Associates Inc. ISBN 9781510860964. Wei, J., Wang, X., Schuurmans, D., Bosma, M., Xia, F., Chi, E., Le, Q. V., Zhou, D., et al. Chain-of-thought prompting elicits reasoning in large language models. Advances in neural information processing systems , 35:24824–24837, 2022. 11 BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 
+
+Yan, Y., Shen, Y., Liu, Y., Jiang, J., Zhang, M., Shao, J., and Zhuang, Y. Inftythink: Breaking the length limits of long-context reasoning in large language models. In 
+
+The Fourteenth International Conference on Learning Representations , 2026. URL https://openreview. net/forum?id=T1h5em349L .Yang, A., Li, A., Yang, B., Zhang, B., Hui, B., Zheng, B., Yu, B., Gao, C., Huang, C., Lv, C., et al. Qwen3 technical report. arXiv preprint arXiv:2505.09388 , 2025. Yang, C., Si, Q., Duan, Y., Zhu, Z., Zhu, C., Li, Q., Chen, M., Lin, Z., and Wang, W. Dynamic early exit in reasoning models. In The Fourteenth International Conference on Learning Representations , 2026. URL https:// openreview.net/forum?id=NpU7ZXafRi .Zhang, H., Zhang, H., Ma, X., Zhang, J., and Guo, S. Lazye-viction: Lagged kv eviction with attention pattern ob-servation for efficient long reasoning. arXiv preprint arXiv:2506.15969 , 2025a. Zhang, J., Zhu, Y., Sun, M., Luo, Y., Qiao, S., Du, L., Zheng, D., Chen, H., and Zhang, N. LightThinker: Thinking step-by-step compression. In Christodoulopou-los, C., Chakraborty, T., Rose, C., and Peng, V. (eds.), Proceedings of the 2025 Conference on Em-pirical Methods in Natural Language Processing , pp. 13307–13328, Suzhou, China, November 2025b. As-sociation for Computational Linguistics. ISBN 979-8-89176-332-6. doi: 10.18653/v1/2025.emnlp-main. 673. URL https://aclanthology.org/2025. emnlp-main.673/ .Zhang, Z., Sheng, Y., Zhou, T., Chen, T., Zheng, L., Cai, R., Song, Z., Tian, Y., Re, C., Barrett, C., Wang, Z., and Chen, B. H2o: Heavy-hitter oracle for efficient generative inference of large language models. In Thirty-seventh Conference on Neural Information Processing Systems ,2023. URL https://openreview.net/forum? id=RkRrPp7GKO .12 BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 
+
+## A. Additional Experimental Results 
+
+A.1. Comparison with SnapKV 
+
+We provide an additional efficiency comparison with SnapKV (Li et al., 2024), a representative attention-based KV cache eviction baseline. All methods are evaluated on Qwen3-4B with a maximum KV cache budget of 1K and a batch size of 320. As shown in Table 5, BeaconKV achieves substantially higher LiveCodeBench accuracy than both SnapKV and RPC while maintaining comparable system efficiency. Specifically, BeaconKV improves accuracy from 30.9% with SnapKV and 29.9% with RPC to 42.2%, while exhibiting similar throughput and peak GPU memory usage. Although BeaconKV incurs a modest increase in decoding latency due to beacon-query-based scoring, this overhead is small relative to the accuracy improvement, demonstrating that BeaconKV provides a more favorable accuracy–efficiency trade-off under the same memory budget.                     
+
+> Method Max KV Budget Batch Size Throughput (tokens/s) Decode Latency Peak Mem. LiveCodeBench Acc.
+> SnapKV 1K 320 1380.7 7594.5 72.4 30.9 RPC 1K 320 1380.8 7593.7 72.0 29.9 BeaconKV 1K 320 1345.9 7790.9 72.5 42.2
+> Table 5. Efficiency and accuracy comparison among SnapKV, RPC, and BeaconKV on Qwen3-4B under a 1K KV cache budget.
+
+A.2. Output Length Statistics 
+
+Table 6 reports the average number of generated output tokens for each model and task. The results show that reasoning benchmarks often induce long Chain-of-Thought generations, frequently reaching several thousand tokens and becoming especially long on AIME24 and LiveCodeBench. Since the KV cache grows linearly with the decoding length, these output length statistics illustrate the practical memory pressure imposed by LRM inference. This further motivates BeaconKV, which reduces the KV cache footprint while preserving reasoning-relevant context during long-horizon generation.                      
+
+> Model AIME24 MATH-500 GPQA-Diamond LiveCodeBench
+> R1-Distill-Qwen-7B 13459 4069 8210 11720 R1-Distill-Llama-8B 14253 4241 8755 11983 Qwen3-4B 14675 5342 6516 14100 Qwen3-14B 13801 4799 5358 12623
+> Table 6. Average Number of Output Tokens by Model and Task.
+
+## B. Additional Details on the Occurrence Distribution of Global Queries 
+
+To provide an additional statistical analysis of Thought Revisiting Tokens (TRT), we measure the occurrence frequency of global queries across layers and attention heads. For each target query, we compute its attention weights over the keys available up to that decoding step and identify the top-K most attended positions among output tokens, where K = 150 .We then measure the token distance between the query position and each of these top-K positions, and take the mean of these distances. A query is classified as local if the resulting mean attention distance is at most 200, and as global otherwise. 
+
+## C. Limitations and Future Work 
+
+Our evaluation primarily focuses on long-horizon reasoning tasks using open-source Large Reasoning Models. Therefore, the effectiveness of BeaconKV on standard non-reasoning language modeling tasks, such as long-context retrieval, text summarization, and general long-context generation, remains insufficiently explored. Further experiments are needed to determine whether the performance gains achieved by BeaconKV generalize to broader workloads. In addition, BeaconKV involves several hyperparameters, including the number of beacon queries, the number of recent queries, and the KV cache budget. While our main experiments use fixed configurations, the optimal settings may vary across models and tasks. A more systematic analysis of hyperparameter sensitivity is left for future work. Additionally, it would be promising to develop adaptive compression strategies that dynamically adjust these hyperparameters during inference, such as varying the number of beacon queries or the KV cache budget at each compression rather than keeping them fixed throughout generation. 13 BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 
+
+## D. Algorithms 
+
+D.1. Farthest Point Sampling (FPS) 
+
+We use Farthest Point Sampling (FPS) to retain a compact set of diverse representative queries from the accumulated pre-RoPE query set Q = {q1, . . . , q N }. Given a target query budget m, FPS greedily selects queries that are least similar to the current selected set under cosine similarity. The algorithm first computes the average cosine similarity of each query, 
+
+avg i = 1
+
+> N
+
+PNj=1 cos( qi, q j ), and initializes the compressed set with qp, where p = arg min i avg i. This choice favors a non-redundant query that is least aligned with the overall query set. FPS then maintains, for each unselected query qj , its nearest-representative similarity Sj = max k∈I comp cos( qj , q k), where Icomp is the set of selected indices. At each iteration, it selects r = arg min j / ∈I comp Sj , i.e., the query farthest from the current compressed set, adds qr to Qcomp , and updates 
+
+Sj ← max( Sj , cos( qj , q r )) for the remaining queries. By operating in the pre-RoPE query space, FPS captures geometric diversity among queries before positional rotations are applied. The resulting set Qcomp provides a compact approximation of the historical query distribution while preserving representative query directions that may be important for subsequent KV cache scoring. 
+
+D.2. BeaconKV 
+
+Algorithm 2 summarizes BeaconKV within a single GQA head group. The method uses two types of observation queries: beacon queries, which compactly represent historical query patterns, and recent queries, which preserve short-range decoding information. During prefill, all KV pairs are inserted into the cache, and each head initializes its observation set by applying FPS to the pre-RoPE query sequence: 
+
+Q(h),pre obs = FPS  {qpre  
+
+> h,τ
+
+}Tτ =1 , B min 
+
+> Q
+
+, Bmin  
+
+> Q
+
+= nbeacon .
+
+BeaconKV stores queries before RoPE so that their positional encoding can be assigned later depending on whether they are used as beacon or recent queries. During decoding, newly generated pre-RoPE queries are appended to the observation set until its size reaches 
+
+Bmax  
+
+> Q
+
+= nbeacon + nrecent .
+
+The set is then compressed back to Bmin  
+
+> Q
+
+representatives using FPS. When the KV cache reaches the boundary Bmax KV −nrecent ,these representatives are fixed as beacon queries, and the following nrecent queries are stored as recent queries. Once the KV cache reaches the maximum budget Bmax KV , BeaconKV forms the group-level observation set as 
+
+Qobs = {RoPE( q, t ) | q ∈ Qg, pre beacon } ∪ { RoPE( q, τ ) | ⟨ q, τ ⟩ ∈ Qg, pre recent }.
+
+Beacon queries are rotated at the current step t to act as global selectors, while recent queries keep their original positions 
+
+τ . The importance of each cached KV position j is then computed by max-pooling attention weights over heads and observation queries: 
+
+Score[ j] = max  
+
+> h∈g
+
+max 
+
+> q∈Qobs
+
+W [h, q, j ].
+
+BeaconKV always preserves prefix tokens and the most recent tokens, 
+
+Ikeep = {1, . . . , n prefix } ∪ { L − nrecent + 1 , . . . , L },
+
+and fills the remaining budget with the top-scoring KV positions. After eviction, the retained beacon and recent queries are merged and compressed again with FPS, allowing BeaconKV to continually maintain a compact set of query representatives throughout long-horizon decoding. 
+
+## E. Token-Level Visualization of Thought Revisiting Tokens 
+
+Figure 9 shows the full token-level visualization corresponding to the example in Figure 2. We highlight the top-K attended tokens for representative global queries (tokens 1068 and 1090) and local queries (tokens 1089 and 1091) in an AIME24 reasoning trace. Global queries revisit distant spans containing the original problem constraints and high-level solving plan, whereas local queries mainly focus on nearby steps. 14 BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 
+
+Algorithm 1 Farthest Point Sampling (FPS) 
+
+Input: pre-RoPE query set Q = {q1, . . . , q N }, target query budget m
+
+Output: compressed query set Qcomp 
+
+// Select initial query with the smallest average cosine similarity 
+
+for i = 1 to N do 
+
+avg i ← 1
+
+N
+
+PNj=1 cos( qi, q j ) // cosine similarity denoted as cos( ·, ·)
+
+end for 
+
+p ← arg min i avg i
+
+Qcomp ← { qp}; Icomp ← { p}
+
+// Nearest-similarity initialization 
+
+for j = 1 to N do 
+
+Sj ← cos( qj , q p) // similarity to the nearest selected (currently qp)
+
+end for 
+
+// Greedy farthest expansion under cosine similarity 
+
+while |I comp | < m do 
+
+r ← arg min j / ∈I comp Sj // farthest = least similar 
+
+Qcomp ← Qcomp ∪ { qr }Icomp ← I comp ∪ { r}
+
+for j / ∈ I comp do 
+
+Sj ← max  Sj , cos( qj , q r ) // update nearest similarity 
+
+end for end while return Qcomp 
+
+15 BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference 
+
+Algorithm 2 BeaconKV within a GQA Head Group 
+
+Input: head group g, step t, pre-RoPE queries Qpre , shared KV cache CKV ,
+
+{Q(h),pre obs }h∈g , {Q(h),pre beacon }h∈g , {Q(h),pre recent }h∈g (tuples ⟨qpre , τ ⟩), nprefix , n beacon , n recent , B max  
+
+> KV
+
+, B min 
+
+> KV
+
+Output: updated CKV , {Q(h),pre obs , Q (h),pre beacon , Q (h),pre recent }h∈g
+
+Bmax  
+
+> Q
+
+← nbeacon + nrecent , Bmin  
+
+> Q
+
+← nbeacon 
+
+if |Qpre |̸ = 1 then 
+
+CKV ← CKV ∪ { (Kτ , V τ ) | τ = 1 , . . . , T }
+
+for each h ∈ g do 
+
+Q(h),pre obs ← FPS( {qpre  
+
+> h,τ
+
+}Tτ =1 , B min  
+
+> Q
+
+)
+
+Q(h),pre beacon ← ∅ , Q(h),pre recent ← ∅ 
+
+end for return CKV , {Q(h),pre obs , Q (h),pre beacon , Q (h),pre recent }h∈g
+
+end if 
+
+CKV ← CKV ∪ { (Kt, V t)}, L ← | CKV |{qpre  
+
+> h
+
+}h∈g ← { qpre 
+
+> h, 1
+
+}h∈g
+
+if L ≤ Bmax  
+
+> KV
+
+− nrecent then for each h ∈ g do 
+
+Q(h),pre obs ← Q(h),pre obs ∪ { qpre  
+
+> h
+
+}
+
+if |Q(h),pre obs | ≥ Bmax  
+
+> Q
+
+then 
+
+Q(h),pre obs ← FPS( Q(h),pre obs , B min  
+
+> Q
+
+)
+
+end if end for end if if L = Bmax  
+
+> KV
+
+− nrecent then for each h ∈ g do 
+
+Q(h),pre beacon ← FPS( Q(h),pre obs , B min  
+
+> Q
+
+)
+
+Q(h),pre recent ← ∅ 
+
+end for end if if Bmax  
+
+> KV
+
+− nrecent < L ≤ Bmax  
+
+> KV
+
+then for each h ∈ g do 
+
+Q(h),pre recent ← Q(h),pre recent ∪ {⟨ qpre  
+
+> h
+
+, t ⟩} 
+
+end for end if if L = Bmax  
+
+> KV
+
+then 
+
+Qg, pre beacon ← S 
+
+> h∈g
+
+Q(h),pre beacon 
+
+Qg, pre recent ← S 
+
+> h∈g
+
+Q(h),pre recent 
+
+Qobs ← { RoPE( q, t ) | q ∈ Qg, pre beacon } ∪ { RoPE( q, τ ) | ⟨ q, τ ⟩ ∈ Qg, pre recent }
+
+W ← AttnWeight( Qobs , C KV )Score[ j] ← max h∈g max q∈Qobs W [h, q, j ] , ∀j
+
+Ikeep ← { 1, . . . , n prefix } ∪ { L − nrecent + 1 , . . . , L }
+
+ksel ← Bmin  
+
+> KV
+
+− |I keep |Itop ← TopK(Score , k sel , exclude = Ikeep )
+
+Ifinal ← Sort( Ikeep ∪ I top )
+
+CKV ← Gather( CKV , Ifinal )
+
+for each h ∈ g do 
+
+Q(h),pre obs ← Q(h),pre beacon ∪ { q | ⟨ q, τ ⟩ ∈ Q(h),pre recent }
+
+Q(h),pre obs ← FPS( Q(h),pre obs , B min  
+
+> Q
+
+)
+
+Q(h),pre beacon ← ∅ , Q(h),pre recent ← ∅ 
+
+end for end if return CKV , {Q(h),pre obs , Q (h),pre beacon , Q (h),pre recent }h∈g
+
+16 BeaconKV: Key-Value Cache Compression Guided by Beacon Queries for Efficient Large Reasoning Model Inference Query 1068 (Global) Query 1089 (Local) Query 1090 (Global) Query 1091 (Local) Query Position Top-K Attended 
+
+<|begin_of_sentence|><|User|>Every morning Aya goes for a $9$-kilometer-long walk and stops at a coffee shop afterwards. When she walks at a constant speed of $s$ kilometers per hour, the walk takes her 4 hours, including $t$ minutes spent in the coffee shop. When she walks $s+2$ kilometers per hour, the walk takes her 2 hours and 24 minutes, including $t$ minutes spent in the coffee shop. Suppose Aya walks at $s+\frac{1}{2}$ kilometers per hour. Find the number of minutes the walk takes her, including the $t$ minutes spent in the coffee shop.\nPlease reason step by step, and put your final answer within \ boxed{}.<|Assistant|><think>\nAlright, let's tackle this problem step by step. It's about Aya's walk and the time she spends in the coffee shop. Hmm, okay, let's read the problem again to make sure I understand all the details.\n\nEvery morning, Aya goes for a 9-kilometer walk and then stops at a coffee shop. When she walks at a constant speed of s km/h, the entire trip ( walk plus coffee shop) takes her 4 hours. Out of this time, t minutes are spent in the coffee shop. When she increases her walking speed to s + 2 km/h, the entire trip takes 2 hours and 24 minutes, which is still including t minutes at the coffee shop. Now, they want to find out how long the trip takes when she walks at s + 1/2 km/h, including the t minutes at the coffee shop .\n\nOkay, so the key here is to find the value of t and the walking speed s. Once we have those, we can calculate the time when her speed is s + 1/2 km/h.\n\nLet me structure this. There are two scenarios:\n\n1. Walking speed = s km/h, total time = 4 hours, which includes t minutes at the coffee shop.\n2. Walking speed = (s + 2) km/h, total time = 2 hours 24 minutes, which also includes t minutes at the coffee shop.\n\nSince the time spent walking and the time spent at the coffee shop are the same in both scenarios, we can set up equations to relate them.\n\nFirst, let's convert all time units to hours or minutes consistently. It might be easier to convert everything to hours because speed is in km/h.\n\nGiven that 4 hours is the total time in the first scenario, and t minutes is spent at the coffee shop, so the time spent walking is 4 - (t/60) hours.\n\nSimilarly, in the second scenario, the total time is 2 hours and 24 minutes. Let me convert 24 minutes to hours: 24/60 = 0.4 hours. So total time is 2.4 hours. Therefore, the time spent walking is 2.4 - (t/60) hours.\n\nThe walking distance is 9 km in both cases , so we can write two equations based on speed = distance/time.\n\nFirst scenario: s = 9 / (4 - t/60)\nSecond scenario: s + 2 = 9 / (2.4 - t/60)\n\nSo we have two equations:\n\n1. s = 9 / (4 - t/60)\n2. s + 2 = 9 / (2.4 - t/60)\n\nOur goal is to solve for s and t. Let me denote t/60 as a variable, say x, to simplify the equations. So let x = t/60, which means t = 60x.\n\nThen the equations become:\n\n1. s = 9 / (4 - x)\n2. s + 2 = 9 / (2.4 - x)\n\nNow, we can substitute s from the first equation into the second equation.\n\nFrom equation 1: s = 9 / (4 - x)\n\nSubstitute into equation 2:\n\n9 / (4 - x) + 2 = 9 / (2.4 - x)\n\nLet me write this equation out:\n\n9/(4 - x) + 2 = 9/(2.4 - x)\n\nNow, let's solve for x.\n\nFirst, let's subtract 9/(4 - x) from both sides:\n\n2 = 9/(2.4 - x) - 9/(4 - x)\n\nLet me compute the right-hand side:\n\nCompute 9/(2.4 - x) - 9/(4 - x)\n\nFactor out 9:\n\n9 [1/(2.4 - x) - 1/(4 - x)] = 9 [ (4 - x - 2.4 + x) / ((2.4 - x)(4 - x)) ]\n\nSimplify numerator inside the brackets:\n\n4 -x - 2.4 + x = (4 - 2.4) + (-x + x) = 1.6 + 0 = 1.6\n\nSo, we have:\n\n9 * [1.6 / ((2.4 - x)(4 - x))] = 2\n\nSo:\n\n14.4 / ((2 .4 
+
+Figure 9. Full token-level visualization of top-K attended positions for representative global and local queries in an AIME24 sample-0 on R1-Distill-Qwen-7B (Layer 18, Head 16). Colored underlines indicate the tokens most strongly attended to by each query. Global queries corresponding to Thought Revisiting Tokens (tokens 1068 and 1090) revisit earlier problem constraints and high-level solving plans, whereas local queries (tokens 1089 and 1091) mainly attend to nearby steps. 
+
+17

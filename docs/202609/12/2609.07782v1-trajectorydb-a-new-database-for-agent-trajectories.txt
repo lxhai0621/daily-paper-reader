@@ -1,0 +1,312 @@
+Title: TrajectoryDB: A New Database for Agent Trajectories
+
+URL Source: https://arxiv.org/pdf/2609.07782v1
+
+Published Time: Wed, 09 Sep 2026 03:11:52 GMT
+
+Number of Pages: 8
+
+Markdown Content:
+# TrajectoryDB: A New Database for Agent Trajectories [Vision] 
+
+# Yunjia Zheng 
+
+Harvard University Cambridge, United States yunjia_zheng@g.harvard.edu 
+
+# Juncheng Yang 
+
+Harvard University Cambridge, United States juncheng@seas.harvard.edu 
+
+## ABSTRACT 
+
+AI agents generate rich execution trajectories that capture their interactions with large language models, tools, and external environ-ments. These trajectories are increasingly valuable for downstream tasks such as memory extraction, model fine-tuning, runtime op-timization, and security and cost monitoring. Yet trajectory data today is fragmented across files, databases, and observability sys-tems, with no persistent data management system designed around its unique structure and access patterns. We argue that trajectories should be treated as a distinct data type. A trajectory combines hierarchical execution structure, large volumes of text whose analysis often requires semantic reason-ing, and rich dependencies and lineage among events, intermediate states, and derived artifacts. These properties introduce new require-ments throughout the data lifecycle. Ingestion must reconstruct and preserve execution structure and lineage; storage must efficiently organize large but highly redundant contexts while maintaining relationships among records; and query processing must jointly reason over structure, temporal order, semantics, and lineage. We therefore envision TrajectoryDB , a trajectory-native data management system that co-designs ingestion, storage, and query processing to efficiently manage and analyze agent execution tra-jectories. 
+
+PVLDB Reference Format: 
+
+Yunjia Zheng and Juncheng Yang. TrajectoryDB: A New Database for Agent Trajectories [Vision]. PVLDB, 20(1): XXX-XXX, 2027. doi:XX.XX/XXX.XX 
+
+PVLDB Artifact Availability: 
+
+The source code, data, and/or other artifacts have been made available at URL_TO_YOUR_ARTIFACTS. 
+
+## 1 INTRODUCTION 
+
+Large language models (LLMs) generate text from an input se-quence. An agent places an LLM in a runtime loop: when the model response contains a tool call, the runtime executes it in the environ-ment and feeds the result into the next model invocation [62]. This loop turns model outputs into actions and allows tasks to unfold over many rounds of reasoning, interaction, and execution. Agents are now used for repository-level software engineering [59], end-to-end data analysis [26], and customer-service workflows combining user interaction with domain-specific APIs [61]. Their adoption is 
+
+> This work is licensed under the Creative Commons BY-NC-ND 4.0 International License. Visit https://creativecommons.org/licenses/by-nc-nd/4.0/ to view a copy of this license. For any use beyond those covered by this license, obtain permission by emailing info@vldb.org. Copyright is held by the owner/author(s). Publication rights licensed to the VLDB Endowment. Proceedings of the VLDB Endowment, Vol. 20, No. 1 ISSN 2150-8097. doi:XX.XX/XXX.XX
+
+also moving rapidly into production. On OpenRouter, agent-driven token consumption grew roughly 14 × from February to August 2026 and reached nearly 5 × that of human-driven usage [2]. As agents interact with models and their environments, they generate a rich execution history, or trajectory . A trajectory records the messages sent to the LLM, model responses, tool calls, tool results, and associated runtime state. These trajectories are increas-ingly treated as persistent datasets rather than ephemeral logs. They can be mined for reusable memories that guide future behav-ior, reused as training data for model fine-tuning, and analyzed for failure diagnosis and safety control [13, 20, 40]. By connecting agent behavior with the underlying runtime, trajectories also sup-port performance diagnosis, cost attribution, and resource-aware scheduling [34, 36, 57]. Yet existing systems manage only fragments of the trajectory life-cycle. Research systems commonly store trajectories as JSONL files and process them using task-specific Python pipelines [24, 46, 60, 64, 65]. Such pipelines preserve the raw trajectory but provide little support for persistent, reusable derived state or declarative queries. Production memory systems such as Mem0 [14] and Letta [32] take the opposite approach: they persist extracted memories using struc-tured storage, similarity search, and graph retrieval, but typically expose only task-specific derived state rather than the complete relationship between that state and its source trajectory. Security and observability systems ingest agent activity into mature log stores [43], but their data models are designed around individual events. Reconstructing the context visible to a model invocation, traversing a subtrajectory, or tracing a semantic judgment back to the exact messages and tool results that support it therefore requires application-specific processing. Across these approaches, raw trajectories, derived state, runtime telemetry, and processing logic remain fragmented across files, databases, and scripts. We argue that trajectories constitute a distinct data-management workload because several challenging properties appear together. First, trajectories have nested and ordered execution structure :a session contains turns, model invocations, tool calls, messages, and potentially branches, retries, and subagents. Second, their dom-inant payload is free-form text , so many important predicates require semantic evaluation rather than exact matching. Third, trajectories are highly redundant : successive model invocations often repeat much of the same context, causing large volumes of duplicated text to be stored and processed. Finally, trajectory pro-cessing creates rich derived state and lineage . A memory may depend on several messages, a failure judgment on a particular tool result and model response, and a training label on the context eval-uated by a specific judge model and criterion. Efficiently managing such data therefore requires reasoning jointly over structure, order, semantics, redundancy, and provenance. arXiv:2609.07782v1 [cs.DB] 7 Sep 2026 These properties create opportunities for cross-layer optimiza-tion that are difficult to realize when trajectories are split across log stores, vector databases, and task-specific pipelines. For example, a trajectory system should support queries such as: finding tool calls preceded by unsupported model claims; retrieving failures semantically similar to a given case together with the evidence used to classify them; or identifying model invocations that repeat-edly process redundant context and correlating them with runtime cost. Such queries combine structural traversal, semantic predicates, temporal ordering, and provenance in a single analysis. 
+
+We therefore envision TrajectoryDB , a trajectory-native data management system that treats raw trajectories and their derived data as first-class citizens. 
+
+TrajectoryDB provides a unified data model for execution records, their structural and temporal relationships, semantic annotations, and derived state, together with query operators that jointly reason over structure, order, semantics, and lineage. Rather than layering independent document, vector, graph, and log systems, Trajecto-ryDB co-designs ingestion, storage, and query processing around trajectory-specific access patterns and redundancies. Our goal is to make agent trajectories as natural to store, query, and optimize as documents are in document databases or time-series data are in time-series databases. 
+
+## 2 TRAJECTORY AS A NEW DATA TYPE 2.1 Agent Trajectory 
+
+Agent trajectory. An agent can be viewed as a runtime loop that orchestrates interactions between a model and its environment. The basic unit of communication between an agent and the model is a message , which contains a role and its associated content . There are typically four roles: system refers to the system prompt, which specifies instructions that always apply, user provides user input, 
+
+assistant records model responses, and tool captures results returned by external tools. To decide what to do next, the agent sends the model a request containing the current context , i.e., the accumulated messages till now and other relevant states, and re-ceives a response that it may then execute. We refer to one such model request and its resulting execution as a step . A user input can trigger multiple steps before the agent returns a response to the user, which forms a turn . A task often spans multiple turns, and the resulting sequence of turns forms a session . We call the sequence of requests 1, messages, and tool executions produced while completing a task as an agent trajectory .
+
+Execution configuration. Beyond the trajectory itself, agent exe-cution also produces information often queried alongside it, includ-ing the configuration used to instantiate the agent and telemetry from the underlying system. A trajectory often also records the components and settings that shaped its execution, including the model, available tools and their versions, and sampling parameters such as temperature and random seed. Together, this metadata de-scribes the environment in which the agent interacted and supports reproducibility, debugging, and comparison across runs. 
+
+Operational telemetry. A trajectory may also include system-level measurements associated with its execution. Time to first      
+
+> 1Each request carries an accumulative context. Session
+> Turn 1.
+> Turn 2...
+> step 2...
+> step 1
+> Tool
+> Context
+> Assist.
+> Context
+> User System
+> Session
+> Subagent 1
+> Turn 1 Forked
+> Turn 2
+> ...
+> Turn 2
+> ...
+> Turn 1
+> Trajectory
+> Telemetry
+> Turn Latency TTFT
+> Config. model tokenizer
+> System: You are a
+> helpful assistant ...
+> User: SWE-Bench
+> instance X, repo...
+> Assistant:Reproduce
+> the issue....
+> Tool:Search_code(),
+> result:...
+
+Figure 1: Agent trajectories can branch through subagents and forks, forming a tree of sessions. Within each session, ex-ecution follows a session-turn-step-message hierarchy. Tra-jectories are not just logs; they are evolving, structured exe-cution records with semantic content, repeated context, and derived data whose provenance matters. Existing systems each handle only part of this. Alongside the trajectory, con-figuration metadata records the model and settings that pro-duced it, while telemetry captures runtime performance. 
+
+token (TTFT) and per-step latency can support service-level agree-ment (SLA) and user-experience (UX) monitoring. Input and output token counts, together with cache-hit ratios, can inform cost and resource optimization. Retries, rate-limit events, timeouts, and error codes provide signals for diagnosing failures and triggering opera-tional alerts. Tool call resource usage helps identify opportunities to improve agent execution. 
+
+## 2.2 Diverse Use Cases 
+
+Trajectories support a range of downstream tasks. We group six representative use cases into three categories: (A) learning from past experience, (B) analyzing and controlling agent behavior, and (C) monitoring and optimizing runtime execution. 
+
+A.1 Extracting reusable memory. Agents frequently extract mem-ory from past trajectories [24, 46, 64, 65]. These methods distill lessons from reasoning, tool calls, observations, and final task arti-facts such as a markdown-formatted webpage. The resulting mem-ory can guide future tasks without replaying the full trajectory. 
+
+A.2 Fine-tuning from successful trajectories. Trajectories also serve as training data. In rejection-sampling fine-tuning (RFT) [63], as used by SWE-Gym [47], SWE-smith [60], and R2E-Gym [28], successful trajectories are rendered into the student model’s chat template. By autoregressive optimization, successful multi-step behavior is transferred into the model. 
+
+B.1 Root-cause analysis. Trajectories support failure diagnosis and anomaly detection. For example, TRAIL [20] identifies rea-soning, planning, and system-execution errors in the trajectory; AgentRx [13] checks each step against constraints derived from tool schemas and domain policies, then uses the resulting violations to localize the first unrecoverable failure. 
+
+> 2
+
+B.2 Enforcing safety and security. Trajectories help to reveal un-safe behavior. Tool-level checks inspect allowed actions, arguments, and anomalous call sequences [22, 58], while LLM monitors inspect an agent’s reasoning for signs of test subversion or deception [11]. Importantly, a sequence can be unsafe even when each action ap-pears acceptable in isolation. OpenAI observed this behavior in long-running agents and introduced monitoring over the entire evolving trajectory rather than individual actions [40]. 
+
+C.1 Monitoring runtime health. Operational telemetry supports performance and cost monitoring. Systems such as LangSmith, Langfuse, and Datadog record model and tool executions together with latency, token usage, cost, and errors [19, 29, 30]. Persisting this telemetry enables both longitudinal analysis and post-hoc diagnosis: operators can detect regressions or cost spikes across runs and then trace an anomaly back to the model or tool call that caused it. 
+
+C.2 System resource usage and scheduling optimizations. 
+
+Agents frequently block on LLM inference and tool execution, mak-ing the scheduling order of LLM requests and tool calls a key de-terminant of end-to-end performance. Effective scheduling there-fore requires exposing agent-level dependency and critical-path information to both LLM serving engines and operating-system schedulers, enabling them to prioritize latency-critical work and allocate resources accordingly [34, 36, 57]. 
+
+## 3 TRAJECTORY-DB REQUIREMENTS 
+
+Despite the diverse use cases, these workloads repeatedly access, filter, and aggregate overlapping parts of a trajectory. We next summarize common data operations into three requirements that a database engine should support. 
+
+## 3.1 Structure-aware Retrieval 
+
+3.1.1 Session-structure retrieval. Agent trajectories are naturally hierarchical: a session contains multiple turns, each turn contains multiple agent steps, and each step contains model requests and role-specific messages. Different workloads access this hierarchy at different granularities, from entire sessions to individual steps or messages. A trajectory database should therefore expose this structure explicitly, instead of treating each trajectory as an opaque blob, to support efficient fine-grained retrieval and processing. 
+
+Session retrieval. Some workloads consume complete sessions .For example, ExpeL [65] and AutoGuide [24] compare successful and failed sessions on similar tasks to identify reusable lessons. A session, however, is not always a linear sequence when an agent spawns subagents, as shown in Figure 1. Each subagent creates a branch rooted at the step that spawned it, so session retrieval must preserve this parent-child structure. 
+
+Step retrieval. Failure diagnosis often operates at the granularity of a step. For example, AgentRx [13] derives execution rules from policies and tool definitions, then retrieves each step and checks it against those rules. Some checks depend on multiple steps. For example, detecting whether an agent asks again for information it already obtained requires comparing the current step with prior tool results in the session. 
+
+Role retrieval. Fine-tuning has to distinguish the messages based on roles . The full conversation is used as input for training, but the loss is typically computed only over tokens generated by the assistant. The roles must therefore be stored as an explicit attribute so that only assistant messages are selected efficiently. 
+
+3.1.2 Sequence retrieval. Many trajectory workloads identify pat-terns over ordered events rather than individual records. Memory extraction, for example, identifies recurring tool-use sequences and turns them into reusable lessons [24, 46]: edit → failed test → edit the same file may indicate an ineffective strategy, while search →
+
+read → edit → passing test suggests a successful one. Sequence patterns can also span different message roles and actions. A safety policy may, for example, require assistant describes action → user confirms → action , making the presence and order of the confirma-tion part of the check. Operational analysis introduces yet another 
+
+event sequence : LLM requests, retries, tool executions, and their telemetry can be matched in sequence to identify recovery behav-ior, repeated failures, or latency-critical paths. Sequence detection must therefore operate over heterogeneous trajectory events while preserving their execution order. 
+
+## 3.2 LLMs as UDFs 
+
+Trajectory analysis often requires predicates over the meaning of free-form text rather than exact matches over literals. Exposing LLM-based analysis as a general UDF allows the same semantic primitive to be reused across workloads and composed with other query operators. 
+
+3.2.1 Composing semantic and relational operators. Semantic eval-uation in trajectory queries is often embedded within a larger relational plan: its inputs are assembled from multiple records, and its output may feed downstream joins, ordering, or aggrega-tion [37, 48]. For example, consider a root-cause query that asks for the first step whose tool call violates a constraint , as in step-level failure diagnosis [13]. The engine must group records by session, assemble the context needed to judge each step, apply the semantic predicate, and then use trajectory order to select the first violating step. Other queries compose semantic judgments with telemetry. To determine whether latency spikes are associated with recovery at-tempts after tool failures, for example, the engine first uses semantic evaluation to identify failures and then joins those judgments with runtime measurements [19, 29, 30]. In these cases, semantic opera-tors need to compose with relational and order-sensitive operators throughout the query plan. 
+
+3.2.2 Incremental semantic evaluation over growing trajectories. Se-mantic predicates often operate on growing inputs, so their results must be updated statefully to remain valid as new evidence ar-rives. For example, as new sessions apply a memory, each outcome provides new evidence about whether that memory remains valid. The judge updates its prior assessment with the new outcome, and accumulated conflicts may trigger revision or invalidation of the memory. Safety monitoring follows the same pattern: as new ac-tions arrive, the judge updates its assessment of whether the agent is drifting toward unsafe or off-plan behavior. Runtime-health anal-ysis also compares a newly observed failure with recent failures to determine whether they share the same underlying fault. In each case, semantic evaluation must build on previous state and incorporate new evidence as the trajectory grows. 
+
+> 3
+
+Table 1: Mapping trajectory requirements to system challenges. Requirements C1 C2 C3 C4 C5 C6 C7 
+
+3.1.1 Session-structure retrieval ✓ ✓ ✓ ✓ ✓
+
+3.1.2 Sequence retrieval ✓ ✓ ✓
+
+3.2.1 Composing semantic and relational operators ✓ ✓ ✓ ✓
+
+3.2.2 Incremental semantic evaluation ✓ ✓ ✓
+
+3.3.1 Context reconstruction ✓ ✓ ✓ ✓
+
+3.3.2 Preserving lineage for semantic judgments ✓ ✓ ✓ ✓       
+
+> Challenges: C1: Reconstructing request hierarchies.
+> C2: Supporting graph structures over relational data.
+> C3: Reconciling conflicting physical layouts.
+> C4: Storing large text payloads efficiently.
+> C5: Enabling order-sensitive query processing.
+> C6: Co-optimizing relational and semantic operators.
+> C7: Caching semantic judgments.
+
+## 3.3 Lineage Query 
+
+3.3.1 Context reconstruction. Long-running agents often compact their context by replacing earlier messages with summaries [4, 33]. After compaction, a model request contains summaries together with recent messages rather than the full original history. Several workloads still need to recover that history. A failure mode in root-cause analysis is that an agent violates a constraint because the relevant message was summarized away. Diagnosing such failure re-quires reconstructing the pre-compaction context to identify which compaction removed the information needed. Memory verification similarly requires the original trajectory to locate the evidence to support the memory [46]. Evaluating a different compaction strategy also requires the original history so that an alternative compacted context can be constructed and replayed [33]. 
+
+3.3.2 Preserving lineage for semantic operator. TrajectoryDB should preserve not only each semantic operator result, but also its prove-nance: the evaluated input, supporting trajectory records, judge model, evaluation criterion, and other information needed to re-construct how the result was derived. For fine-tuning, an LLM judge may label whether a message is supported by its context, and the resulting label can be reused across subsequent training runs. Other use cases require finer-grained lineage. For example, linking each extracted memory or failure judgment to the specific trajectory evidence that supports it [13, 24, 46]. This lineage serves two purposes. First, it enables invalidation: if the source trajectory changes, the memory becomes stale, or the judge model or criterion is updated, the system can identify which judgments need to be reevaluated. Second, it supports provenance queries that ask what produced a judgment and which trajectory evidence supports it. Semantic judgments therefore become reusable derived data rather than outputs of one-time LLM calls. 
+
+## 4 CHALLENGES AND OPPORTUNITIES 
+
+In this section, we map the requirements above to the key chal-lenges as shown in Table 1, and discuss where existing database systems fall short. We collect a one-month trace from our produc-tion system [23] and use it to characterize agent trajectory behavior in this section. 
+
+## 4.1 Structure Reconstruction and Maintenance 
+
+Trajectory structure is scattered across timestamped requests. There-fore, TrajectoryDB should reconstruct this structure and organize it both logically and physically. 
+
+4.1.1 Reconstructing Request Hierarchy. 
+
+> Challenge: Missing structural links.
+
+When agent activity is stored as generic records, relationships among sessions, turns, steps, and messages are often implicit. With-out session identifiers, requests may need to be associated through shared context. Turn and step boundaries may likewise need to be inferred from events such as user messages and completed tool calls. Recovering the execution hierarchy therefore requires nontrivial reconstruction. 
+
+Design question: Which structures should be reconstructed eagerly? Eager reconstruction simplifies downstream queries but adds work to the ingestion path. OpenTelemetry notes that com-plex filtering and transformation can significantly reduce Collector performance [42]; ClickHouse similarly found that parsing and transformation in its OTel pipeline consumed substantial CPU, and replacing this path enabled 20 × higher throughput with less than 10% of the previous CPU footprint [16]. Conversely, retaining only timestamped records shifts reconstruction cost to every query. Tra-jectoryDB must therefore determine which structural relationships to materialize during ingestion and which to derive lazily. 
+
+> Challenge: Requests can be separated by long gaps.
+
+Requests belonging to the same long-running agent trajectory may arrive far apart in time. In fact, consecutive requests from the same workflow can be separated by hours or days, as shown in Figure 2. Moreover, while most sessions are short-lived, the tail can last weeks. The ingestion layer must therefore associate each new request with a trajectory state that may have been created much earlier. 
+
+Design question: How to maintain state for long-lived stream-ing trajectories? To correlate each incoming request with earlier requests from the same session, the ingestion layer must retain per-session state, such as accumulated context and trajectory meta-data. Stateful stream-processing systems [5, 6, 8] support such cross-record correlation, but typically rely on a notion of when re-tained state can safely be finalized or discarded, using mechanisms such as watermarks or grace periods. Agent trajectories provide no natural cutoff: a seemingly inactive session may resume hours or even days later. Setting a short inactivity bound risks prematurely splitting a single trajectory, whereas setting a long bound leaves many inactive sessions open and increases state overhead. Existing stream-processing abstractions therefore do not naturally support incremental reconstruction of long-lived agent trajectories without assuming a bounded or predictable completion window. 
+
+> 4
+
+4.1.2 Maintaining Graph Structure over Relational Data. 
+
+> Challenge: Trajectory relationships form graphs, not flat rows.
+
+Agent trajectories contain graph-structured relationships. Sub-agent execution creates tree-shaped branches, while lineage in-troduces labeled many-to-many edges: memories are derived from 
+
+evidence, judgments are supported by or inconsistent with earlier records, and failures may be caused by or repeat earlier failures. Together, these relationships form DAGs over trajectory records. 
+
+Design question: How to efficiently support both graph tra-versal and relational analytics? Relational engines can encode edges using fields such as parent_id , but traversal then requires recursive queries such as PostgreSQL recursive CTEs [53]. These queries can be expensive for deep or branching graphs and do not inherently preserve traversal order [50, 53]. Downstream sequence or window analytics must therefore reconstruct that order explic-itly [52]. Native graph engines support traversal directly, but storing large trajectory payloads can increase I/O and deserialization cost. Separating graph topology from relational payloads avoids this over-head but introduces costly cross-system coordination. SQL/PGQ integrates graph patterns with SQL [21], while Chimera [31] com-bines relational storage with native adjacency structures. However, traversal may still require joins or pointer chasing between topol-ogy and payloads. Agent trajectories are more specialized: they are append-only, mostly forest-shaped, and naturally clustered by session. Exploiting these properties may enable tighter integration of graph traversal with relational and ordered access. 
+
+## 4.2 Data Layout and Storage 
+
+4.2.1 Reconciling Conflicting Physical Layouts. 
+
+> Challenge: Use cases favor conflicting physical layouts.
+
+Trajectory workloads impose different locality requirements on the same data. Replay and context reconstruction scan full requests in session order, while sequence matching searches ordered re-quests for particular subsequences; both favor session-contiguous layouts . In contrast, role filtering, tool-pattern mining, and teleme-try analysis access only a few fields across many sessions, favoring 
+
+columnar layouts . Lineage queries introduce a third pattern, where 
+
+locality follows graph links among records rather than their session or field organization. 
+
+Design question: How should trajectories be physically or-ganized for diverse access patterns? No single layout naturally serves all three. Transactional databases such as PostgreSQL are attractive primary stores because trajectory recording often occurs alongside application state such as users, authentication, and billing. However, large analytical scans over growing trajectory volumes can become expensive. TrajectoryDB must therefore determine the primary representa-tion, which auxiliary layouts or indexes to maintain, and how to keep them consistent as trajectories continuously grow. 
+
+4.2.2 Storing Large but Redundant Text Payload.          
+
+> Challenge: Trajectories are requests with cumulative context.
+> 2We operate https://freeinference.org, which serves half a trillion tokens every month. 10 −210 010 210 410 6
+> Inter-arrival time (s)
+> 0.0 0.5 1.0
+> Fraction of Requests
+> p50: 7.83s p90: 1.7min p99: 85.3h
+> (a) 025 50 75 100
+> Divergence Position (%)
+> 0.00 0.25 0.50 0.75 1.00
+> Fraction of instances (b)
+
+Figure 2: (a) CDF of request inter-arrival time (IAT); (b) 80% of the sessions mutate the prefix during lifetime, and the figure shows a CDF of divergence position, normalized by the total session length. Data from production 2.
+
+Each turn sends the full context with all the previous turns: the 
+
+𝑛 𝑡ℎ request in the trajectory contains all the messages in the previ-ous 𝑛 − 1 turns. Continuously recording agent inputs and outputs can generate enormous amounts of text. Assuming a conservative 
+
+throughput of 2,000 output tokens/s per H100 [39] and a 50:1 input-to-output ratio [3], a 1 GW AI facility with 1,000,000 fully utilized H100s would generate roughly 102 billion logged tokens/s. At ap-proximately four bytes per token [41], naively storing all input and output tokens would require about 35 PB/day. Such large amount of text becomes the payload of the prompt column if storing the request in a table. 
+
+Design question: Should the text payload be stored inline or separately? Large payloads are often stored outside of the table. PostgreSQL, for example, splits oversized values into chunks in a separate TOAST table and accesses them through pointers [51]. This avoids filling the main table with large messages, but breaks the contiguous layout preferred by session-oriented scans. Keeping the payloads inline has the opposite problem: a page may hold only a few messages, causing unnecessary I/O and cache pollution. TrajectoryDB therefore needs a layout that keeps large text efficient to scan without letting it dominate the record storage. 
+
+> Challenge: Context is highly redundant, but not always prefix-aligned.
+
+Each request typically carries all the messages from the same session as accumulated context, often referred to as a prefix , so storing requests independently duplicates the same prefix many times. The challenge is that context sharing is not always a clean prefix. In production, we observe that 80% of the sessions have context mutation: compaction, truncation of tool results, or edits to earlier context break prefix sharing. This makes it impossible to store only the newly appended turn. For clean sessions, Figure 2b shows where sessions diverge, with each fork creating a new instance. A sample of 5,951 sessions from our production systems, 3,794 never fork and therefore contribute only one instance each. The remaining sessions fork into multiple instances and account for over 80% of all instances. These forks occur throughout the sessions without concentrating at a particular stage, while non-forking sessions account for less than 20% of all instances. 
+
+Design question: How to support prefix-aware text compres-sion and deduplication? Existing compression is unaware of request-level sharing. Database compression usually works within a page or block. If the same message appears in requests stored in different blocks, that redundancy is not shared [15, 44, 45]. Dictio-nary encoding reuses identical values across rows, but trajectory 
+
+> 5
+
+payloads are long and mostly distinct. The dictionary therefore grows to the size of the data itself without exploiting redundancy across different chunks [7]. Data exported from our production PostgreSQL instance achieves a 20 × compression ratio with Zs-tandard, compared with less than 2 × using PostgreSQL’s built-in compression. For trajectories, a new request extends an earlier con-text until compaction, truncation, or another update causes the histories to diverge. The storage engine should exploit this known sharing directly rather than rediscovering redundancy from raw bytes or literals within physical data blocks. 
+
+## 4.3 Query Language and Optimization 
+
+4.3.1 Enabling Order-Sensitive Query Processing. 
+
+> Challenge: Trajectory queries are often order-sensitive.
+
+For trajectory queries, order can determine the answer rather than merely its presentation. Sequence matching, for example, must distinguish edit → failed test → edit from edit → edit → failed test ,despite containing the same events. Likewise, a rolling reward delta is meaningful only when records are partitioned by session and ordered by request arrival [52]. The relevant order depends on query scope. Within a subagent branch, events follow a natural execution order. Across subagents, however, branches may execute concurrently, so no single total order exists. A trajectory query model must therefore support both branch-local order and partial order across branches. 
+
+Design question: How to preserve order and optimize the query plan? Current engines treat order as a local property rather than a first-class property of the query plan, while some document stores provide limited native support for ordered analytics [1, 38]. Indexes can produce records in the desired order and avoid explicit sorting [49], but subsequent joins, aggregation, or parallel execution may destroy that order. A trajectory-aware engine should therefore track order through operators, reuse existing order rather than recompute it, propagate it through lineage traversal, and explicitly represent partial order across concurrent branches. 
+
+4.3.2 Co-optimization Across Relational and Semantic Operators. 
+
+> Challenge: Semantic operators consume and produce relational data.
+
+Trajectory queries often require semantic evaluation because key information is embedded in free-form text, while the resulting judg-ments are further processed by relational operators. The optimizer must therefore choose an execution order across conventional op-erators and expensive LLM calls. Pushing a cheap telemetry filter before a semantic judge can reduce LLM invocations, whereas an early, highly selective semantic filter may avoid an expensive tra-versal. Choosing between these plans requires estimating both the cost and selectivity of relational and semantic operators. 
+
+Design question: How to define a declarative framework to integrate semantic operators into the relational plan? Exist-ing semantic-query systems typically fix the input shape of each LLM operator. LOTUS, for example, defines semantic filters over individual tuples, joins over tuple pairs, and aggregations over a declared relation [48]. Trajectory queries may instead require an LLM to consume dynamically constructed inputs—such as an or-dered subsequence, a lineage neighborhood, or accumulated session context—and then feed its judgment into subsequent relational pro-cessing. Supporting such queries requires semantic operators that compose naturally with traversal, ordering, filtering, and aggrega-tion, while remaining visible to the optimizer for joint planning. 
+
+4.3.3 Caching Semantic Results. 
+
+> Challenge: Semantic results are expensive and ephemeral.
+
+Semantic evaluation is expensive, but can be reused between queries. A memory verifier, safety monitor, and failure-analysis query may ask the same question of whether a session fails. Caching intermediate semantic results avoids such repeated LLM calls. How-ever, these results are fragile: changes to the query, trajectory state, judge model, or evaluation criterion may invalidate them. 
+
+Design question: When can a cached semantic result be safely reused? Existing semantic caches such as GPTCache [12] and Mean-Cache [25] reuse LLM outputs by matching semantically similar inputs. This is insufficient for trajectory queries, where validity depends not only on input similarity but also on the underlying trajectory state. As new steps arrive, previously cached judgments may become stale. Semantic caching for trajectories must therefore be lineage-aware : each cached result should record the trajectory state, query semantics, and model configuration on which it de-pends, so the system can identify and refresh only results affected by subsequent changes. 
+
+## 5 RELATED WORK 
+
+Semantic operators. LOTUS [48] and Palimpzest [35] provide declarative frameworks with LLM-powered operators over rela-tional data. Building on Palimpzest’s optimizations for filters and joins, Abacus [55] formalizes cost-based optimization for semantic operator systems, searching over model choice, prompting strategy, and cost–quality trade-offs. PLOP [37] further optimizes the place-ment of semantic operators, while UQE [18] uses a small model and classifier to identify candidate rows for a semantic predicate and avoid invoking an LLM on every row. Semantic operators are also used for data discovery and preprocessing. DocETL [56] uses LLM-powered operators to discover schemas and structure docu-ments into tables, while EVAPORATE [10] uses LLMs to generate extraction code for document processing. 
+
+Data lineage. Data lineage traces which input tuples contribute to each output tuple, supporting view maintenance and source-level explanation [17]. Titian [27] captures record-level lineage in dis-tributed dataflow jobs. Smoke [54] co-designs lineage capture with physical operators to achieve low capture overhead and interactive lineage queries. In contrast, GProM [9] avoids materializing lineage by rewriting queries to compute provenance on demand, trading query-time cost for zero capture overhead. 
+
+## 6 CONCLUSION 
+
+Agent trajectories are emerging as a distinct data type. They com-bine hierarchical execution structure, large volumes of text, and complex lineage relationships among trajectory records and de-rived state. Existing database systems are not designed to support these properties together. We therefore envision TrajectoryDB that co-designs ingestion, storage, and query processing to optimize the full trajectory data lifecycle. 
+
+> 6
+
+## REFERENCES 
+
+[1] Amazon Web Services. [n.d.]. Amazon DocumentDB (with MongoDB compati-bility). https://aws.amazon.com/documentdb/. Accessed: 2026-08-31. [2] Andreessen Horowitz. 2026. Charts of the Week: Winds of Thematic Change. https://www.a16z.news/p/charts-of-the-week-winds-of-thematic. OpenRouter usage data; chart by Peter Walker. [3] Alex Angus, Will Van Eaton, and Dan Fu. 2026. Benchmarking Inference at Scale: Coding Agents. Together AI Blog. https://www.together.ai/blog/coding-agent-benchmarks [4] Anthropic. 2025. Effective Context Engineering for AI Agents. https://www. anthropic.com/engineering/effective-context-engineering-for-ai-agents [5] Apache Flink. 2026. Windows: Allowed Lateness. Apache Flink Documenta-tion. https://nightlies.apache.org/flink/flink-docs-stable/docs/dev/datastream-v2/builtin-funcs/windows/ [6] Apache Kafka. 2026. Kafka Streams Core Concepts. Apache Kafka Documenta-tion. https://kafka.apache.org/25/streams/core-concepts/ [7] Apache Parquet. 2026. Parquet Encoding Definitions. Apache Parquet Documen-tation. https://parquet.apache.org/docs/file-format/data-pages/encodings/ [8] Apache Spark. 2026. Structured Streaming Programming Guide. Apache Spark Documentation. https://spark.apache.org/docs/3.5.8/structured-streaming-programming-guide.html [9] Bahareh Sadat Arab, Su Feng, Boris Glavic, Seokki Lee, Xing Niu, and Qitian Zeng. 2018. GProM: A Swiss Army Knife for Your Provenance Needs. IEEE Data Engineering Bulletin 41, 1 (2018). [10] Simran Arora, Brandon Yang, Sabri Eyuboglu, Avanika Narayan, Andrew Ho-jel, Immanuel Trummer, and Christopher Ré. 2023. Language Models Enable Simple Systems for Generating Structured Views of Heterogeneous Data Lakes. 
+
+Proceedings of the VLDB Endowment 17, 2 (2023), 92–105. [11] Bowen Baker, Joost Huizinga, Leo Gao, Zehao Dou, Melody Y. Guan, Aleksander Madry, Wojciech Zaremba, Jakub Pachocki, and David Farhi. 2025. Monitoring Reasoning Models for Misbehavior and the Risks of Promoting Obfuscation. arXiv:2503.11926 [cs.LG] https://arxiv.org/abs/2503.11926 [12] Fu Bang. 2023. GPTCache: An Open-Source Semantic Cache for LLM Ap-plications Enabling Faster Answers and Cost Savings. In Proceedings of the 3rd Workshop for Natural Language Processing Open Source Software (NLP-OSS 2023) . Association for Computational Linguistics, Singapore, 212–218. https: //doi.org/10.18653/v1/2023.nlposs-1.24 [13] Shraddha Barke, Arnav Goyal, Alind Khare, Avaljot Singh, Suman Nath, and Chetan Bansal. 2026. AgentRx: Diagnosing AI Agent Failures from Execution Trajectories. arXiv preprint arXiv:2602.02475 (2026). [14] Prateek Chhikara, Dev Khant, Saket Aryan, Taranjeet Singh, and Deshraj Yadav. 2025. Mem0: Building Production-Ready AI Agents with Scalable Long-Term Memory. arXiv preprint arXiv:2504.19413 (2025). [15] ClickHouse. 2026. Database Compression: Encodings, Codecs and Ratios. Click-House Engineering. https://clickhouse.com/resources/engineering/database-compression [16] Rory Crispin and Dale McDiarmid. 2025. Scaling Our Observability Platform Be-yond 100 Petabytes by Embracing Wide Events and Replacing OTel. ClickHouse Blog. https://clickhouse.com/blog/scaling-observability-beyond-100pb-wide-events-replacing-otel [17] Yingwei Cui, Jennifer Widom, and Janet L. Wiener. 2000. Tracing the Lineage of View Data in a Warehousing Environment. ACM Transactions on Database Systems 25, 2 (2000), 179–227. [18] Hanjun Dai, Bethany Yixin Wang, Xingchen Wan, Bo Dai, Sherry Yang, Azade Nova, Pengcheng Yin, Phitchaya Mangpo Phothilimthana, Charles Sutton, and Dale Schuurmans. 2024. UQE: A Query Engine for Unstructured Databases. In 
+
+Advances in Neural Information Processing Systems .[19] Datadog. 2026. Agent Observability. Datadog Documentation. https://docs. datadoghq.com/llm_observability/ [20] Darshan Deshpande, Varun Gangal, Hersh Mehta, et al. 2025. TRAIL: Trace Reasoning and Agentic Issue Localization. arXiv preprint arXiv:2505.08638 (2025). [21] Alin Deutsch, Nadime Francis, Alastair Green, Keith W. Hare, Bei Li, Leonid Libkin, Tobias Lindaaker, Victor Marsault, Wim Martens, Jan Michels, Filip Murlak, Stefan Plantikow, Petra Selmer, Hannes Voigt, Oskar van Rest, Domagoj Vrgoč, Mingxi Wu, and Fred Zemke. 2021. Graph Pattern Matching in GQL and SQL/PGQ. CoRR abs/2112.06217 (2021). arXiv:2112.06217 [22] FINOS. 2026. FINOS AI Governance Framework (AIR). https://air-governance-framework.finos.org/. Open-source AI governance framework for financial services; v2.0 introduces a dedicated agentic-AI risk and mitigation catalogue. Accessed August 2026. [23] FreeInference. 2026. FreeInference. Harvard SEAS. https://freeinference.org/ [24] Yao Fu, Dong-Ki Kim, Jaekyeom Kim, Sungryull Sohn, Lajanugen Logeswaran, Kyunghoon Bae, and Honglak Lee. 2024. AutoGuide: Automated Generation and Selection of Context-Aware Guidelines for Large Language Model Agents. In 
+
+Advances in Neural Information Processing Systems , Vol. 37. 119919–119948. [25] Waris Gill, Mohamed Elidrisi, Pallavi Kalapatapu, Ammar Ahmed, Ali Anwar, and Muhammad Ali Gulzar. 2025. MeanCache: User-Centric Semantic Caching for LLM Web Services. In 2025 IEEE International Parallel and Distributed Processing Symposium (IPDPS) . IEEE, 1298–1310. https://doi.org/10.1109/IPDPS64566.2025. 00117 [26] Sirui Hong, Yizhang Lin, Bang Liu, Bangbang Liu, Binhao Wu, Ceyao Zhang, Danyang Li, Jiaqi Chen, Jiayi Zhang, Jinlin Wang, Li Zhang, Lingyao Zhang, Min Yang, Mingchen Zhuge, Taicheng Guo, Tuo Zhou, Wei Tao, Robert Tang, Xiangtao Lu, Xiawu Zheng, Xinbing Liang, Yaying Fei, Yuheng Cheng, Yongxin Ni, Zhibin Gou, Zongze Xu, Yuyu Luo, and Chenglin Wu. 2025. Data Interpreter: An LLM Agent for Data Science. In Findings of the Association for Computational Linguistics: ACL 2025 . 19796–19821. [27] Matteo Interlandi, Kshitij Shah, Sai Deep Tetali, Muhammad Ali Gulzar, Se-unghyun Yoo, Miryung Kim, Todd D. Millstein, and Tyson Condie. 2015. Titian: Data Provenance Support in Spark. Proceedings of the VLDB Endowment 9, 3 (2015), 216–227. [28] Naman Jain, Jaskirat Singh, Manish Shetty, et al. 2025. R2E-Gym: Procedural Environments and Hybrid Verifiers for Scaling Open-Weights SWE Agents. arXiv preprint arXiv:2504.07164 (2025). [29] LangChain. 2026. LangSmith Observability. LangSmith Documentation. https: //docs.langchain.com/langsmith/observability [30] Langfuse. 2026. Observability & Application Tracing. Langfuse Documentation. https://langfuse.com/docs/observability/overview [31] Geonho Lee, Jeongho Park, and Min-Soo Kim. 2025. Chimera: A System Design of Dual Storage and Traversal-Join Unified Query Processing for SQL/PGQ. 
+
+Proceedings of the VLDB Endowment 18, 2 (2025), 279–292. https://doi.org/10. 14778/3705829.3705845 [32] Letta. 2026. Memory Architecture. https://docs.letta.com/. Letta documentation. [33] Yujiang Li, Zhenyu Hou, Yi Jing, Jie Tang, and Yuxiao Dong. 2026. CompactionRL: Reinforcement Learning with Context Compaction for Long-Horizon Agents. 
+
+arXiv preprint arXiv:2607.05378 (2026). [34] Chaofan Lin, Zhenhua Han, Chengruidong Zhang, Yuqing Yang, Fan Yang, Chen Chen, and Lili Qiu. 2024. Parrot: Efficient Serving of LLM-based Applications with Semantic Variable. In 18th USENIX Symposium on Operating Systems Design and Implementation (OSDI 24) . USENIX Association, Santa Clara, CA, 929–945. https://www.usenix.org/conference/osdi24/presentation/lin-chaofan [35] Chunwei Liu, Matthew Russo, Michael Cafarella, Lei Cao, Peter Baile Chen, Zui Chen, Michael Franklin, Tim Kraska, Samuel Madden, Rana Shahout, and Gerardo Vitagliano. 2025. Palimpzest: Optimizing AI-Powered Analytics with Declarative Query Processing. In CIDR .[36] Michael Luo, Xiaoxiang Shi, Colin Cai, Tianjun Zhang, Justin Wong, Yichuan Wang, Chi Wang, Yanping Huang, Zhifeng Chen, Joseph E. Gonzalez, and Ion Stoica. 2026. Agentix: An Efficient Serving Engine for LLM Agents as General Programs. In 23rd USENIX Symposium on Networked Systems Design and Implementation (NSDI 26) . USENIX Association, Renton, WA, 2443–2459. https://www.usenix.org/conference/nsdi26/presentation/luo [37] Qiuyang Mang, Yufan Xiang, Hangrui Zhou, Runyuan He, Jiaxiang Yu, Hanchen Li, Aditya Parameswaran, and Alvin Cheung. 2026. PLOP: Cost-Based Placement of Semantic Operators in Hybrid Query Plans. arXiv preprint arXiv:2604.09944 
+
+(2026). [38] MongoDB, Inc. [n.d.]. MongoDB. https://www.mongodb.com/. Accessed: 2026-08-31. [39] NVIDIA. 2025. Inference Performance for Data Center Deep Learning. NVIDIA Developer. https://developer.nvidia.com/deep-learning-performance-training-inference/ai-inference [40] OpenAI. 2026. Safety and Alignment in an Era of Long-Horizon Models. OpenAI. [41] OpenAI. 2026. Understanding and Counting Tokens. OpenAI Help Center. https: //help.openai.com/en/articles/4936856-understanding-and-counting-tokens [42] OpenTelemetry. 2025. Transforming Telemetry. OpenTelemetry Documentation. https://opentelemetry.io/docs/collector/transforming-telemetry/ [43] OpenTelemetry. 2026. Logs Data Model. https://opentelemetry.io/docs/specs/ otel/logs/data-model/. [44] Oracle. 2025. Oracle Database Concepts: Data Block Compression. Oracle Database Documentation. https://docs.oracle.com/en/database/oracle/oracle-database/23/cncpt/database-concepts.pdf [45] Oracle. 2026. InnoDB Page Compression. MySQL Reference Manual. https: //dev.mysql.com/doc/refman/8.4/en/innodb-page-compression.html [46] Siru Ouyang, Jun Yan, I-Hung Hsu, Yanfei Chen, Ke Jiang, Zifeng Wang, Rujun Han, Long T. Le, Samira Daruki, Xiangru Tang, Vishy Tirumalashetty, George Lee, Mahsan Rofouei, Hangfei Lin, Jiawei Han, Chen-Yu Lee, and Tomas Pfister. 2026. ReasoningBank: Scaling Agent Self-Evolving with Reasoning Memory. In 
+
+International Conference on Learning Representations . arXiv:2509.25140 [47] Jiayi Pan, Xingyao Wang, Graham Neubig, Navdeep Jaitly, Heng Ji, Alane Suhr, and Yizhe Zhang. 2025. Training Software Engineering Agents and Veri-fiers with SWE-Gym. In International Conference on Machine Learning (ICML) .arXiv:2412.21139. [48] Liana Patel, Siddharth Jha, Melissa Z. Pan, Harshit Gupta, Parth Asawa, Carlos Guestrin, and Matei Zaharia. 2025. Semantic Operators and Their Optimization: Enabling LLM-Based Data Processing with Accuracy Guarantees in LOTUS. 
+
+Proceedings of the VLDB Endowment 18, 11 (2025), 4171–4184. 
+
+> 7
+
+[49] PostgreSQL Global Development Group. 2026. Indexes and ORDER BY. Post-greSQL Documentation. https://www.postgresql.org/docs/14/indexes-ordering. html [50] PostgreSQL Global Development Group. 2026. Query Planning. PostgreSQL Documentation. https://www.postgresql.org/docs/17/runtime-config-query. html [51] PostgreSQL Global Development Group. 2026. TOAST: The Oversized-Attribute Storage Technique. PostgreSQL Documentation. https://www.postgresql.org/ docs/current/storage-toast.html [52] PostgreSQL Global Development Group. 2026. Window Functions. PostgreSQL Documentation. https://www.postgresql.org/docs/current/functions-window. html [53] PostgreSQL Global Development Group. 2026. WITH Queries (Common Table Expressions). PostgreSQL 18 Documentation. https://www.postgresql.org/docs/ 18/queries-with.html [54] Fotis Psallidas and Eugene Wu. 2018. Smoke: Fine-grained Lineage at Interactive Speed. Proceedings of the VLDB Endowment 11, 6 (2018), 719–732. [55] Matthew Russo, Chunwei Liu, Sivaprasad Sudhir, Gerardo Vitagliano, Michael Cafarella, Tim Kraska, and Samuel Madden. 2026. Abacus: A Cost-Based Opti-mizer for Semantic Operator Systems. Proceedings of the VLDB Endowment 19, 5 (2026), 1060–1073. https://doi.org/10.14778/3796195.3796215 [56] Shreya Shankar, Tristan Chambers, Tarak Shah, Aditya G. Parameswaran, and Eugene Wu. 2025. DocETL: Agentic Query Rewriting and Evaluation for Complex Document Processing. Proceedings of the VLDB Endowment 18, 9 (2025), 3035– 3048. [57] Yifei Wang, Hancheng Ye, Yechen Xu, Cong Guo, Chiyue Wei, Qinsi Wang, Dongting Li, Tingjun Chen, Hai Helen Li, Danyang Zhuo, and Yiran Chen. 2026. MARS: Efficient, Adaptive Co-Scheduling for Heterogeneous Agentic Systems. 
+
+arXiv preprint arXiv:2604.26963 (2026). https://arxiv.org/abs/2604.26963 [58] Wiz. 2026. AI Guardrails: Safety Controls for Responsible AI Use. https://www. wiz.io/academy/ai-security/ai-guardrails. Wiz Academy. Accessed August 2026. [59] John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao, Karthik Narasimhan, and Ofir Press. 2024. SWE-agent: Agent-Computer Inter-faces Enable Automated Software Engineering. In Advances in Neural Information Processing Systems , Vol. 37. 50528–50652. [60] John Yang, Kilian Lieret, Carlos E. Jimenez, et al. 2025. SWE-smith: Scaling Data for Software Engineering Agents. arXiv preprint arXiv:2504.21798 (2025). [61] Shunyu Yao, Noah Shinn, Pedram Razavi, and Karthik R. Narasimhan. 2025. 
+
+𝜏 -bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains. In The Thirteenth International Conference on Learning Representations .[62] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R. Narasimhan, and Yuan Cao. 2023. ReAct: Synergizing Reasoning and Acting in Language Models. In The Eleventh International Conference on Learning Represen-tations .[63] Zheng Yuan, Hongyi Yuan, Chengpeng Li, Guanting Dong, Keming Lu, Chuanqi Tan, Chang Zhou, and Jingren Zhou. 2023. Scaling Relationship on Learn-ing Mathematical Reasoning with Large Language Models. arXiv preprint arXiv:2308.01825 (2023). [64] Qizheng Zhang, Changran Hu, Shubhangi Upasani, Boyuan Ma, Fenglu Hong, Vamsidhar Kamanuru, Jay Rainton, Chen Wu, Mengmeng Ji, Hanchen Li, Urmish Thakker, James Zou, and Kunle Olukotun. 2026. Agentic Context Engineer-ing: Evolving Contexts for Self-Improving Language Models. In International Conference on Learning Representations . arXiv:2510.04618 [65] Andrew Zhao, Daniel Huang, Quentin Xu, Matthieu Lin, Yong-Jin Liu, and Gao Huang. 2024. ExpeL: LLM Agents Are Experiential Learners. In Proceedings of the AAAI Conference on Artificial Intelligence , Vol. 38. 19632–19642. https: //doi.org/10.1609/aaai.v38i17.29936
