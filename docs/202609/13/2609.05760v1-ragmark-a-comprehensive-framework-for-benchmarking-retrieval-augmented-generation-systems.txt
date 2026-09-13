@@ -1,0 +1,405 @@
+Title: RAGMark: A Comprehensive Framework for Benchmarking Retrieval-Augmented Generation Systems
+
+URL Source: https://arxiv.org/pdf/2609.05760v1
+
+Published Time: Wed, 09 Sep 2026 00:23:50 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# RAGMark: A Comprehensive Framework for Benchmarking Retrieval-Augmented Generation Systems 
+
+Zlatan Feric ∗, Amir Taherin ∗, Bin Ren ‡, Yanzhi Wang ∗, Jennifer Dy ∗, David Kaeli ∗∗Northeastern University, Boston, MA, USA ‡College of William & Mary, VA, USA {feric.z, taherin.a, yanzhiwang, j.dy, d.kaeli}@northeastern.edu bren@cs.wm.edu 
+
+Abstract —We present RAGMark, a modular benchmarking framework for advanced Retrieval-Augmented Generation (RAG) systems targeting small-scale multi-GPU environ-ments. RAGMark evaluates diverse RAG components, includ-ing retrievers, vector databases, prompt-processing methods, and generator models, while collecting detailed per-stage metrics such as latency, GPU utilization, memory consump-tion, power usage, time to first token (TTFT), throughput, and answer quality. The framework is highly extensible, separating RAG stages, timing, and resource monitoring into modular components, and is designed to efficiently sweep large configuration spaces while minimizing repeated model and database initialization overhead. Using RAGMark, we characterize five RAG workloads on open-domain QA datasets across varying retrieval depths, model scales, reranking, compression methods, and vector database configurations. We show that while autoregressive generation dominates latency in naive pipelines, context-reduction techniques shift bottlenecks across compute, memory bandwidth, and preprocessing stages. Reranking and compression produce compounding benefits: reranking reduces compression workload itself, while both jointly reduce prefill and KV-cache traversal costs, lowering energy consumption by up to 66%. We further observe strong cross-stage interactions, where small upstream context reductions cascade through downstream latency, memory traffic, and energy consumption. The RAGMark source code is publicly available at: https://github.com/zferic/RAGMark. 
+
+Index Terms —Retrieval-Augmented Generation, Benchmark-ing, GPU profiling, LLM Inference 
+
+## 1. Introduction 
+
+Large Language Models (LLMs), such as GPT-4 [1], LLaMA3 [2], and Mistral [3], have achieved impressive results across a diverse set of Natural Language Process-ing (NLP) tasks, including question answering, summa-rization, and code generation. Despite these advances, LLMs continue to face fundamental challenges, including hallucinations, outdated world knowledge, and restricted access to domain-specific knowledge. Retrieval-Augmented Generation (RAG) [4] has emerged as a practical solution by extending LLM capabilities through an information-retrieval component that accesses an external knowledge source and augments prompts with relevant passages to improve generation quality. As RAG pipelines grow more sophisticated, understanding their computational demands has become increasingly important, particularly in locally deployed environments where data sensitivity and resource constraints are significant concerns [5], [6]. Even in a simple or naive RAG implementation, consist-ing of only retrieval and generation, system performance is shaped by a large number of parameters, including input query length, encoding model architecture and size [7], [8], database index configuration [9], [10], database size, retrieval depth, final context length, generator model archi-tecture [11], and output length. Furthermore, the allocation of resources across different RAG components can shift the computational bottleneck. For example, retrieval performed on a CPU versus a GPU can drastically change the latency characteristics. While most large-scale retrieval systems rely on CPU-resident indexes due to memory constraints, moderately sized indexes can be hosted on GPUs, resulting in a significant latency reduction, especially in long context or batch search scenarios. However, transferring indexes to GPU memory introduces additional memory overhead and may leave accelerator resources underutilized after retrieval completes. The dominant bottleneck in a RAG pipeline is therefore highly configuration dependent. Prior work suggests that LLM inference is often the primary bottleneck in RAG systems [12], while others demonstrate that bottlenecks shift depending on retrieval architecture, database placement, and model scale [13]. For example, a large CPU-resident retrieval index paired with a small generator may become retrieval-bound, whereas a GPU-resident index paired with a large generator model (e.g., Llama 70B [14]) will typically be generation-bound. In addition, many practical RAG work-loads involve large textual queries or multi-hop reasoning tasks, increasing computational demand before retrieval and generation even begin. Modern RAG pipelines have evolved beyond the classical retrieve-then-generate architecture to include additional stages such as query rewriting [15], [16], document rerank-ing [17], [18], and prompt compression [19]–[21]. These additional stages often rely on auxiliary encoder models or arXiv:2609.05760v1 [cs.PF] 4 Sep 2026 autoregressive LLMs, introducing additional inference and preprocessing overhead, while only modestly improving answer quality [22], [23]. This creates a fundamental tension between efficiency and quality, making RAG a uniquely challenging workload to characterize and optimize. Despite the growing complexity and widespread deploy-ment of RAG systems, there is currently a lack of system-atic benchmarking frameworks capable of capturing the full RAG configuration space, profiling individual pipeline stages, and analyzing resulting system-level trade-offs [22], [23]. Existing studies either focus narrowly on LLM infer-ence [12], [24] or treat RAG as a monolithic workload [13], [25], overlooking the rich interactions between embedding, retrieval, compression, reranking, and generation stages. RAG workloads present several unique challenges for workload characterization:  
+
+> •
+
+Heterogeneous Components: RAG systems com-bine multiple distinct subsystems, including em-bedding models, vector databases, rerankers, com-pressors, and autoregressive generators, each with different individual configurations and distinct com-putational and memory characteristics.  
+
+> •
+
+Complex Performance Interactions: Pipeline stages interact in non-trivial ways. For example, adding a reranking or compression method will reduce context length, but the additional com-putational overhead simultaneously increases pre-processing overhead latency and resource consump-tion, while either increasing or decreasing latency.  
+
+> •
+
+Dynamic Query-Dependent Behavior: Retrieval recall, reranking, compression effectiveness, and generation cost vary significantly across datasets, individual query complexity, and retrieved context length. Therefore, RAG exhibits different system performance across queries, so a RAG benchmark needs to adapt accordingly.  
+
+> •
+
+Large Configuration Space: Exploring combina-tions of retriever models, index types, compression methods, retrieval depths, and generator scales creates an extremely large benchmarking space that is expensive to evaluate exhaustively. To address these challenges, we present RAGMark, a user-friendly benchmarking and analysis framework tar-geted at studying small-scale multi-GPU environments. Our framework is designed to efficiently explore an extensive set of RAG configurations, while minimizing redundant computations. For example, vector databases and models are loaded once and reused across multiple experimental configurations, allowing large parameter sweeps without repeatedly rebuilding indexes or reloading models. The framework also supports dataset sampling strategies to reduce benchmarking time while preserving representative workload behavior. In addition, the framework produces detailed query-level and temporal trace logs, enabling both aggregate analysis and fine-grained per-stage profiling. The key contributions of this work include:  
+
+> Figure 1. Workflow comparison: standalone LLM vs. RAG. The factually accurate answer is shown in green.
+> •
+
+We present RAGMark, a modular and extensible benchmarking framework for end-to-end RAG char-acterization, supporting configurable retrievers [26]– [29], vector stores [9], [10], reranking methods, prompt compression techniques [19]–[21], and gen-erator models [30]–[33].  
+
+> •
+
+We develop a unified measurement infrastructure for per-query, per-stage characterization of RAG systems, including latency, energy consumption, GPU/CPU utilization, memory usage, and response quality.  
+
+> •
+
+We enable systematic exploration of the RAG design space through configuration-driven execution, in-cluding configurable retrieval and reranking depths, compression rates, model configurations, vector-index configurations, pipeline configurations, and mapping of RAG pipeline stages across CPUs and GPUs.  
+
+> •
+
+Using RAGMark, we identify and quantify cross-stage interactions across representative RAG pipelines, showing how retrieval depth, reranking, compression, model scale, and index placement shift system bottlenecks, and how upstream context reduction can propagate into downstream reductions in generation latency, memory traffic, and energy consumption. 
+
+## 2. Background 
+
+2.1. Retrieval-Augmented Generation 
+
+Retrieval-Augmented Generation (RAG) [4] extends the capabilities of LLMs by incorporating an external information-retrieval component into the generation pro-cess. A simple two-stage RAG pipeline is shown in Figure 1, comparing it against LLM-only inference. Rather than relying solely on knowledge encoded in model parameters, RAG systems retrieve relevant passages from an exter-nal knowledge source at inference time and incorporate them into the prompt provided to the generator. This approach addresses several fundamental limitations of standalone LLMs, including hallucinations [34], outdated world knowledge [35], and restricted access to domain-specific information [22]. 
+
+2.2. RAG Steps and Computational Workload 
+
+While RAG computational requirements share simi-larities with LLM inference, RAG execution comes with additional computational overhead that distinguishes it from standard LLM inference. RAG is a heterogeneous workload that combines data-intensive retrieval stages with compute-intensive intermediate and generation stages, each with distinct compute requirements and performance characteristics. 
+
+Encoding stage: computes a dense vector representa-tion of the user query using a small language model. These models are typically smaller encoder-based transformer architectures and requires matrix operations identical to those used in LLMs, without the autoregressive generation head. However, there are much larger encoders currently listed on HuggingFace, scaling up to billions of parame-ters. Furthermore, the encoding stage can consume more computational resources if the input document is large. 
+
+Retrieval Stage: uses a dense vector representation of the input to search over a large vector index. In the simplest approach, this is performed by computing the dot product, cosine distance (or other similarity metric) between the encoded query and all index vectors, then runs sorting to retrieve the top-k closest matches (a GEMM matrix product), which are matched back to the raw text database using the index entries. The memory footprint of this index scales directly with corpus size, embedding dimensionality, and numerical precision — storing N vectors of dimension d in FP16 requires 2Nd bytes, meaning a corpus of 9.2M chunks with 768-dimensional embeddings occupies roughly 14 GB, while larger embedding models (e.g., 1536 or 3072 dimensions) double or quadruple this footprint, respectively. For modestly sized corpora such as a Wikipedia dump [36], this makes GPU placement a significant architectural decision. When the index fits in GPU memory, retrieval is fast (on the order of tens of milliseconds); when it must reside on the CPU, retrieval latency can increase by orders of magnitude [13]. The choice of index structure further affects this tradeoff, as discussed in Section 2.3. 
+
+Generation Stage: consists of autoregressive LLM inference over the retrieved context and query, whose computational complexity scales quadratically with input length [11]. LLM inference is typically decomposed into two stages: i) prefill, which processes the full input context and is compute-intensive, and ii) decode, which generates tokens autoregressively and is memory bandwidth-bound by using the KV-Cache. Beyond input length, the compute and memory requirements of LLM inference scale directly with model size. In terms of compute, a standard forward pass requires roughly 2 FLOPs per parameter per token. Con-sequently, a 7B model requires about 14 billion operations per token, while a 70B model demands roughly 140 billion operations. As a rule of thumb, storing model parameters in 8-bit precision requires roughly 1 GB per billion parameters — a 7B model requires approximately 7 GB, while a 70B model requires roughly 70 GB of GPU memory, before accounting for activations and the KV cache. In a RAG system, the dominant bottleneck is therefore highly configuration dependent. Prior work has shown that LLM inference tends to dominate when the retrieval index is small [12], while retrieval becomes the bottleneck when the index is large or CPU-bound [13]. Factors such as retrieval depth (top-k), chunk size, embedding model size, and generator model scale all influence where the bottleneck lies. In advanced RAG pipelines, inference may be invoked multiple times — before, during, or after retrieval — further compounding these costs, as we discuss in Section 2.4. 
+
+2.3. Vector Databases and Indexing 
+
+Building the Index. Before retrieval can occur, all chunks of the document corpus are encoded into embedding vectors and stored in a vector database. Index creation is handled by the FlashRAG’s preprocessing pipeline; however, the configuration choices made during this step have direct consequences for retrieval performance and memory footprint. The choice of embedding model determines vector dimensionality and encoding quality; the chunk size affects how much context is retrieved per passage; and the index type and numerical precision determine the trade-off between memory occupancy, search speed, and recall. In this work, we use the Flat index for our experiments while also examining the performance of retrieval-oriented indexing methods. 
+
+Index Type: The choice of index structure determines how this search is performed:  
+
+> •
+
+Flat : stores all embeddings explicitly and performs an exact brute-force search, guaranteeing full recall at the cost of linear scan time and full memory occupancy.  
+
+> •
+
+IVF (Inverted File Index) : partitions the embedding space into clusters and restricts search to the nearest clusters, reducing query time at the cost of some recall.  
+
+> •
+
+SQ (Scalar Quantization) : compresses embeddings by quantizing each dimension to a lower-precision scalar (e.g., FP32 to INT8), reducing memory foot-print with minimal loss in recall compared to product quantization.  
+
+> •
+
+IVF-SQ : combines IVF clustering with scalar quan-tization, offering gains in both search speed and memory efficiency. Approximate index structures may occasionally retrieve suboptimal chunks, which can degrade generation quality downstream. 
+
+2.4. Advanced RAG Pipelines 
+
+Modern RAG systems have evolved beyond the classical retrieve-then-generate paradigm to incorporate additional intermediate components. These can be broadly categorized by where they intervene in the pipeline: pre-retrieval methods, such as query rewriting [15] and web-search refine the input before retrieval, while post-retrieval methods, such as document re-ranking [17] and prompt compression [19]– [21], refine the retrieved context before generation. These methods rely on further LLM inference or encoding steps, increasing overall latency and memory footprint. However, the additional overhead can be offset by improvements in accuracy or reductions in downstream compute — prompt compression, for instance, trims the input context to the generator, directly reducing generation cost. Prompt compression, in particular, represents an impor-tant performance optimization opportunity in RAG. Hard prompt compression methods apply an auxiliary model to directly remove tokens from the retrieved context, keeping only tokens deemed important or query-relevant in order to reduce noise and accelerate downstream inference [19], [20]. However, the impact of compression is highly variable depending on the choice of compression method, generator model size, number of retrieved tokens, and compression rate — making it a non-trivial configuration decision that requires systematic analysis and benchmarking to navigate. RAG methods have also evolved in how and when retrieval occurs. Iterative RAG performs multiple passes through the retrieve-then-generate process to answer com-plex multi-hop questions, calling the generator multiple times with specific sub-goals on each iteration until a final answer is produced. Conditional RAG uses a separate model to evaluate question complexity and determine whether retrieval is necessary at all, skipping it entirely for simpler queries. In both cases, the number of inference calls becomes variable and workload-dependent, making the computational bottleneck difficult to characterize without benchmarking on representative data. 
+
+## 3. Benchmark Implementation and Measure-ment Methodology 
+
+3.1. Design Principles 
+
+Our benchmarking framework follows five principles. First, representativeness : it captures all stages of the RAG pipeline (embedding, retrieval, compression, and genera-tion) on a per-query basis rather than treating RAG as a monolithic workload. Second, modularity : the framework supports plug-and-play integration of retrievers, vector stores, compression methods, generator models, and datasets with minimal code changes. To maximize compatibility across components, it relies on standard Hugging Face interfaces [37] instead of specialized serving backends such as vLLM [38], since the goal is to characterize end-to-end RAG behavior rather than optimize serving throughput. Nevertheless, support for serving backends, such as vLLM, is under development to broaden the range of RAG deployment configurations. Third, joint evaluation :the framework measures both system performance and 
+
+> Figure 2. RAGMark overview. The framework takes configuration inputs (RAG components, database, hardware placement, evaluation datasets), executes one of two pipelines (sequential or iterative) with per-stage profiling, and produces resource, accuracy, and trace outputs for analysis.
+
+model accuracy, enabling analysis of the trade-off between computational cost and answer quality often absent in prior work [13], [39]. Fourth, efficiency : query sampling strategies allow meaningful characterization without evaluating every configuration on the full dataset. Finally, reproducibility :all experiments are deterministic and configuration-driven, ensuring results can be reliably reproduced and extended. A high level overview of our framework is illustrated in Figure 2. 
+
+3.2. Framework Implementation 
+
+The framework is organized into a set of core classes, each representing a distinct component or implementation within the RAG pipeline, as summarized in Table 1. The Generator class instruments generation with a custom LogitsProcessor to measure time-to-first-token (TTFT) and per-token decode latency at the query level. The Compressor and Reranker classes provide unified in-terfaces for compression and reranking models: compression methods are normalized to a common compression-ratio parameter r, while reranking methods are normalized to a rerank-keep parameter controlling the number of retained documents. The framework currently includes two pipeline subclasses, StandardPipeline and IterativePipeline .
+
+Sweep and Monitoring. The framework is driven by 
+
+sweep.py , which loads configuration definitions spanning database indexes, model choices, retrieval depth, compres-sion methods, evaluation sizes, and component device placement before invoking the main evaluation driver, 
+
+main.py . Within the evaluation pipeline, per-stage latency is recorded using RAGTiming , GPU and CPU power are sampled by PowerPoller , and hardware utilization traces are collected through TracePoller .TABLE 1. Core framework classes and their responsibilities.            
+
+> Class Responsibility
+> RAG Stages
+> EmbeddingModel Encodes queries via mean pooling over final hidden states
+> Key Parameters: model_name, device, quantization
+> Retriever Manages FAISS index loading, retrieval, GPU transfer, and sharding
+> Key Parameters: index_path, top_k, index_type, gpu_ids
+> Reranker Re-scores retrieved passages using a cross-encoder
+> Key Parameters: model_name, rerank_k, device
+> Compressor Unified interface over prompt compression backends
+> Key Parameters: method, compression_rate, device
+> Generator Causal LLM inference with instrumented latency measurement
+> Key Parameters: model_path, max_new_tokens, quantization, device
+> Profiling
+> RAGTiming Records per-stage latency and resource metrics for each query
+> PowerPoller Samples GPU and CPU power draw at fixed intervals
+> Key Parameters: gpu_ids, interval
+> TracePoller Collects GPU utilization and memory traces
+> Key Parameters: gpu_ids, interval
+> Pipeline
+> StandardPipeline Single-pass retrieval with optional reranking and compression
+> IterativePipeline Multi-round retrieval with interleaved generation
+> Execution Modes: single-query, batch Key Parameters: embedder, retriever, reranker, compressor, generator
+
+Run Modes. The framework supports two execution modes. In single-query mode, queries are processed indi-vidually to enable fine-grained per-query latency analysis. In batch mode, queries are processed together across all stages that support batching, enabling throughput-oriented characterization. 
+
+Hardware Deployment. Each pipeline component (the retriever, database index, reranker, compressor, and generator) can be independently assigned to CPU or GPU resources via the configuration file. Further, the database index and generation model can be distributed across multiple devices. This enables systematic evaluation of heterogeneous deployment configurations. 
+
+Integration with FlashRAG. FlashRAG [40] is an established RAG benchmark framework providing pipeline implementations, datasets, and evaluation metrics. We rely on FlashRAG for dataset download and preprocessing, FAISS [10] index creation, and QA evaluation infrastructure. However, FlashRAG is designed for accuracy evaluation rather than performance (i.e., speed) evaluation — it pro-cesses all queries in bulk (retrieve-all, then embed-all, then generate-all), making per-query profiling impractical. Our benchmarking infrastructure and performance measurement pipeline are therefore implemented completely indepen-dently. The major differences between RAGMark and exist-ing infrastructure are that RAGMark provides the per-query, per-stage measurement pipeline, including stage-interleaved execution, fine-grained profiling, NVML-based energy integration and memory attribution, unified compo-nent interfaces, configuration-driven sweep orchestration, and unified per-query data analysis scripts. We leverage existing Hugging Face models, FAISS indexing, and corpus preprocessing infrastructure. 
+
+Extensibility. Adding a generator, embedding model, or reranker to RAGMark only requires specifying the Hugging Face model identifier and device in the configuration file, while a FAISS database requires the index and corpus locations. Adding a new component type (e.g., a query rewriter) only involves implementing the corresponding component class and registering it in the pipeline, with class templates provided by the framework. 
+
+3.3. Measurement Methodology 
+
+Table 2 summarizes the key metrics collected by the framework on a per-query basis across the categories that we describe next. 
+
+3.3.1. Latency and Throughput. The framework records wall-clock timestamps at stage boundaries to measure per-stage latency for embeddings, retrieval, compression, and LLM generation. Generation latency is further decomposed into time-to-first-token (TTFT) and decode time, capturing the distinct computational characteristics of the prefill and decode stages, respectively. End-to-end latency is reported as the sum of the measured latencies across all pipeline stages for each query. Latency and throughput can be collected on either a batch or single-query basis. 
+
+3.3.2. Memory and Resource Utilization. Memory uti-lization is captured at two levels. At the device level, a background monitoring thread tracks true GPU mem-ory consumption via the NVIDIA Management Library (NVML) [41], capturing all allocations, including FAISS indices alongside PyTorch tensors. At the framework level, PyTorch memory APIs track allocations managed by Py-Torch directly [42]. Both peak and allocated GPU memory are logged per pipeline stage, enabling analysis of how memory footprint scales with configuration choices such as retrieval depth, embedding dimensionality, and model size. Host-side CPU utilization and process RSS memory are captured via psutil [43]. 
+
+3.3.3. Energy Consumption. GPU power and streaming multiprocessor (SM) occupancy are collected via a back-ground monitoring thread using NVML, with power and SM occupancy sampled from GPU registers. Per-query energy is estimated by integrating sampled power readings over the query duration. This enables comparison of total energy consumption across pipeline configurations, model scales, and retrieval depths on a per-query basis. 
+
+3.3.4. Accuracy Metrics. For each configuration, the framework evaluates generated answers against ground-truth references using Exact Match (EM), which measures whether the generated query exactly matches the reference answer. We also include ROUGE, F1, and BERTScore, which are lightweight evaluation metrics that capture partial lexical overlap and semantic similarity between generated and reference text. These metrics are deterministic reference-based evaluation methods and do not require additional LLM inference during evaluation. TABLE 2. Examples of key per-qery metrics captured by the RAG benchmarking framework.         
+
+> Category Description and Example Measurements
+> Latency Per-stage and end-to-end query latency (embedding, retrieval, reranking, compression, generation TTFT, generation decode time, end-to-end latency) Throughput Output generation throughput and response length (token throughput, generated tokens) Context Input context size throughout the retrieval pipeline (tokens before/after retrieval, reranking, and compression) GPU Memory PyTorch-managed and NVML-reported GPU memory usage (allocated memory, peak memory, NVML memory) GPU Utilization & Energy GPU activity and energy behavior during execution (power draw, energy consumption, SM utilization, memory bandwidth utilization) CPU Metrics Host-side compute and memory footprint (CPU utilization, RSS memory) Data Movement Host-device transfer activity (PCIe receive/transmit throughput)
+
+TABLE 3. RAG Benchmark Configuration Space 
+
+Axis Values 
+
+Datasets Wikipedia 2018, Wikipedia 2021, MS MARCO Embedding Models e5-small-v2, e5-base-v2, e5-large-v2 Index Types Flat (exact), IVF, IVF-SQ Retrieval Depth top-k ∈ { 0, 1, 3, 5, 10 } where top-
+
+k = 0 is LLM inference only Reranking Model ms-marco-MiniLM-L-6-v2 Reranking Depth top-r ∈ {3, 5 } retained after reranking Generator Models Llama-3.2-1B, Llama-3.2-3B, Llama-3.0-8B Compression Methods None, Selective-Context, LLMLin-gua, LLMLingua-2 Compression Rates {0.2, 0.4, 0.6, 0.8 }
+
+Batch Size {1, 2, 4, 8, 16 }
+
+Hardware Placement Per-component device assignment (retriever, vector index, compressor, generator) across CPU and GPU devices Pipeline Strategy Standard RAG, Iterative RAG Iteration Rounds {1, 2 }
+
+Quantization and Precision 4-bit, 8-bit, 16/32-bit 
+
+3.4. Configuration Space 
+
+A central goal of RAGMark is to enable systematic ex-ploration of the RAG design space. Table 3 summarizes key dimensions that can be directly specified as configuration parameters, though the framework is designed to extend beyond this. For example, integrating new generator models, rerankers, or embedding models typically requires only specifying the corresponding Hugging Face model identifier. Furthermore, parameters such as retrieval depth, re-ranking depth, compression rate, and quantization settings can be specified in the configuration. One key challenge of evaluating a large configuration space is the required benchmark execution time, which scales with both the number of configurations and the number of evaluated queries. Therefore, the framework includes an evaluation-size parameter and sampling ap-proach to select a representative subset of queries, held consistent across all configurations. In our experiments, we use a uniform random sample of 400 QA pairs from each evaluation dataset, corresponding to approximately 10% mean coverage of the evaluation sets. Holding the sample consistent across configurations enables direct comparisons, while sampling, together with minimizing repeated model and database initialization, keeps the configuration sweep practical. 
+
+3.5. Experimental Setup 
+
+3.5.1. Configuration Approach. We divide our charac-terization study into five primary cases, as outlined in Table 4. The evaluated configuration space is summarized in Table 3. To isolate the impact of different RAG pipeline configurations under a consistent deployment environment, the retriever, generator, reranker, and compressor reside on GPU0, while the database is sharded across both GPU0 and GPU1. All experiments include a warm-up phase of five queries prior to measurement to ensure steady-state execution, and reported results are averaged across multiple runs for stability. 
+
+3.5.2. Retrieval Corpus. For the retrieval corpus, we use the compressed English Wikipedia XML dump from 2018 (approximately 14 GB, excluding user and talk pages). The corpus is pre-processed using FlashRAG [40] scripts, using a soft limit of 512 words per chunk, resulting in approximately 9.2 million passages, averaging 215.5 words in length. Each passage is encoded using either e5-small-v2, e5-base-v2, or e5-large-v2, producing FAISS Flat indices of 13.9 GB, 28.2 GB, and 37.6 GB, respectively. 
+
+3.5.3. QA Evaluation Datasets. We evaluate RAG accu-racy across five open-domain QA benchmarks: Natural Questions (NQ) [44], TriviaQA [45], SQuAD [46], We-bQuestions [47], and PopQA [48]. Additionally, we include HotpotQA [49], a multi-hop question benchmark that, in addition to single-hop queries, asks more complex questions, providing a comprehensive basis for evaluating how RAG configuration choices affect generation quality. 
+
+## 4. Results 
+
+4.1. Platform Setup 
+
+Our experiments are conducted on a multi-GPU node equipped with two NVIDIA A100-SXM4-40GB GPUs (40 GB VRAM each), running NVIDIA driver 545.23.08 and CUDA 12.3. The A100 provides 312 TFLOPS FP16 via third-generation tensor cores. The host system features a 48-core Intel Xeon Gold 6240R CPU running at 2.40 GHz. TABLE 4. RAG Case Studies       
+
+> Case Pipeline Components
+> Case 1: Basic Embedding, FAISS retrieval, generation Case 2: Reranking Embedding, FAISS retrieval, cross-encoder reranking, generation Case 3: Compression Embedding, FAISS retrieval, prompt com-pression, generation Case 4: Combined Embedding, FAISS retrieval, cross-encoder reranking, prompt compression, generation Case 5: Iterative RAG Iterative embedding, FAISS retrieval, and generation over multiple rounds
+
+4.2. Case 1: Naive Pipeline Analysis 
+
+Latency: We first analyze the execution time breakdown across RAG pipeline stages in the basic retrieval configura-tion. LLM TTFT and decode dominate end-to-end latency across all models and retrieval depths, while retrieval and embedding contribute under 35 ms, even at topk=10 . FAISS latency grows from ∼7 ms at topk=1 to ∼27 ms at topk=5 ,and then increases marginally afterward, suggesting that the main computational cost lies in the search operation itself rather than in retrieving additional nearest neighbors. Embedding stays near 7 ms throughout. As expected, TTFT scales with retrieval depth (token count) for larger models. L3-8B grows from 64 ms at 
+
+topk=0 (standard LLM inference), to 185 ms at topk=5 and 322 ms at topk=10 , with the increment from topk=5 to 10 
+
+(+137 ms) exceeding the increment from topk=0 to 5, despite covering the same number of additional documents. This reflects attention’s O(n2) scaling: at short contexts, prefill is dominated by linear MLP work, but the quadratic attention term becomes dominant as context grows. L3.2-3B shows the same TTFT (53 ms, 103 ms, 170 ms) pattern, while 
+
+L3.2-1B remains linear (32 ms, 46 ms, 70 ms) because its smaller hidden dimension keeps attention cheap. Decode latency growth is model-dependent: the 8B model’s decode more than doubles from 84 ms to 204 ms across topk=0 
+
+to 10 , while the 1B latency remains nearly flat (42 ms to 69 ms). 
+
+Resource Utilization: GPU0 handles the entire generation workload, while GPU1 stays under 5% SM utilization across all configurations (see Figure 3). For L3-8B , SM utilization saturates as context grows, rising from 59.2% at topk=0 
+
+to 70.3% at topk=5 and 72.4% at topk=10 . But energy continues to climb from 87 J to 158 J across the same range. Saturated compute occupancy, with continued energy growth, signals an increasing fraction of time spent in the memory-bandwidth-bound decode region, where SMs remain busy, though are bottlenecked on data movement. 
+
+Memory: The peak GPU0 footprint is dominated by model parameters. The topk=0 no-rag baseline allocates 3.9, 7.7, and 17.6 GB for L3.2-1B , L3.2-3B , and L3-8B , respec-tively, as shown in Table 5. Adding retrieval increases the footprint by roughly 8 GB across all model sizes, increasing GPU0’s allocation for topk=10 to 12.1, 18.1, and 25.5 GB for L3.2-1B , L3.2-3B , and L3-8B , respectively. The increase reflects hosting the partial FAISS index on GPU0 alongside the generator. Memory bandwidth utilization for 
+
+L3-8B remains in the 35–37% range across retrieval depths, consistent with decode being bandwidth-limited, regardless of context length. GPU1’s footprint remains constant at 7.5 GB (the partial FAISS index), with bandwidth utilization under 2%, confirming that retrieval uses less compute than the generator. 
+
+Accuracy: ROUGE scores improve with retrieval depth and stabilize beyond topk=3 , confirming that retrieval deliv-ers its expected quality benefit across the configurations studied. 
+
+Key Insight: The naive RAG pipeline transitions be-tween different architectural bottlenecks as retrieval depth grows. At small contexts, prefill is compute-bound and decode involves a reduction in the KV cache cost. At larger contexts, attention’s quadratic scaling saturates tensor cores, while decode becomes bandwidth-bound. The result is disproportionate energy scaling on larger models (1.8 ×
+
+growth from topk=5 to topk=10 on L3-8B ), despite SM utilization plateauing: the system spends more time waiting on memory per unit of compute progress. 
+
+4.3. Case 2: Reranking Analysis 
+
+We next evaluate the reranking configuration to charac-terize how filtering retrieved documents before generation impacts the workload. 
+
+Latency: Latency results are summarized in Figure 4, and show that reranking overhead scales linearly with retrieval depth, from ∼7 ms at topk=1 to ∼24 ms at topk=10 ,reflecting the per-document cross-encoder scoring cost. By truncating the context passed to the generator, reranking moves prefill back toward the linear region: L3-8B TTFT drops from 322 ms to 165 ms at topk=10 , a 49% reduction that more than offsets the 24 ms reranking overhead. 
+
+L3.2-3B sees a 45% TTFT reduction (170 ms to 93 ms), while L3.2-1B , already in the linear region, sees a smaller absolute reduction (70 ms to 42 ms). Reranking benefits are greatest precisely where the naive pipeline suffers the most: large models at high retrieval depths. Decode follows the same logic, dropping from 204 ms to 128 ms on L3-8B at 
+
+topk=10 , as a smaller KV cache is traversed per generated token. 
+
+Energy and SM Utilization: Reranking impacts resource utilization significantly. For L3-8B at topk=10 , GPU0 SM utilization decreases from 72.4% to 67.6%, and energy falls from 157.5 J to 75.5 J, a 52% reduction which is far larger than the SM change, because energy integrates over a shorter generation period (see Figure 3, C1 to C2). GPU1’s SM utilization remains under 8%, confirming that retrieval remains unaffected since the reranker is running on GPU1. 
+
+Memory: Reranking has some effect on the peak memory footprint. At topk=10 on L3-8B , GPU0 uses 25.5 GB in the naive pipeline versus 24.9 GB with reranking. The reranker adds approximately 200 MB of memory overhead, but the reduced generation context decreases context-dependent memory usage, including KV cache pressure, TABLE 5. RAG resource usage across four different pipeline configurations. Case 1: Naive Case 2: Rerank Case 3: Compression Case 4: Combined Model top-K GPU ID J GB SM% mem% J GB SM% mem% J GB SM% mem% J GB SM% mem% L3.2-1B 0 GPU0 8.40 3.91 32.14 10.82 – – – – – – – – – – – –GPU1 6.32 1.02 0.00 0.00 – – – – – – – – – – – –5 GPU0 19.61 11.63 43.79 14.59 17.64 11.79 43.41 13.55 16.52 12.97 41.61 10.58 15.58 13.02 41.69 10.24 GPU1 9.05 7.50 13.88 2.27 8.52 7.50 13.31 2.18 7.51 7.50 11.75 1.86 7.20 7.50 11.92 1.91 10 GPU0 25.41 12.09 45.87 17.12 18.55 11.89 43.44 13.22 21.06 12.64 41.98 10.68 16.23 13.09 41.97 10.12 GPU1 11.19 7.50 11.16 1.77 8.68 7.50 12.92 2.08 7.90 7.50 9.26 1.43 7.27 7.50 11.34 1.78 L3.2-3B 0 GPU0 22.58 7.65 39.50 18.79 – – – – – – – – – – – –GPU1 11.35 1.02 0.00 0.00 – – – – – – – – – – – –5 GPU0 49.28 17.53 54.25 22.95 42.75 15.65 53.14 21.48 35.07 17.31 48.41 16.72 32.34 16.70 47.62 16.15 GPU1 17.55 7.94 8.78 1.40 15.85 7.50 9.20 1.45 13.35 7.64 8.84 1.38 12.75 7.50 9.09 1.43 10 GPU0 75.50 18.14 58.12 25.59 43.65 15.69 53.17 21.12 49.54 17.09 48.94 16.21 32.84 16.89 47.88 15.86 GPU1 22.95 7.94 6.81 1.05 16.06 7.50 8.83 1.37 15.53 7.64 7.85 1.21 12.62 7.49 8.74 1.34 L3-8B 0 GPU0 29.96 17.61 59.23 37.53 – – – – – – – – – – – –GPU1 10.94 1.02 0.00 0.00 – – – – – – – – – – – –5 GPU0 87.08 24.65 70.25 36.09 74.35 24.80 68.46 34.69 56.54 25.62 60.61 28.19 50.72 25.77 59.48 27.82 GPU1 22.35 7.50 6.81 1.08 19.87 7.50 7.15 1.11 15.92 7.50 7.55 1.17 15.11 7.50 7.87 1.23 10 GPU0 157.52 25.49 72.42 35.49 75.51 24.89 67.61 33.88 85.65 25.53 59.54 25.28 52.92 25.92 59.45 27.58 GPU1 36.27 7.50 4.81 0.74 19.98 7.50 7.07 1.09 21.03 7.50 6.61 1.02 15.18 7.50 7.74 1.19 
+
+Figure 3. Resource utilization trends across four RAG pipeline configurations. 
+
+resulting in a small net reduction in peak memory. Memory bandwidth utilization shows a small drop, from 35.5% to 33.9%, reflecting faster KV cache traversals during decode rather than a change in the bandwidth-bound nature of the workload. The footprint remains largely dominated by model weights. 
+
+Accuracy: ROUGE scores differ by less than 0.02 from the naive pipeline across all configurations, confirming that the latency and energy gains do not sacrifice quality. 
+
+Key Insight: Reranking trades a modest increase in retrieval-side overhead (linear in topk, capped at ∼24 ms) for substantial generation-side savings (49% TTFT reduction on L3-8B at topk=10). This is achieved by reducing the attention-quadratic prefill stage and shrinking the KV cache size during the decode stage. This optimization substantially reduces time and energy, while having only a small effect on peak GPU memory, which remains largely dominated by generator model weights. 
+
+4.4. Case 3: Compression Analysis 
+
+We evaluate the effect that adding an LLMLingua-2 (LLmng2) compressor has on latency and utilization. 
+
+Latency: Compression overhead scales with retrieval depth, growing from ∼22 ms at topk=1 to ∼58–64 ms at topk=10 
+
+across models, on par with FAISS retrieval. The compressor runs as a transformer-based classifier on GPU0, sharing the device with the generator. The net system-level performance gain exceeds reranking’s at high retrieval depths: for 
+
+L3-8B at topk=10 , TTFT drops from 322 ms to 108 ms, a 66% reduction, which is larger than reranking’s 49%, and decode falls from 204 ms to 111 ms. Compression outperforms reranking here because it shrinks context both across and within documents: reranking discards whole passages, while compression additionally densifies the ones it keeps, compounding the prefill and KV cache reduction. Figure 5 further breaks down latency by compression rate. As compression increases, TTFT shows the largest reduction, followed by decode latency, particularly for larger models. At the same time, higher compression rates increase the Figure 4. Latency breakdown and ROUGE scores for reranking (Case 2). 
+
+compute overhead of the compression step itself. The choice of compression method is also important. Figure 6 shows that Selective-Context (SC) is not beneficial in our pipeline because its latency overhead outweighs its gains. Therefore, all subsequent analysis uses LLMLingua-2. 
+
+Resource Utilization: Compression yields the larger en-ergy optimization compared to reranking. For L3-8B at 
+
+topk=10 , GPU0’s energy falls from 157.5 J to 85.7 J (a 46% reduction, despite compression adding 58 ms of overhead to a shared GPU), and SM utilization drops from 72.4% to 59.5% (see Figure 3, C1 to C3). The combination indicates compression moves the generator out of the saturated-compute region: prefill is small enough that tensor cores are no longer the bottleneck. The architectural caveat is that compression overhead is itself compute-bound and contends with the generator on GPU0; at smaller models sizes and retrieval depths, the compression cost can erase the generation savings. 
+
+Memory: Compression leaves the peak GPU0 footprint nearly unchanged at 25.5 GB on L3-8B , identical to the naive pipeline, because the compressor model itself occupies VRAM on GPU0 alongside the generator, offsetting the KV cache reduction. Memory bandwidth utilization, however, drops sharply, from 35.5% to 25.3% on L3-8B at topk=10 ,the largest bandwidth reduction of any single optimization (see Figure 3). 
+
+Key Insight: Similar to reranking, compression trades preprocessing overhead for generation-side savings by reducing the attention-quadratic prefill stage and shrinking the KV cache during decode, with larger gains (66% TTFT, 46% decode on L3-8B at topk=10) because it shrinks con-text both across and within passages. The compute cost depends heavily on the compressor choice (e.g., SC is much more expensive than LLMLingua2) and contends with the generator on the same GPU, so the trade only pays off when context is long enough to amortize it. 
+
+4.5. Case 4: Composition Effects: Reranking + Compression 
+
+We combine reranking and compression to evaluate whether their system benefits are complementary. The pipeline filters retrieved documents before compression, applying both context-reduction mechanisms in sequence. 
+
+Latency: The combined pipeline outperforms compression-only (C3), despite incurring additional reranking over-head. For L3-8B at topk=10 , TTFT drops from 179 ms (compression-only) to 108 ms and decode from 131 ms to 111 ms, both well below the naive baseline (322 ms and 204 ms). The expected additive overhead does not overshadow the benefits: reranking shrinks the input to the compressor, and also cuts compression cost roughly in half (130 ms to 58 ms) and more than offsetting the cost of reranking (24 ms). 
+
+Resource Utilization: The combined pipeline achieves the lowest GPU0 energy. For L3-8B at topk=10 , energy drops to 52.9 J, versus 75.5 J for reranking alone, 85.7 J for compression alone, and 157.5 J for the naive pipeline, a 66% reduction from naive. The same pattern holds across model sizes (see Figure 3, C4 column). Case 4 consistently utilizes less energy compared to Cases 2 and 3, as seen in Figure 3 with the gap widening at larger model sizes. Peak GPU0 footprint remains at 25.9 GB, dominated by model weights and the resident compressor and reranker. 
+
+Key Insight. Reranking and compression are not additive in cost, but compounding in benefit. Reranking shrinks the compressor’s input, compression densifies what reranking retains, and the generator inherits a context reduced twice. The result is the largest energy reduction in our analysis (66% on L3-8B at topk=10 ), achieved by stacking two stages that each look individually like added overhead. 
+
+4.6. Case 5: Iterative Pipeline Analysis 
+
+As an additional RAGMark use case, we change our pro-cessing paradigm, shifting to iterative RAG. Inspecting the latency trends across iterative generation passes in Figure 7, Figure 5. Impact of compression rate (r) on stage latencies using LLMLingua-2 (LLmng2) compression model. 
+
+> Figure 6. Compression latency overhead comparison between SC and LLMLingua-2.
+
+we see that the pipeline incurs retrieval and embedding overhead twice, once for each retrieval-generation iteration. Despite this additional retrieval cost, decode latency is substantially larger during the first iteration (iter 0), while the second iteration (iter 1) exhibits much shorter decode times due to differences in prompt structure. Specifically, the first prompt instructs the model to generate an expanded answer, whereas the second prompt requests a short factual response. For example, in the L3-8B model at topk=10, the first-iteration decode latency reaches 867 ms, while second-iteration decode latency decreases substantially to 102 ms. In contrast, TTFT remains relatively the same between iterations, only changing from 291 ms to 281 ms. Similar trends are observed across the 1B and 3B models. 
+
+Key Insight. Iterative RAG fundamentally changes workload scaling behavior, amplifying both retrieval and generation costs, and introducing temporal dependencies that are absent in single-pass pipelines. 
+
+4.7. Index Methods 
+
+Figure 8 shows that retrieval latency depends strongly on hardware, indexing method, and batch size. For single-query prompts (batch=1), CPU-based IVF1000 indexes out-perform GPU, with IVF1000,SQ8 reaching ∼1.1 ms versus 
+
+∼3.9 ms on a single GPU — highlighting GPU overhead and transfer cost for lightweight queries. CPU latency remains lower than GPU latency across nearly all low-batch configurations, especially for quantized IVF1000 indexes. GPU implementations scale better with batch size. At batch=12, CPU latency for IVF300,SQ4 increases to ∼56 ms, while the single-GPU equivalent remains near 34 ms, with similar trends across other IVF300 indexes. A second GPU does not always help due to synchronization overhead, but GPUs generally scale better for batched retrieval. 
+
+> Figure 7. Iterative Pipeline Analysis.
+> Figure 8. Index format impact on latency and accuracy across different device allocations.
+
+Memory footprint also matters: for the Wikipedia 2018 dataset with E5-small, compressed IVF indexes require only a few GBs versus the much larger flat index. CPUs remain attractive for large databases and deployments where inference already consumes most VRAM, while GPUs become preferable as retrieval concurrency and workload size increase. 
+
+Key Insight. Hardware placement can invert the work-load profile: the input query, query batching and database size can affect decisions about how to allocate resources to the database index. 
+
+4.8. Evaluating Trade-offs 
+
+The data generated by our benchmark allows users to easily explore trade-offs between RAG accuracy metrics and resource utilization. Here we present a short motivating example that visualizes the trade-offs in Case 1: the naive pipeline. In Figure 9, we can observe the trade-offs between the TTFT and ROUGE score. The 1B model with k=3 and k=5 achieve surprisingly competitive ROUGE score ( ∼0.33), at a very low TTFT ( ∼0.04s), which is the lowest RAG latency. With k=8, the 8B model achieves the highest ROUGE score ( ∼0.41), but with ∼5-8x higher latency. Increasing k from 3 to 10 does not consistently improve ROUGE, but does increases TTFT noticeably, especially for larger models. 
+
+## 5. Related Work 
+
+RAG systems sit at the intersection of information re-trieval and LLM inference. Prior work has largely focused on two directions: i) optimizing RAG execution and efficiency, and ii) workload characterization and benchmarking. 
+
+RAG Optimization. Recent work has explored improving RAG efficiency through pipeline parallelism, caching, and resource-aware scheduling. PipeRAG [39] and Teola [50] decompose RAG workflows into finer grained stages and executes them in a pipelined fashion, reducing latency and increasing utilization. Other systems focus on caching and reuse across repeated queries [12], [51], while resource-aware frameworks [13], [52] study placement and or-chestration strategies. These efforts focus on performance analysis and optimization rather than delivering reusable benchmarking infrastructure. 
+
+Figure 9. Trade-offs between system metrics and ROUGE scores for the naive RAG pipeline (Case 1). 
+
+Workload Characterization and Benchmarking. De-spite the growing deployment of RAG systems, compre-hensive hardware benchmarking for RAG remains lim-ited. Existing analyses largely focus on isolated LLM inference [53]–[55] without modeling the pre- and post-retrieval stages that distinguish RAG from standard gener-ation workloads. FlashRAG [40] and BERGEN [56] provide modular frameworks for evaluating RAG accuracy across pipelines and datasets, but do not focus on per-stage metrics. Shen et al. [57] characterize TTFT and tail-latency trade-offs across retrieval algorithms, but did not release a configurable benchmarking tool. Concurrent with our work, RAGPerf [58] reports system-level metrics such as throughput, memory, and utilization, but lacks support for fine-grained RAG analysis, including energy use, latency breakdowns, intermediate-stage interactions, compression rates, and pipeline configurations. It also does not capture millisecond-scale query behavior. We address this gap with a benchmark framework that treats textual RAG as a fine-grained workload, enabling detailed profiling across retrieval, compression, generation, and system execution. 
+
+## 6. Conclusion 
+
+We present a benchmarking framework for charac-terizing the architectural behavior of RAG pipelines on GPU systems. Our framework decomposes end-to-end RAG execution into per-stage latency, energy, compute utilization, memory bandwidth, and memory footprint metrics across five canonical pipeline configurations: naive, reranking, compression, combined, and iterative. We publicly release our framework, as a tool for enabling reproducible and fine grained systems analysis of RAG systems and support future exploration of pipeline designs. 
+
+## Acknowledgment 
+
+Funded in part by the National Institute of Environmen-tal Health Sciences (NIEHS) Superfund Research Program at the National Institutes of Health (NIH) grant P42ES017198, Puerto Rico Testsite for Exploring Contamination Threats (PROTECT). 
+
+## References 
+
+[1] OpenAI, “Gpt-4 technical report,” CoRR , vol. abs/2303.08774, 2023. [Online]. Available: https://arxiv.org/abs/2303.08774 [2] A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Yang, A. Fan et al. , “The llama 3 herd of models,” arXiv e-prints , pp. arXiv–2407, 2024. [3] A. Q. Jiang et al. , “Mistral 7b,” arXiv preprint arXiv:2310.06825 , 2023. [4] P. Lewis, E. Perez, A. Piktus, F. Petroni, V. Karpukhin, N. Goyal, H. Küttler, M. Lewis, W.-t. Yih, T. Rocktäschel et al. , “Retrieval-augmented generation for knowledge-intensive nlp tasks,” Advances in neural information processing systems , vol. 33, pp. 9459–9474, 2020. [5] K. Seemakhupt, S. Liu, and S. Khan, “Edgerag: Online-indexed rag for edge devices,” arXiv preprint arXiv:2412.21023 , 2024. [6] W. Yu, N. Liao, S. Luo, and J. Liu, “Ragdoll: Efficient offloading-based online rag system on a single gpu,” arXiv preprint arXiv:2504.15302 ,2025. [7] J. Devlin, M.-W. Chang, K. Lee, and K. Toutanova, “Bert: Pre-training of deep bidirectional transformers for language understanding,” in 
+
+Proceedings of the 2019 conference of the North American chapter of the association for computational linguistics: human language technologies, volume 1 (long and short papers) , 2019, pp. 4171–4186. [8] T. Wolf, L. Debut, V. Sanh, J. Chaumond, C. Delangue, A. Moi, P. Cistac, T. Rault, R. Louf, M. Funtowicz, J. Davison, S. Shleifer, P. von Platen, C. Ma, Y. Jernite, J. Plu, C. Xu, T. L. Scao, S. Gugger, M. Drame, Q. Lhoest, and A. Rush, “Transformers: State-of-the-art natural language processing,” in Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: System Demonstra-tions . Association for Computational Linguistics, 2020, pp. 38–45. [9] J. Johnson, M. Douze, and H. Jégou, “Billion-scale similarity search with gpus,” IEEE Transactions on Big Data , vol. 7, no. 3, pp. 535–547, 2019. [10] FAISS. facebookresearch/faiss: A library for efficient similarity search and clustering of dense vectors. [Online]. Available: https://github.com/facebookresearch/faiss [11] A. Vaswani, “Attention is all you need,” Advances in Neural Informa-tion Processing Systems , 2017. [12] C. Jin, Z. Zhang, X. Jiang, F. Liu, X. Liu, X. Liu, and X. Jin, “Ragcache: Efficient knowledge caching for retrieval-augmented generation,” 
+
+arXiv preprint arXiv:2404.12457 , 2024. [13] W. Jiang, S. Subramanian, C. Graves, G. Alonso, A. Yazdanbakhsh, and V. Dadu, “Rago: Systematic performance optimization for retrieval-augmented generation serving,” in Proceedings of the 52nd Annual International Symposium on Computer Architecture , 2025, pp. 974–989. [14] A. Grattafiori, A. Dubey, A. Jauhri, A. Pandey, A. Kadian, A. Al-Dahle, A. Letman, A. Mathur, A. Schelten, A. Vaughan et al. , “The llama 3 herd of models,” arXiv preprint arXiv:2407.21783 , 2024. [15] X. Ma, Y. Gong, P. He, H. Zhao, and N. Duan, “Query rewriting in retrieval-augmented large language models,” in Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing ,2023, pp. 5303–5315. [16] L. Wang, N. Yang, and F. Wei, “Query2doc: Query expansion with large language models,” arXiv preprint arXiv:2303.07678 , 2023. [17] R. Nogueira and K. Cho, “Passage re-ranking with bert,” arXiv preprint arXiv:1901.04085 , 2019. [18] R. Nogueira, Z. Jiang, R. Pradeep, and J. Lin, “Document ranking with a pretrained sequence-to-sequence model,” in Findings of the association for computational linguistics: EMNLP 2020 , 2020, pp. 708– 718. [19] H. Jiang, Q. Wu, C.-Y. Lin, Y. Yang, and L. Qiu, “Llmlingua: Com-pressing prompts for accelerated inference of large language models,” 
+
+arXiv preprint arXiv:2310.05736 , 2023. [20] Z. Pan, Q. Wu, H. Jiang, M. Xia, X. Luo, J. Zhang, Q. Lin, V. Rühle, Y. Yang, C.-Y. Lin et al. , “Llmlingua-2: Data distillation for effi-cient and faithful task-agnostic prompt compression,” arXiv preprint arXiv:2403.12968 , 2024. [21] Y. Li, B. Dong, C. Lin, and F. Guerin, “Compressing context to enhance inference efficiency of large language models,” arXiv preprint arXiv:2310.06201 , 2023. [22] Y. Gao, Y. Xiong, X. Gao, K. Jia, J. Pan, Y. Bi, Y. Dai, J. Sun, H. Wang, and H. Wang, “Retrieval-augmented generation for large language models: A survey,” arXiv preprint arXiv:2312.10997 , vol. 2, 2023. [23] S. Gupta, R. Ranjan, and S. N. Singh, “A comprehensive survey of retrieval-augmented generation (rag): Evolution, current landscape and future directions,” arXiv preprint , vol. arXiv:2410.12837, 2024, preprint. Available at https://arxiv.org/abs/2410.12837. [24] H. W. Kwon et al. , “vllm: Easy, fast, and cheap llm serving with pagedattention,” in Proceedings of the 27th ACM SIGOPS Symposium on Operating Systems Principles , 2023. [25] M. Shen, M. Umar, K. Maeng, G. E. Suh, and U. Gupta, “Hermes: Algorithm-system co-design for efficient retrieval-augmented gen-eration at-scale,” in Proceedings of the 52nd Annual International Symposium on Computer Architecture , 2025, pp. 958–973. [26] X. Hu, Z. Shan, X. Zhao, Z. Sun, Z. Liu, D. Li, S. Ye, X. Wei, Q. Chen, B. Hu, H. Wang, J. Yu, and M. Zhang, “Kalm-embedding: Superior training data brings a stronger embedding model,” 2025. [Online]. Available: https://arxiv.org/abs/2501.01028 [27] R. Wang, “intfloat/e5-small-v2,” https://huggingface.co/intfloat/ e5-small-v2, 2023. [28] ——, “intfloat/e5-base-v2,” https://huggingface.co/intfloat/e5-base-v2, 2023. [29] ——, “intfloat/e5-large-v2,” https://huggingface.co/intfloat/e5-large-v2, 2023. [30] AI@Meta, “meta-llama/llama-3.2-1b-instruct,” https://huggingface.co/ meta-llama/Llama-3.2-1B-Instruct, 2024, accessed: 2025-01-01. [31] ——, “meta-llama/llama-3.2-3b-instruct,” https://huggingface.co/ meta-llama/Llama-3.2-3B-Instruct, 2024, accessed: 2025-01-01. [32] ——, “meta-llama/llama-3-8b-instruct,” https://huggingface.co/ meta-llama/Llama-3-8B-Instruct, 2024, accessed: 2025-01-01. [33] M. AI, “Llama 3.3 70b instruct,” 2025, accessed: 2025-03-15. [Online]. Available: https://huggingface.co/meta-llama/Llama-3.3-70B-Instruct [34] L. Huang, W. Yu, W. Ma, W. Zhong, Z. Feng, H. Wang, Q. Chen, W. Peng, X. Feng, B. Qin et al. , “A survey on hallucination in large language models: Principles, taxonomy, challenges, and open questions,” ACM Transactions on Information Systems , vol. 43, no. 2, pp. 1–55, 2025. [35] I. Augenstein, T. Baldwin, M. Cha, T. Chakraborty, G. L. Ciampaglia, D. Corney, R. DiResta, E. Ferrara, S. Hale, A. Halevy et al. , “Factuality challenges in the era of large language models and opportunities for fact-checking,” Nature Machine Intelligence , vol. 6, no. 8, pp. 852–863, 2024. [36] L. Denoyer and P. Gallinari, “The wikipedia xml corpus,” SIGIR Forum ,vol. 40, no. 1, pp. 64–69, 2006. [37] T. Wolf, L. Debut, V. Sanh, J. Chaumond, C. Delangue, A. Moi, P. Cistac, T. Rault, R. Louf, M. Funtowicz, J. Davison, S. Shleifer, P. von Platen, C. Ma, Y. Jernite, J. Plu, C. Xu, T. Le Scao, S. Gugger, M. Drame, Q. Lhoest, and A. Rush, “Transformers: State-of-the-art natural language processing,” in 
+
+Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing: System Demonstrations . Online: Association for Computational Linguistics, Oct. 2020, pp. 38–45. [Online]. Available: https://aclanthology.org/2020.emnlp-demos.6 [38] W. Kwon, Z. Yang, S. Zhuang, L. Jin, C. Zheng, X. Yu, J. E. Gonzalez, I. S. Zhang et al. , “Efficient memory management for large language model serving with pagedattention,” Proceedings of the 29th Symposium on Operating Systems Principles , 2023. [39] W. Jiang, S. Zhang, B. Han, J. Wang, B. Wang, and T. Kraska, “Piperag: Fast retrieval-augmented generation via algorithm-system co-design,” 
+
+arXiv preprint arXiv:2403.05676 , 2024. [40] J. Jin, Y. Zhu, Z. Dou, G. Dong, X. Yang, C. Zhang, T. Zhao, Z. Yang, and J.-R. Wen, “Flashrag: A modular toolkit for efficient retrieval-augmented generation research,” in Companion Proceedings of the ACM on Web Conference 2025 , 2025, pp. 737–740. [41] NVIDIA Corporation, NVIDIA Management Library (NVML) API Reference Guide , NVIDIA, 2026, accessed: 2026-05-20. [Online]. Available: https://docs.nvidia.com/deploy/nvml-api/ [42] A. Paszke, S. Gross, F. Massa, A. Lerer, J. Bradbury, G. Chanan, T. Killeen, Z. Lin, N. Gimelshein, L. Antiga et al. , “Pytorch: An imperative style, high-performance deep learning library,” in Advances in Neural Information Processing Systems , vol. 32, 2019. [43] G. Rodola, “psutil,” https://github.com/giampaolo/psutil, accessed: 2026-05-20. [44] T. Kwiatkowski, J. Palomaki, O. Redfield, M. Collins, A. Parikh, C. Alberti, D. Epstein, I. Polosukhin, J. Devlin, K. Lee, K. Toutanova, L. Jones, M. Kelcey, M.-W. Chang, A. M. Dai, J. Uszkoreit, Q. Le, and S. Petrov, “Natural questions: A benchmark for question answering research,” Transactions of the Association for Computational Linguistics , vol. 7, pp. 453–466, 2019. [Online]. Available: https://aclanthology.org/Q19-1026 [45] M. Joshi, E. Choi, D. Weld, and L. Zettlemoyer, “TriviaQA: A large scale distantly supervised challenge dataset for reading comprehension,” in Proceedings of the 55th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2017, pp. 1601–1611. [Online]. Available: https: //aclanthology.org/P17-1147 [46] P. Rajpurkar, J. Zhang, K. Lopyrev, and P. Liang, “SQuAD: 100,000+ questions for machine comprehension of text,” in 
+
+Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing , 2016, pp. 2383–2392. [Online]. Available: https://aclanthology.org/D16-1264 [47] J. Berant, A. Chou, R. Frostig, and P. Liang, “Semantic parsing on Freebase from question-answer pairs,” in Proceedings of the 2013 Conference on Empirical Methods in Natural Language Processing , 2013, pp. 1533–1544. [Online]. Available: https://aclanthology.org/D13-1160 [48] A. Mallen, A. Asai, V. Zhong, R. Das, D. Khashabi, and H. Hajishirzi, “When not to trust language models: Investigating effectiveness of parametric and non-parametric memories,” in Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , 2023, pp. 9876–9890. [Online]. Available: https://aclanthology.org/2023.acl-long.546 [49] Z. Yang, P. Qi, S. Zhang, Y. Bengio, W. W. Cohen, R. Salakhutdinov, and C. D. Manning, “HotpotQA: A dataset for diverse, explainable multi-hop question answering,” in Conference on Empirical Methods in Natural Language Processing (EMNLP) , 2018. [50] X. Tan, Y. Jiang, Y. Yang, and H. Xu, “Teola: Towards end-to-end op-timization of llm-based applications,” arXiv preprint arXiv:2407.00326 ,2024. [51] J. Yao, H. Li, Y. Liu, S. Ray, Y. Cheng, Q. Zhang, K. Du, S. Lu, and J. Jiang, “Cacheblend: Fast large language model serving for rag with cached knowledge fusion,” in Proceedings of the Twentieth European Conference on Computer Systems , 2025, pp. 94–109. [52] W. Jiang, M. Zeller, R. Waleffe, T. Hoefler, and G. Alonso, “Chameleon: a heterogeneous and disaggregated accelerator system for retrieval-augmented language models,” arXiv preprint arXiv:2310.09949 , 2023. [53] Z. Zhou, X. Ning, K. Hong, T. Fu, J. Xu, S. Li, Y. Lou, L. Wang, Z. Yuan, X. Li et al. , “A survey on efficient inference for large language models, 2024,” URL https://arxiv. org/abs/2404.14294 , 2024. [54] A. Agrawal, N. Kedia, J. Mohan, A. Panwar, N. Kwatra, B. S. Gula-vani, R. Ramjee, and A. Tumanov, “Vidur: A large-scale simulation framework for llm inference,” Proceedings of Machine Learning and Systems , vol. 6, pp. 351–366, 2024. [55] C. Niu, W. Zhang, J. Li, Y. Zhao, T. Wang, X. Wang, and Y. Chen, “Tokenpowerbench: Benchmarking the power consumption of llm inference,” arXiv preprint arXiv:2512.03024 , 2025. [56] D. Rau, H. Déjean, N. Chirkova, T. Formal, S. Wang, S. Clinchant, and V. Nikoulina, “Bergen: A benchmarking library for retrieval-augmented generation,” in Findings of the Association for Computa-tional Linguistics: EMNLP 2024 , 2024, pp. 7640–7663. [57] M. Shen, M. Umar, K. Maeng, G. E. Suh, and U. Gupta, “Towards understanding systems trade-offs in retrieval-augmented generation model inference,” arXiv preprint arXiv:2412.11854 , 2024. [58] S. Li, Y. Zhou, Y. Xu, K. Chen, D. Waddington, S. Sundararaman, H. Franke, and J. Huang, “Ragperf: An end-to-end benchmark-ing framework for retrieval-augmented generation systems,” arXiv preprint arXiv:2603.10765 , 2026. 7. Artifact Appendix 
+
+7.1. Abstract 
+
+RAGMark is a hardware benchmarking framework for advanced Retrieval-Augmented Generation (RAG) pipelines. The submitted code artifact contains the implementation used to generate the experimental results presented in the corresponding sections of the paper. This appendix describes how to access the code artifact, install it on supported hardware, and reproduce the reported results. To facilitate evaluation, we also provide access to a remote execution environment that allows reviewers to run the benchmark and generate the data required to reproduce three figures from the paper. 
+
+7.2. Artifact check-list (meta-information)                      
+
+> •Program: Advanced dense-retrieval RAG benchmarking tool supporting a wide range of configurations (embed, FAISS search, optional rerank/compression, LLM genera-tion), and both standard and iterative pipelines.
+> •Hardware: NVIDIA GPU. Paper results: 2 ×A100-SXM4-40GB. Artifact evaluation machine: 2 ×V100-PCIE-16GB. CPU/single-GPU subsets also supported.
+> •Metrics: RAG Accuracy: (EM, F1, ROUGE-L, retrieval recall); Hardware performance (latency, TTFT, throughput, GPU power/energy, utilization).
+> •Output: Per-query CSV/JSONL (accuracy, timing, energy, traces).
+> •Experiments: Three reproducible experiments corre-sponding to paper figures: (1) reranking latency/accuracy (Fig. 4), (2) compression-rate latency (Fig. 5), (3) TTFT-vs-ROUGE trade-off (Fig. 9).
+> •Time required?: ∼1 hour for all experiments and figures.
+> •Disk space required?: ∼65GB total for data and code (FAISS index, cached model weights, and the Wikipedia corpus dominate). This excludes the ∼10GB Docker image.
+> •Publicly available?: Yes (GitHub: https://github.com/ zferic/RAGMark; Zenodo: https://doi.org/10.5281/zenodo. 22058207).
+> •Badges Applied For: Available, Reviewed, and Repro-ducible.
+
+7.3. Description 
+
+7.3.1. How to access. https://github.com/zferic/RAGMark, archived at DOI: https://doi.org/10.5281/zenodo.22058207. 
+
+7.3.2. Hardware dependencies. The artifact evaluation re-produces three experiments using a machine equipped with 2× NVIDIA V100-PCIE-16GB GPUs. The corresponding paper results were collected on 2 × NVIDIA A100-SXM4-40GB GPUs, which are not available for remote access. As a result, absolute latency, energy, and memory measurements will differ from those reported in the paper. However, the experiments remain reproducible on equiv-alent hardware and demonstrate RAGMark’s portability across hardware platforms. 
+
+7.3.3. Software dependencies. The provided execution environment includes all required software dependencies, in-cluding Docker, CUDA, Python, and the necessary machine learning libraries. No additional installation is required for artifact evaluation. For local installation on a new system, all Python dependencies are listed in requirements.txt , with additional setup steps described in the project README. 
+
+7.3.4. Data sets. The retrieval corpus consists of the 2018 Wikipedia dump ( ∼9.2M passages). Evaluation datasets include NQ, TriviaQA, SQuAD, WebQuestions, PopQA, and HotpotQA (via FlashRAG). 
+
+7.4. Installation 
+
+7.4.1. Artifact Evaluation. We provide a remote execution environment reachable via SSH, requiring reviewers to execute only a single script. Login credentials for a shared reviewer account are provided via HotCRP, with no personal registration required. 
+
+ssh <username>@129.10.225.5 cd RAGMark bash ae_evaluation/ae_eval.sh 
+
+7.4.2. From Scratch. To install RAGMark from scratch on a new system instead (not needed for AE), follow these steps: 
+
+git clone https://github.com/zferic/RAGMark.git cd RAGMark python -m venv .venv source .venv/bin/activate pip install -r requirements.txt # faiss-gpu (or faiss-cpu) conda install -c pytorch -c nvidia \ faiss-gpu=1.8.0 # edit config.py: HF_HOME, BASE_OUT, # WIKI_INDEX_DIR, WIKI_CORPUS_2018, DATASET_DIR # build/place a FAISS index (Flat/IVF/IVF-SQ) under # WIKI_INDEX_DIR via FlashRAG, plus the corpus JSONL # and FlashRAG eval JSONL files under DATASET_DIR 
+
+7.5. Experiment workflow 
+
+The provided script, ae_evaluation/ae_eval.sh ,launches the prepared Docker environment, executes the evaluation experiments, and runs the analysis notebook in headless mode. Upon completion, all reproduced figures are written to ae_evaluation/figures/ .The script executes the following experiments, fol-lowed by the analysis notebook (executed headlessly), which renders the reproduced figures directly to 
+
+ae_evaluation/figures/ :• Case 1 – Naive Pipeline Analysis / Trade-offs (Sections 4.2 & 4.8, Fig. 9): Evaluates the latency– accuracy trade-offs of the baseline RAG pipeline across multiple retrieval depths.  
+
+> •
+
+Case 2 – Reranking Analysis (Section 4.3, Fig. 4): 
+
+Evaluates the latency and accuracy trade-offs of document reranking across multiple retrieval depths.  
+
+> •
+
+Case 3 – Compression Analysis (Section 4.4, Fig. 5): Evaluates the impact of prompt compression on retrieval and generation performance. 
+
+7.6. Evaluation and expected results 
+
+Running ae_evaluation/ae_eval.sh automatically ex-ecutes the evaluation experiments and the accompanying analysis notebook. Upon completion, the reproduced figures are written to ae_evaluation/figures/plots/ along with the aggregated CSV files used to generate each figure in 
+
+ae_evaluation/figures/data/ . Reviewers should expect to reproduce the following figures from the paper:  
+
+> •
+
+Case 1 – Naive Pipeline Analysis (Sections 4.2 & 4.8, Fig. 9)  
+
+> •
+
+Case 2 – Reranking Analysis (Section 4.3, Fig. 4)  
+
+> •
+
+Case 3 – Compression Analysis (Section 4.4, Fig. 5)
