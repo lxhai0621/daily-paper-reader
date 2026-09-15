@@ -1,0 +1,384 @@
+Title: Pre-retrieval Query Clustering for Adaptive Top-k Document Retrieval in RAG Systems
+
+URL Source: https://arxiv.org/pdf/2609.13489v1
+
+Published Time: Tue, 15 Sep 2026 00:16:27 GMT
+
+Number of Pages: 8
+
+Markdown Content:
+# Pre-retrieval Query Clustering for Adaptive Top-k Document Retrieval in RAG Systems 
+
+# Ye Xia ∗
+
+Portland State University Portland, OR, USA xia2@pdx.edu 
+
+# Emre Yamangil 
+
+EvenUp San Francisco, CA, USA emre.yamangil@evenup.ai 
+
+# Haixun Wang 
+
+EvenUp San Francisco, CA, USA haixun.wang@evenup.ai 
+
+## Abstract 
+
+RAG systems commonly retrieve a fixed number of documents (top-k) to ground generation, but this static approach is brittle: simple queries suffer over-retrieval (adding noise and cost) while complex queries are under-retrieved, causing recall failures that cascade into incorrect answers. Motivated by the question of how many docu-ments must be retrieved to answer an arbitrary query reliably, we propose a practical, general framework for query-adaptive retrieval depth. Offline, we estimate per-query retrieval difficulty by measur-ing NDCG under the default retriever and deriving a query-specific “saturation” point k* from the NDCG–k curve. Because computing these signals online is expensive, we cluster a large set of queries in embedding space and summarize each cluster with a recommended retrieval depth that targets high coverage (e.g., ~95%) using a mean-plus-variance rule. At runtime, the system assigns an incoming query to a cluster and selects the corresponding top-k in constant time. Compared with post-retrieval confidence methods that rely on clustering retrieved documents, our approach is pre-retrieval and query-centric, making it robust in heterogeneous, case-like corpora and applicable across domains such as legal, healthcare, finance, and enterprise search. Finally, this framework has been tested in full-traffic queries that improved 𝐹 1 by over 36% while reducing token usage by 14% on low-complexity clusters without accuracy loss. 
+
+## CCS Concepts 
+
+• Information systems → Information retrieval query pro-cessing .
+
+## Keywords 
+
+Retrieval-Augmented Generation, Adaptive Top-k Selection, Query Performance Prediction, Query Difficulty 
+
+ACM Reference Format: 
+
+Ye Xia, Emre Yamangil, and Haixun Wang. 2026. Pre-retrieval Query Cluster-ing for Adaptive Top-k Document Retrieval in RAG Systems. In Proceedings of the 35th ACM International Conference on Information and Knowledge Management (CIKM ’26), November 7–11, 2026, Rome, Italy. ACM, New York, NY, USA, 8 pages. https://doi.org/10.1145/3799682.3840135 
+
+> ∗This work was performed when the author was at EvenUp.
+> This work is licensed under a Creative Commons Attribution 4.0 International License.
+> CIKM ’26, Rome, Italy.
+> © 2026 Copyright held by the owner/author(s). ACM ISBN 979-8-4007-2539-5/2026/11 https://doi.org/10.1145/3799682.3840135
+
+## 1 Introduction 
+
+Adaptive retrieval depth is a general-purpose problem in Retrieval-Augmented Generation (RAG) systems. RAG grounds LLM responses in external knowledge—documents, manuals, code, internal wikis— by retrieving relevant material and placing it into the model’s con-text before generation. In practice, most RAG systems still rely on a static top-𝑘 retrieval rule [11, 16]: encode the query, retrieve the 
+
+𝑘 nearest documents, and feed them all to the model as context. While simple and robust, static top-𝑘 is fundamentally mismatched to real user behavior: narrow questions often need only a small, pre-cise snippet , while broad, ambiguous, or multi-part questions may require many pieces of evidence. Using legal tech as a concrete example, the same RAG assistant can receive queries whose “right” 𝑘 differs by an order of magnitude. A system might receive a simple lookup like: 
+
+• “What is the statute of limitations for personal injury in Cali-fornia?” (often answered by one authoritative source) or a moderately contextual question like: 
+
+• “Explain how comparative negligence affects damages when the plaintiff is partially at fault, and cite the relevant rule.” (may require multiple sources: doctrine + jurisdiction-specific nu-ance + definitions) or a complex synthesis request like: 
+
+• “Given these facts (timeline, injuries, treatment, insurance lim-its), draft a demand summary and explain what evidence sup-ports each damages category.” (may require many documents: medical records, billing, prior demands, policy language, de-position excerpts, relevant jury instructions, etc.) Static top-𝑘 fails in two symmetric ways. If 𝑘 is too small, the sys-tem misses critical documents, producing incomplete or incorrect responses. If 𝑘 is too large, context becomes bloated with redundant or weakly related information, increasing token cost and latency while potentially degrading answer quality. Retrieval depth should vary by query .How many documents should we retrieve for a given query— enough to be complete, but not so many that we drown the model in noise? One representative post-retrieval approach is Cluster-based Adaptive Retrieval (CAR) [28]. CAR starts from a large candidate list and selects an optimal cutoff by analyzing clustering patterns in the ordered query–document similarity distances. Intuitively, CAR looks for transition points in the ranked similarity curve— where a tight group of highly relevant documents gives way to less pertinent candidates—and sets cutoffs aligned to those breakpoints. It clusters the ranked distance values and scores cluster boundaries using gap-based metrics plus position penalties to avoid premature truncation. In a deployed Coinbase CDP setting, CAR initializes arXiv:2609.13489v1 [cs.IR] 11 Sep 2026 CIKM ’26, November 7–11, 2026, Rome, Italy. Ye Xia, Emre Yamangil, & Haixun Wang 
+
+with 40 candidates and adaptively filters to roughly 16 documents on average, yielding substantial reductions in token usage, latency, and hallucination rate while preserving response quality. However, post-retrieval approaches like CAR inherit a key op-erational constraint: they must retrieve a relatively large candi-date pool first, then decide what to keep. This can be suboptimal when (i) retrieval itself is expensive (multi-stage retrieval, cross-encoders, heavy filtering), (ii) corpora contain many near-duplicates or repetitive templates, or (iii) systems need predictable budgets and latencies before hitting downstream components. Moreover, post-retrieval signals depend on the geometry of retrieved results, which varies with embedding model choice and corpus structure. In this work, we propose a general, query-centric approach for adaptive top-𝑘 control that estimates retrieval depth needs from the query (and optionally lightweight metadata) rather than from clustering the retrieved set at inference time. The core idea is to learn query complexity / required evidence breadth from historical interactions and offline evaluation, then use it to choose 𝑘 before 
+
+executing retrieval. Query-centric adaptation is feasible in many real deployments because they operate in a fixed use case with relatively bounded task distributions. Consider personal injury law: though each case has unique facts, the questions users ask often draw from recurring intent families (e.g., identify key dates, summarize treatment chronology, find liability facts, extract wage loss evidence, support damages arguments with citations). In such settings, we can analyze questions in advance : collect historical queries, embed and cluster them by intent, and validate clusters through lightweight review or periodic curation. Once clusters are understood, we attach operational policies to each—including retrieval depth budgets, source preferences, and structured evidence requirements. This shifts the hardest work offline and reduces online adaptation to a fast “assign query to cluster and apply policy” step. Our approach complements post-retrieval methods like CAR: CAR provides a “posterior correction” based on observed distance curves; we provide a “prior” that sets an initial 𝑘 early, improving predictability and reducing unnecessary retrieval on simple queries while expanding for complex ones. The two can be combined: pre-retrieval 𝑘 selection sets an initial budget, followed by CAR-style post-retrieval trimming when beneficial. In summary, this paper makes the following contributions: 
+
+• We formalize adaptive top-𝑘 selection as a query-centric retrieval depth control problem for RAG across domains (e.g., legal, healthcare, enterprise search). 
+
+• We introduce a practical method to estimate query complex-ity offline and map it to retrieval depth at runtime using UMAP clustering and NDCG-driven depth estimation. 
+
+• We validate the approach empirically: query-adaptive re-trieval improves 𝐹 1 by 36.64% in an online A/B test, while enabling substantial token reductions (up to 14%) on low-complexity clusters without accuracy loss and improving evidence coverage (e.g., up to ∼17% more identified treat-ments) on difficult clusters. The rest of the paper is organized as follows. Section 2 provides necessary background and discusses related work in information retrieval. Section 3 presents the design and architecture of the proposed Query-Cluster Adaptive Retrieval framework. Section 4 details the construction of the Query-Cluster database D𝑞𝑐 and online inference procedure. Section 5 evaluates performance and presents empirical results. Finally, Section 6 concludes and outlines directions for future work. 
+
+## 2 Related Work 
+
+Traditional Information Retrieval (IR) has transitioned from keyword-based models like BM25 [22] to neural dense retrieval models [16], which capture semantic nuances essential for modern RAG. How-ever, most RAG implementations utilize a static top-𝑘 approach, which ignores the inherent variance in query complexity, thereby affecting the efficiency and accuracy of the system. Query Performance Prediction (QPP) seeks to estimate retrieval quality either before or after search retrieval. Early neural pre-retrieval QPP models used geometric properties of embeddings [6] or supervised fine-tuning models, such as BERT-QPP [5] and BERT-PE [15], to predict if a query would yield relevant results. While these methods identify hard queries, they do not typically prescribe an optimal top-𝑘 for downstream tasks. The "Cluster Hypothesis" in IR suggests that relevant documents tend to be more similar to each other than to non-relevant ones. This has motivated post-retrieval methods such as using NQC met-ric [10], ClusQPP [1], and CAR [28]. These models utilize the co-hesion and distributions of the retrieved data to perform dynamic cutoffs. While effective, these document-centric methods require an initial large-scale retrieval (the "posterior") before adaptation can occur. As noted in Section 1, this can be computationally expensive with latency issues. Query-centric adaptation offers a proactive alternative. Frame-works such as HyPA-RAG [14] classify query complexity to adjust RAG parameters, yet they typically rely on heuristic categories. This leaves a critical gap in the literature: a method that combines the runtime efficiency of pre-retrieval prediction with the precision of empirical calibration. To bridge this gap, we introduce the Query-Clustering Adap-tive Retrieval (QCAR) framework that maps semantic intent to optimal retrieval depths, coupling comprehensive offline database with lightweight online inference. 
+
+## 3 Query-Clustering Adaptive Retrieval Framework (QCAR) 
+
+This section presents the conceptual foundation of the Query-Clustering Adaptive Retrieval (QCAR) framework. We begin with the core insight motivating our approach, then characterize the two dimensions along which query complexity manifests, describe how QCAR operationalizes these insights, and finally position our method relative to post-retrieval alternatives. 
+
+## 3.1 Core Insight: Query Complexity as a Pre-Retrieval Property 
+
+In bounded domains, retrieval depth is largely predictable from the query. The same question type consistently requires similar retrieval depth because corpus structure and relevance distribution are stable. This predictability is the foundation of QCAR. Consider two queries in a personal injury law system: Pre-retrieval Query Clustering for Adaptive Top-k Document Retrieval in RAG Systems CIKM ’26, November 7–11, 2026, Rome, Italy. Online Offline           
+
+> Query Lexical? Assign Cluster 𝑘 ∗RAG
+> Yes 𝑘 ∗=𝑘 max
+> No
+> Historical Queries Embedding & Cluster NDCG Estimation D𝑞𝑐
+> 1
+
+Figure 1: QCAR RAG Framework 
+
+• Easy Queries. Low retrieval depth, as the target information is highly localized. 
+
+“What is the plaintiff’s date of birth?” — narrow, fact-seeking, typically satisfied by one authoritative source. 
+
+• Hard Queries. High retrieval depth due to the sheer breadth of evidence needed to comprehensively satisfy the topic. 
+
+“List all treatments with dates and providers.” — broad, ex-haustive, requiring comprehensive coverage of the medical record. These queries have characteristic retrieval depths that generalize across cases because the corpus has predictable structure and query types recur. In open-domain settings, this predictability weakens. The same query might require vastly different retrieval depths depending on corpus quality, document redundancy, and relevance density. Post-retrieval methods like CAR [28], which analyze the retrieved set to determine cutoffs, are better suited to such settings. QCAR targets the bounded-domain case, where we can estimate complexity before retrieval, enabling predictable latency budgets, early termination for simple queries, and reducing computation. 
+
+## 3.2 Two Dimensions of Query Complexity 
+
+What makes a query complex from a retrieval perspective? We identify two complementary signals that jointly determine required retrieval depth. QCAR integrates these through a simple priority rule: lexical markers act as deterministic overrides; semantic intent provides statistical priors. 
+
+3.2.1 Lexical Scope Markers. Some queries explicitly encode their retrieval requirements through language: quantifiers (“all,” “every,” “complete”), cardinality parameters (“top 5,” “list 10”), structural iteration (“for each provider,” “grouped by”), and synthesis tasks (“timeline,” “chronological order,” “cite evidence”). These explicit signals reliably indicate high retrieval depth regardless of topic. A query containing “list all” requires comprehensive retrieval whether it concerns medical treatments, billing records, or witness state-ments. Lexical markers account for approximately 20% of queries in our dataset. Though a minority, they represent high-stakes cases: missing evidence on a “list all” query constitutes a recall failure by definition. 
+
+3.2.2 Semantic Intent. The majority of queries lack explicit scope markers yet vary substantially in retrieval complexity based on 
+
+what they ask. Consider: 
+
+• “Who was the driver at fault?” — typically answered by a single police report or witness statement. 
+
+• “Explain how comparative negligence affects damages in this case.” — may require doctrine, jurisdiction-specific rules, case facts, and prior rulings. Both queries are lexically unmarked yet differ substantially in evi-dence breadth. This implicit complexity arises from semantic struc-ture and must be learned from domain data. When queries contain explicit scope markers, we bypass learned estimates and retrieve maximally ( 𝑘 ∗ = 𝑘 max ). Otherwise, we rely on learned cluster-level recommendations derived from semantic similarity to historical queries. 
+
+## 3.3 The QCAR Approach: Offline Learning, Online Inference 
+
+QCAR decouples the problem into a computationally intensive offline phase and a lightweight online phase. 
+
+3.3.1 Offline: Learning the Query Space. In bounded domains, user queries cluster into recurring intent families . We exploit this struc-ture through three offline steps: (1) Discover intent clusters. Embed historical queries using a dense encoder and cluster by semantic similarity. Queries within a cluster share similar retrieval requirements. (2) Measure retrieval difficulty. For a sample of queries from each cluster, evaluate retrieval quality using NDCG. This quantifies how many documents the retriever must fetch to achieve acceptable recall. (3) Assign cluster-level depth recommendations. Aggregate per-query difficulty estimates into a single recommended 𝑘 ∗
+
+for each cluster, targeting high coverage (e.g., ∼95%). The output is a Query-Cluster Database D𝑞𝑐 containing: (i) a fitted projection model, (ii) cluster centroid locations, and (iii) a mapping from cluster ID to recommended retrieval depth (Section 4 details CIKM ’26, November 7–11, 2026, Rome, Italy. Ye Xia, Emre Yamangil, & Haixun Wang 
+
+construction). This shifts expensive work—LLM-based relevance labeling and hyperparameter tuning—offline. 
+
+3.3.2 Online: Fast Cluster Assignment. At inference time, QCAR operates as a thin decision layer preceding standard RAG (Figure 1): (1) Lexical check. Scan the query for scope markers. If found, set 𝑘 ∗ = 𝑘 max and proceed to retrieval. (2) Cluster assignment. Otherwise, embed the query, project into the learned space, and assign to the nearest cluster centroid. Look up the corresponding 𝑘 ∗ from D𝑞𝑐 .(3) Retrieval and generation. Execute standard RAG with the adaptive 𝑘 ∗.The overhead is minimal: lexical matching (<1ms), one embedding call (30–50ms, already required for retrieval), projection transform (∼1ms), nearest-neighbor search over 𝐾 centroids (<1ms for 𝐾 ≤
+
+100), and 𝑂 (1) cluster lookup. Query distributions drift as user needs evolve. QCAR accom-modates this through periodic reconstruction of D𝑞𝑐 or triggered updates when monitoring detects distribution shift. Between up-dates, the mapping remains static, ensuring consistent behavior. 
+
+## 3.4 Relationship to Post-Retrieval Methods 
+
+QCAR and post-retrieval methods such as CAR [28] address com-plementary failure modes. 
+
+Complementary strengths. QCAR excels at preventing un-necessary retrieval: simple queries receive small 𝑘 ∗ values, saving tokens and latency without sacrificing accuracy. CAR excels at 
+
+refining a retrieved set: given an initial pool, it identifies natural breakpoints in the similarity curve to trim noise. 
+
+Hybrid designs. A natural extension combines both: use QCAR to set an initial retrieval budget (a “prior”), then apply CAR-style cutoff detection on the retrieved set (a “posterior” correction). This hybrid inherits QCAR’s efficiency gains on easy queries while re-taining CAR’s adaptive trimming on ambiguous cases. We focus on QCAR alone but note the combination as promising future work. 
+
+## 3.5 Scope and Assumptions 
+
+QCAR is designed for bounded-domain RAG systems with stable, recurring query distributions and available historical queries. Docu-ments are drawn from coherent domains (case files, medical records, enterprise wikis) rather than the open web. This characterizes most production RAG deployments: enterprise search, customer support, legal research, clinical decision support, and financial analysis. 
+
+Domain portability. While our experiments focus on personal injury law, the methodology is domain-agnostic. Adapting to a new vertical requires: (i) a historical query log, (ii) a relevance labeling mechanism (LLM-as-a-Judge or human annotation), and (iii) optionally, domain-informed lexical patterns. The clustering and depth-estimation machinery transfers directly. 
+
+Open-domain settings. General-purpose search engines rep-resent a distinct setting where query diversity is unbounded and corpus characteristics vary unpredictably. QCAR can still contribute by handling recognized query types via learned clusters while defer-ring novel intents to default 𝑘 or post-retrieval methods. However, the primary value proposition is in bounded-domain cases. 
+
+## 4 Methodology 
+
+This section details the construction of the Query-Cluster Data-base D𝑞𝑐 (Sections 4.1–4.3) and the online inference procedure (Section 4.4). 
+
+## 4.1 Query Embedding and Clustering 
+
+While document clustering is common in post-retrieval reranking, semantic clustering of user queries for adaptive retrieval remains relatively underexplored. Our goal is to group queries with similar search intents to enable cluster-specific retrieval depth optimiza-tion. 
+
+4.1.1 Dimensionality Reduction. We embed historical queries using 
+
+text-embedding-ada-002 [12], producing vectors of dimension 
+
+𝑁 = 1536. To mitigate the curse of dimensionality [3], we evaluated two reduction techniques: 
+
+Principal Component Analysis (PCA) [27]: A linear tech-nique focused on variance maximization. Cumulative variance anal-ysis showed that 186 components explain 80% of variance, while 560 components reach 95%. 
+
+Uniform Manifold Approximation and Projection (UMAP) [2, 19]: A non-linear, graph-based approach that preserves local man-ifold structures. We performed a hyperparameter sweep across 
+
+n_neighbors , min_dist , and n_components using cosine metric. 
+
+4.1.2 Clustering Algorithms. We evaluated three clustering method-ologies: 
+
+𝐾 -means [18]: A centroid-based algorithm that minimizes squared Euclidean distances. We apply 𝐿 2 normalization to ensure that min-imizing Euclidean distance is equivalent to maximizing cosine sim-ilarity. 
+
+Agglomerative Clustering with Ward Linkage [26]: A bottom-up approach that iteratively merges clusters to minimize intra-cluster variance. 
+
+HDBSCAN [7]: A density-based method that identifies clusters of varying shapes. Following previous literature [9], HDBSCAN left approximately one-third of queries unclassified as "noise" despite extensive tuning. We therefore used HDBSCAN to identify the natural number of clusters and stable centroids, then initialized 
+
+𝐾 -means to assign all queries to the nearest cluster. 
+
+4.1.3 Evaluation Metrics. To assess clustering quality, we employ quantitative metrics and LLM-assisted qualitative analysis: 
+
+Silhouette Score (SS) [23]: Measures cluster cohesion and sepa-ration on scale [− 1, 1]. Scores near 1 indicate well-defined clusters; scores near 0 suggest overlap. 
+
+Davies-Bouldin Index (DBI) [8]: Calculates the ratio of intra-cluster dispersion to inter-cluster separation. Lower DBI indicates more distinct clusters. PCA-paired clustering methods consistently produced SS ≈ 0and DBI > 2. UMAP was selected for its superior ability to preserve local manifold structures in high-dimensional query embeddings. Since mathematical metrics often miss semantic nuances, we used Gemini 3 Pro [21] for qualitative analysis. 
+
+Final configuration : UMAP with 𝑁 = 2 achieved the best numerical results (SS = 0.6, DBI = 0.46), but qualitative analysis revealed it collapses distinct legal topics due to extreme information loss. Balancing mathematical cohesion with semantic granularity, Pre-retrieval Query Clustering for Adaptive Top-k Document Retrieval in RAG Systems CIKM ’26, November 7–11, 2026, Rome, Italy. 
+
+we selected UMAP with n_components = 190, n_neighbors = 200, 
+
+min_dist = 0.0, and 𝐾 = 80 clusters (SS = 0.369, DBI = 1.019, high LLM score). 
+
+## 4.2 Relevance Labeling 
+
+We generate ground-truth labels to quantify retrieval performance within clusters by randomly sampling 21 queries from each cluster. Using LLM-as-a-Judge [17, 29], we employ Claude Sonnet 4.5 [4] with few-shot prompting to label each page (approximately 190 pages per case). Each document receives one of three labels with respect to the query: 0 (not relevant), 1 (partially relevant), or 2
+
+(full relevant). This discrete three-level scheme enables consistent NDCG com-putation while capturing varying degrees of relevance. It reduces computational complexity and facilitates cluster-level analysis while preserving the ability to differentiate between tangential and central documents. While LLM-based labeling is computationally expen-sive, this is strictly an offline, one-time cost incurred only during Query-Cluster Database construction. 
+
+## 4.3 Retrieval Depth Estimation 
+
+With the ground-truth labels established, we can now address the core challenge of question complexity. To quantify the difficulty of a specific query within its semantic cluster, we propose using 
+
+Normalized Discounted Cumulative Gain (NDCG) , a well-established evaluation metric for assessing the quality of ranked retrieval results in information retrieval (IR) systems. 
+
+4.3.1 Why NDCG. NDCG’s widespread adoption stems from its ability to model graded relevance, discount lower-ranked results to reflect realistic user behavior, and normalize scores to enable fair comparison across queries and systems of varying difficulty [13, 20, 25]. Consequently, NDCG has become a standard benchmark in major IR evaluation campaigns and learning-to-rank research [24]. However, computing NDCG requires constructing an ideal (ora-cle) ranking for each query, which introduces substantial compu-tational overhead when applied to large-scale query collections. Given the scale of our workload, directly evaluating or optimizing full NDCG rankings is impractical. To address this challenge, we adopt a coarse-grained relevance modeling strategy that partitions retrieved documents into three relevance buckets, as described ear-lier. This abstraction yields a scalable evaluation framework while preserving the essential distinctions between satisfactory, neces-sary, and redundant information, enabling efficient and principled analysis of retrieval performance across arbitrary queries while remaining aligned with the core assumptions underlying NDCG-based evaluation. 
+
+4.3.2 NDCG Formulation. For a query 𝑞 and its retrieved ranking of documents {𝑑 1, 𝑑 2, . . . , 𝑑 𝑘 , . . . , 𝑑 𝑛 }, the Discounted Cumulative Gain (DCG) is defined as: DCG 𝑘 =
+
+> 𝑘
+
+∑︁ 
+
+> 𝑖 =1
+
+2rel 𝑖 − 1log 2 (𝑖 + 1) (1) where rel 𝑖 is the graded relevance of document 𝑑 𝑖 with respect to query 𝑞 . The ideal DCG (IDCG) is computed by sorting all relevant documents ( 𝑛 ) in the optimal order: IDCG 𝑛 =
+
+> 𝑛
+
+∑︁ 
+
+> 𝑖 =1
+
+2rel 𝑖 − 1log 2 (𝑖 + 1) (2) The Normalized DCG is then: NDCG 𝑘 = DCG 𝑘 
+
+IDCG 𝑛 
+
+, 0 ≤ NDCG 𝑘 ≤ 1 (3) A value of 1 indicates perfect retrieval, while lower values indi-cate missing or poorly ranked relevant documents. Using the LLM relevance labels: NDCG 𝑘 (𝑞 ) =
+
+Í𝑘 𝑖 =1 2LLM (𝑑 𝑖 ,𝑞 ) −1log 2 (𝑖 +1)
+
+IDCG 𝑛 (𝑞 ) (4) Intuitively, NDCG serves as a lens for question complexity: ques-tions requiring broad, diffuse, or highly contextual retrieval tend to produce lower NDCG under default retrieval settings, while simpler questions yield steeper relevance curves with high NDCG (Figure 2).  
+
+> (a) Simple Query NDCG (b) Hard Query NDCG
+
+Figure 2: Samples of NDCG graphs with varying retrieval depth k 
+
+4.3.3 Per-Query Elbow Point. Our approach is as follows: for each query 𝑞 , we execute RAG retrieval with its maximum allowed pa-rameters ( 𝑘 = 100) and compute the resulting NDCG at varying retrieval depths from 𝑘 = 1 to 𝑘 = 100 with the ground-truth page relevancy labels. We define a query-specific recommended 𝑘 ∗ (𝑞 ) as the maximum 
+
+𝑘 such that NDCG gains remain non-negligible (with threshold 
+
+𝜖 = 0.001): 
+
+𝑘 ∗ (𝑞 ) = max {𝑘 | NDCG 𝑘 +1 (𝑞 ) − NDCG 𝑘 (𝑞 ) ≥ 𝜖 } (5) Figure 2 illustrates representative NDCG-𝑘 curves. Simple queries (e.g., "Who was the driver at fault?") demonstrate rapid convergence with an elbow point at 𝑘 = 25 with NDCG increasing by only 0.1 across the remaining 75 documents. Hard queries (e.g., "List all treatments with dates and providers") exhibit sustained growth up to 𝑘 = 100 without a defined plateau, indicating information is distributed more broadly across the document set. 
+
+4.3.4 Cluster-Level Aggregation. Let a cluster of questions 𝐶 𝑗 =
+
+{𝑞 1, 𝑞 2, . . . , 𝑞 𝑛 𝑗 } have 𝑛 𝑗 queries. For this cluster, we compute the mean and standard deviation of the query-specific 𝑘 ∗ values: 
+
+𝜇 𝑗 = 1
+
+𝑛 𝑗 𝑛 𝑗 ∑︁ 
+
+> 𝑖 =1
+
+𝑘 ∗ (𝑞 𝑖 ), 𝜎 𝑗 =
+
+vut 1
+
+𝑛 𝑗 𝑛 𝑗 ∑︁ 
+
+> 𝑖 =1
+
+ 𝑘 ∗ (𝑞 𝑖 ) − 𝜇 𝑗 
+
+2 (6) CIKM ’26, November 7–11, 2026, Rome, Italy. Ye Xia, Emre Yamangil, & Haixun Wang 
+
+Algorithm 1: QCAR Adaptive Retrieval Inference                                         
+
+> Input :User Query 𝑞 , Pre-computed Database D𝑞𝑐 , Max Retrieval Depth 𝑘 𝑚𝑎𝑥
+> Output : Adaptive Retrieval Parameter 𝑘 ∗, Generated Response 𝑅
+> // Stage 1: Lexical Heuristics
+> if LexicalMatch( 𝑞 )then
+> 𝑘 ∗←𝑘 𝑚𝑎𝑥 ;
+> else
+> // Stage 2: QCAR Semantic Mapping
+> 𝑣 𝑞 ←Embedding (𝑞 );ˆ𝑣 𝑞 ←UMAP_Project( 𝑣 𝑞 ,D𝑞𝑐 .model );
+> 𝑐 ∗←arg min 𝑐 ∈D 𝑞𝑐 .centroids Dist (ˆ𝑣 𝑞 , 𝑐 );// Nearest Cluster
+> 𝑘 ∗← D 𝑞𝑐 .map (𝑐 ∗);
+> // Stage 3: RAG Execution
+> C ← Retrieve (𝑞, 𝑘 ∗);// Context Documents
+> 𝑅 ←LLM-Generate (𝑞, C) ;
+> return 𝑅, 𝑘 ∗;
+
+To ensure coverage of approximately 95% of relevant documents within the cluster, we define the cluster-level recommended 𝑘 ∗ as: 
+
+𝑘 ∗ 
+
+> cluster
+
+= 𝜇 𝑗 + 2𝜎 𝑗 (7) At query time, an incoming query 𝑞 ∗ assigned to cluster 𝐶 𝑗 
+
+will use 𝑘 ∗ 
+
+> cluster
+
+as the RAG top-𝑘 parameter, providing a retrieval depth sufficient to capture most relevant documents while avoiding unnecessary over-retrieval. Importantly, this method scales efficiently: cluster membership depends only on the dimension of the clustering space and number of clusters, not on the number of documents per case or query, giving constant-time complexity at query time. 
+
+## 4.4 Online Inference 
+
+At inference time, the QCAR framework operates via a decoupled architecture: the heavy-compute offline phase produces D𝑞𝑐 , while a lightweight online phase handles query routing. The inference procedure follows these steps (Algorithm 1): 
+
+Step 1: Lexical Heuristics. The system first checks for prede-fined lexical patterns. Queries exhibiting these lexical or structural signals are assigned 𝑘 ∗ = 𝑘 max and proceed directly to retrieval. Approximately 80% of queries do not fall into these predefined cat-egories, highlighting the necessity of the clustering approach for the majority of queries. 
+
+Step 2: QCAR Semantic Mapping. If no lexical match occurs, the QCAR model performs a low-latency semantic mapping in real-time while accessing cluster and 𝑘 ∗ mappings via the precom-puted D𝑞𝑐 . This process involves a single embedding call; UMAP transformation using the fitted projection model, nearest-neighbor centroid calculation to determine cluster assignment and lookup of the corresponding 𝑘 ∗
+
+> cluster
+
+.
+
+Step 3: RAG Execution. RAG retrieves exactly 𝑘 ∗ documents, which then undergo the standard downstream processing within the existing RAG infrastructure. Query-Cluster Database D𝑞𝑐 contains the following information: (i) the fitted UMAP projection model, (ii) cluster centroid locations, and (iii) the cluster-to-𝑘 ∗ mapping table. These components are accessed by the QCAR model as part of the RAG framework at inference time. 
+
+## 5 Experiments 5.1 Data Preparation 
+
+The initial dataset comprised 20,000 raw user queries. Following a rigorous cleaning process which involved removing duplicates, fil-tering for Personally Identifiable Information (PII), etc, we obtained 6,820 questions in total. We also conducted a lexical analysis to categorize the questions, identifying four common lexical patterns relevant to the legal domain. Approximately 80% of the questions did not fall into any of these predefined categories. This gap high-lights the limitations of rule-based lexical patterns and underscores the necessity of utilizing clustering methods to better distinguish user intent. 
+
+## 5.2 Clustering Results 
+
+UMAP with k-means ( n_components = 2, n_neighbors = 200, 
+
+min_dist = 0.0 and 𝑘 = 60) provided the best numerical results, where 𝑆𝑆 = 0.6 and 𝐷𝐵𝐼 = 0.46. However, qualitative analysis revealed that while 𝑁 = 2 creates tight visual clusters, it collapses distinct legal topics into single groups due to extreme information loss. To balance mathematical cohesion with semantic granularity, we extended our analysis to higher UMAP dimensions. By synthesizing the results of the mathematical evaluation and the qualitative as-sessment from the LLM-as-a-Judge, we determined that the optimal balance between semantic preservation and cluster distinctness was achieved using UMAP with ( n_components = 190 , n_neighbors =
+
+200 , min_dist = 0.0 and 𝑘 = 80) clusters. 
+
+## 5.3 NDCG Results 
+
+Having identified optimal clusters, we perform NDCG-based op-timization to determine the optimal retrieval depth 𝑘 ∗ for each cluster. 
+
+5.3.1 Cluster-Specific Depth Analysis. We evaluate our proposed adaptive top-𝑘 strategy against a static baseline of 𝑘 = 50, which represents a highly optimized production configuration of our live system at the time of this study. To provide a rigorous evaluation of the adaptive mechanism, we also benchmark performance against other static settings. Due to infrastructure constraints and LLM context window limits, the adaptive selection 𝑘 ∗ is capped at a max-imum threshold of 100. Table 1 showcases the performance gains and token trade-offs of our system, partitioned by query behav-ior into token-decreasing (simple) and token-increasing (complex) subsets. For simple, fact-retrieval queries (e.g., plaintiff’s date of birth), the system achieves stable NDCG at lower retrieval depths. Against the 𝑘 = 50 baseline, the adaptive approach yields a 35 .95% reduction in token consumption while simultaneously improving the 𝐹 1 score by +0.37. Complex queries (e.g., list all treatments and procedures with dates and providers), require broader document coverage, with the optimal 𝑘 ∗ frequently reaching our 100-document upper bound. Compared to the 𝑘 = 50 baseline, this expanded retrieval improves the 𝐹 1 score by 0 .37 at the cost of an 85 .95% increase Pre-retrieval Query Clustering for Adaptive Top-k Document Retrieval in RAG Systems CIKM ’26, November 7–11, 2026, Rome, Italy. 
+
+Table 1: Performance of adaptive 𝑘 split by query behavior. Both token-decreasing and token-increasing query subsets yield improvements in 𝐹 1 score compared to the static top-𝑘 
+
+baseline.                         
+
+> Against Baseline Token-Increasing Queries Token-Decreasing Queries top_k Δ𝐹 1ΔTok. Δ𝐹 1ΔTok.
+> top_k = 25 +0.94 +244.88% +0.25 -27.68% top_k = 50 +0.37 +85.95% +0.37 -35.95% top_k = 75 +0.15 +32.24% +0.40 -38.42% top_k = 100 ——+0.46 -40.77%
+
+in token consumption. This positive correlation between retrieval depth and 𝐹 1 underscores the necessity of extensive coverage for complex information needs, proving that a static retrieval depth is fundamentally sub-optimal. 
+
+## 5.4 Complexity-Aware Dynamic Retrieval Performance 
+
+5.4.1 Overall Metric Comparison. Figure 3 compares the adaptive 𝑘 
+
+strategy against a randomly selected 𝑘 baseline across NDCG, and 𝐹 1
+
+metrics. LOWESS trendlines highlight overall behavior. The results demonstrate that adaptive retrieval optimizes token consumption without sacrificing retrieval quality. 
+
+Token Efficiency: The horizontal region ( 𝑦 ≈ 0) in NDCG plots (Fig. 3a) shows that adaptive 𝑘 maintains baseline performance despite token reductions up to 100% (relative to 𝑘 = 50). This high density of points at 𝑦 = 0 in the negative 𝑥 -quadrant confirms that dynamic selection effectively identifies and discards redundant documents without harming retrieval accuracy. In the lower-left quadrant (both token consumption and metrics 
+
+< 0), the random 𝑘 baseline exhibits steep, linear decline in NDCG (Figs. 3b), while the adaptive strategy maintains a robust plateau. Random context reduction frequently omits essential documents, whereas QCAR preserves relevant content while truncating simple queries. 
+
+𝐹 1 Score and Generation Quality: The 𝐹 1 trends confirm that stochastic document reduction diminishes retrieval quality (Fig. 3d). In contrast, the stability of adaptive 𝑘 (Fig. 3c) demonstrates that QCAR preserves essential content for RAG generation while maxi-mizing cost efficiency. 
+
+5.4.2 A/B Test Results. An A/B test was executed on a uniform sample of live queries under full serving conditions. The experiment compared the default static 𝑘 configuration against a dynamic 𝑘 
+
+variant, using an ensemble of language models. Changes in token consumption and model quality were measured. Launch approval was granted with the following Tier-1 metrics: 
+
+• Token consumption increased by 51 .19% ( 𝑝 = 2.87 × 10 −134 ). 
+
+• 𝐹 1 score improved by 36 .64% ( 𝑝 = 1.14 × 10 −34 ). 
+
+5.4.3 End-to-End Analysis. To evaluate the downstream impact of the dynamic 𝑘 retrieval strategy, we sampled user queries from both the simple and complex clusters, evaluating the generated responses via an LLM-as-a-Judge framework.           
+
+> (a) Adaptive 𝑘 - NDCG (b) Random 𝑘 - NDCG
+> (c) Adaptive 𝑘 - F-1 Score (d) Random 𝑘 - F-1 Score
+
+Figure 3: Performance vs. baseline 𝑘 = 50 : adaptive strategy (left) maintains accuracy with fewer tokens; random strategy (right) degrades immediately. 
+
+The dynamic mechanism reduces token consumption up to 23% while maintaining conceptual parity with the baseline for simple queries. It also improves factual recall by 9% to 17% for complex queries. This demonstrates that the adaptive approach successfully captures distributed evidence for sophisticated inquiries without incurring unnecessary computational overhead on simpler tasks. 
+
+## 6 Conclusion 
+
+This paper introduced QCAR (Query-Clustering Adaptive Retrieval), a pre-retrieval framework addressing the mismatch between static top-k retrieval and queries spanning orders of magnitude in evi-dence requirements. Through offline UMAP-based clustering and NDCG-driven depth estimation, QCAR enables constant-time adap-tive retrieval via lexical override for explicitly scoped queries and cluster-based depth selection otherwise. A/B testing demonstrated dual benefits: up to 23% token reduction on simple queries with-out accuracy loss while expanding context for complex synthesis, achieving 36% overall 𝐹 1 improvement and up to 17% more evi-dence coverage on comprehensive queries. Though validated in personal injury law, the modular architecture—offline cluster con-struction with lightweight online inference—transfers directly to any bounded-domain RAG system (healthcare, finance, enterprise search) where historical queries reveal recurring patterns, offering a practical complement to post-retrieval methods. 
+
+## GenAI Usage Disclosure 
+
+We acknowledge the use of Generative AI (GenAI) tools in the preparation of this work. GenAI tools were only used to improve spelling and grammar of certain passages. All uses of GenAI tools complied with the ACM Authorship Policy on GenAI usage. CIKM ’26, November 7–11, 2026, Rome, Italy. Ye Xia, Emre Yamangil, & Haixun Wang 
+
+## References 
+
+[1] Mozhgan Akaberi, Maryam Khodabakhsh, Seyedehfatemeh Karimi, and Hoda Mashayekhi. 2025. ClusQPP: A Clustering-Based Framework for Query Per-formance Prediction. Journal of AI and Data Mining 13, 3 (2025), 321–336. doi:10.22044/jadm.2025.15835.2698 [2] Mebarka Allaoui, Mohammed Lamine Kherfi, and Abdelhakim Cheriet. 2020. Considerably Improving Clustering Algorithms Using UMAP Dimensionality Reduction Technique: A Comparative Study. In Image and Signal Processing .Springer, 317–325. doi:10.1007/978-3-030-51935-3_34 [3] Naomi Altman and Martin Krzywinski. 2018. The curse(s) of dimensionality. 
+
+Nature Methods 15 (2018), 399–400. doi:10.1038/s41592-018-0019-x [4] Anthropic. 2025. Claude Sonnet 4.5 System Card. https://www.anthropic.com/ claude-sonnet-4-5-system-card Accessed: 2026-08-17. [5] Negar Arabzadeh, Maryam Khodabakhsh, and Ebrahim Bagheri. 2021. BERT-QPP: Contextualized Pre-trained transformers for Query Performance Prediction. In 
+
+Proceedings of the 30th ACM International Conference on Information & Knowledge Management (Virtual Event, Queensland, Australia) (CIKM ’21) . Association for Computing Machinery, 2857–2861. doi:10.1145/3459637.3482063 [6] Negar Arabzadeh, Fattane Zarrinkalam, Jelena Jovanovic, and Ebrahim Bagheri. 2020. Neural Embedding-Based Metrics for Pre-retrieval Query Performance Pre-diction. In Advances in Information Retrieval (Lecture Notes in Computer Science) .Springer, 78–85. doi:10.1007/978-3-030-45442-5_10 [7] Ricardo J. G. B. Campello, Davoud Moulavi, and Joerg Sander. 2013. Density-Based Clustering Based on Hierarchical Density Estimates. In Advances in Knowledge Discovery and Data Mining , Vol. 7819. Springer Berlin Heidelberg, 160–172. doi:10. 1007/978-3-642-37456-2_14 [8] David L. Davies and Donald W. Bouldin. 1979. A Cluster Separation Measure. 
+
+IEEE Transactions on Pattern Analysis and Machine Intelligence PAMI-1, 2 (1979), 224–227. doi:10.1109/TPAMI.1979.4766909 [9] Muriël de Groot, Mohammad Aliannejadi, and Marcel R. Haas. 2022. Ex-periments on Generalizability of BERTopic on Multi-Domain Short Text. arXiv:2212.08459 [cs.CL] doi:10.48550/arXiv.2212.08459 [10] Debasis Ganguly and Emine Yilmaz. 2023. Query-specific Variable Depth Pooling via Query Performance Prediction. In Proceedings of the 46th International ACM SIGIR Conference on Research and Development in Information Retrieval (Taipei, Taiwan) (SIGIR ’23) . Association for Computing Machinery, New York, NY, USA, 2303––2307. doi:10.1145/3539618.3592046 [11] Yunfan Gao, Yun Xiong, Xinyu Gao, Kangxiang Jia, Jinliu Pan, Yuxi Bi, Yi Dai, Jiawei Sun, Meng Wang, and Haofen Wang. 2024. Retrieval-Augmented Genera-tion for Large Language Models: A Survey. arXiv:2312.10997 doi:10.48550/arXiv. 2312.10997 [12] Ryan Greene, Ted Sanders, Lilian Weng, and Arvind Neelakantan. 2022. New and Improved Embedding Model . OpenAI. Retrieved February 6, 2025 from https://openai.com/index/new-and-improved-embedding-model/ [13] Kalervo Järvelin and Jaana Kekäläinen. 2002. Cumulated gain-based evaluation of IR techniques. ACM Trans. Inf. Syst. 20, 4 (Oct. 2002), 422–446. doi:10.1145/ 582415.582418 [14] Rishi Kalra, Zekun Wu, Ayesha Gulley, Airlie Hilliard, Xin Guan, Adriano Koshiyama, and Philip Colin Treleaven. 2024. HyPA-RAG: A Hybrid Param-eter Adaptive Retrieval-Augmented Generation System for AI Legal and Policy Applications. In Proceedings of the 1st Workshop on Customizable NLP: Progress and Challenges in Customizing NLP for a Domain, Application, Group, or In-dividual (CustomNLP4U) . Association for Computational Linguistics, 237–256. doi:10.18653/v1/2024.customnlp4u-1.18 [15] Maryam Khodabakhsh, Fattane Zarrinkalam, and Negar Arabzadeh. 2024. BertPE: A BERT-Based Pre-retrieval Estimator for Query Performance Prediction. In 
+
+Advances in Information Retrieval (Glasgow, United Kingdom) (Lecture Notes in Computer Science, Vol. 14610) . Springer, Cham, 354–363. doi:10.1007/978-3-031-56063-7_27 [16] Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich Küttler, Mike Lewis, Wen-tau Yih, Tim Rocktäschel, Sebastian Riedel, and Douwe Kiela. 2020. Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks. In Proceedings of the 34th International Conference on Neural Information Processing Systems (Vancouver, BC, Canada) 
+
+(NIPS ’20) . Curran Associates Inc., Red Hook, NY, USA, Article 793, 16 pages. [17] Yang Liu, Dan Iter, Yichong Xu, Shuohang Wang, Ruochen Xu, and Chenguang Zhu. 2023. G-Eval: NLG Evaluation Using GPT-4 with Better Human Alignment. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing . Association for Computational Linguistics, 2511–2522. doi:10.18653/ v1/2023.emnlp-main.153 [18] Stuart P. Lloyd. 1982. Least squares quantization in pcm. IEEE Transactions on Information Theory 28, 2 (1982), 129–137. doi:10.1109/TIT.1982.1056489 [19] Leland McInnes, John Healy, Nathaniel Saul, and Lukas Großberger. 2018. UMAP: Uniform Manifold Approximation and Projection. Journal of Open Source Software 
+
+3, 29 (2018), 861. doi:10.21105/joss.00861 [20] Alistair Moffat and Justin Zobel. 2008. Rank-biased precision for measurement of retrieval effectiveness. ACM Trans. Inf. Syst. 27, 1, Article 2 (Dec. 2008), 27 pages. doi:10.1145/1416950.1416952 [21] Sundar Pichai, Demis Hassabis, and Koray Kavukcuoglu. 2025. A New Era of Intelligence with Gemini 3 . Google. Retrieved August 17, 2026 from https: //blog.google/products-and-platforms/products/gemini/gemini-3/ [22] Stephen E. Robertson, Steve Walker, Susan Jones, Micheline Hancock-Beaulieu, and Mike Gatford. 1994. Okapi at TREC-3. In Proceedings of The Third Text REtrieval Conference, TREC 1994, Gaithersburg, Maryland, USA, November 2-4, 1994 (NIST Special Publication, Vol. 500-225) . National Institute of Standards and Technology (NIST), 109–126. doi:10.6028/NIST.SP.500-225.routing-city [23] Ketan Rajshekhar Shahapure and Charles Nicholas. 2020. Cluster Quality Analysis Using Silhouette Score. In 2020 IEEE 7th International Conference on Data Science and Advanced Analytics (DSAA) . IEEE, 747–748. doi:10.1109/DSAA49011.2020. 00096 [24] Hamed Valizadegan, Rong Jin, Ruofei Zhang, and Jianchang Mao. 2009. Learn-ing to Rank by Optimizing NDCG Measure. In Advances in Neural Information Processing Systems , Vol. 22. Curran Associates, Inc., 1883–1891. [25] Yining Wang, Liwei Wang, Yuanzhi Li, Di He, and Tie-Yan Liu. 2013. A Theoretical Analysis of NDCG Type Ranking Measures. In Proceedings of the 26th Annual Conference on Learning Theory (Proceedings of Machine Learning Research, Vol. 30) .PMLR, 25–54. [26] Joe H. Ward. 1963. Hierarchical Grouping to Optimize an Objective Function. J. Amer. Statist. Assoc. 58, 301 (1963), 236–244. doi:10.2307/2282967 [27] Svante Wold, Kim Esbensen, and Paul Geladi. 1987. Principal component analysis. 
+
+Chemometrics and Intelligent Laboratory Systems 2, 1 (1987), 37–52. doi:10.1016/ 0169-7439(87)80084-9 Proceedings of the Multivariate Statistical Workshop for Geologists and Geochemists. [28] Yifan Xu, Vipul Gupta, Rohit Aggarwal, Varsha Mahadevan, and Bhaskar Krish-namachari. 2025. Cluster-based Adaptive Retrieval: Dynamic Context Selection for RAG Applications. arXiv:2511.14769 [cs.IR] https://arxiv.org/abs/2511.14769 [29] Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica. 2023. Judging LLM-as-a-judge with MT-bench and Chatbot Arena. In Proceedings of the 37th International Conference on Neural Information Processing Systems (New Orleans, LA, USA) (NIPS ’23) . Curran Associates Inc., Red Hook, NY, USA, Article 2020, 29 pages.
