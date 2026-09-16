@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-15</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-16</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 23 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 19 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-15 22:37:43 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-16 22:18:34 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 23 篇推荐（精读 9 篇，速读 14 篇）</p>
-<p>精读：《CiteGuard-RAG: A Validation-Centered AI System for Evidence-Grounded Question Answering》（9.0/10）, 《Glyph: A Multi-Strategy Agentic System for Column Description and Sensitivity-Ontology Tagging of Enterprise Data Catalogs》（8.0/10）</p>
-<p>速读：《HyperProve: Answer-Guided Hypergraph Expansion for Multi-Hop Question Answering》（8.0/10）, 《Salesforce Koa: An Enterprise Language Model for Agentic Tool Use》（8.0/10）, 《Sci-MMR: Benchmarking Multi-Step Evidence-Grounded Scientific Reasoning in Multimodal Agents》（7.0/10）</p>
+<p>今日共生成 19 篇推荐（精读 5 篇，速读 14 篇）</p>
+<p>精读：《GraMRAG: Orchestrating Multi-Agent Multi-Step Reasoning via Graph Memory with Reinforcement Learning》（9.0/10）, 《CoMem: Collective-Individual Memory Synergy for Evolutionary Multi-Agent Systems》（8.0/10）</p>
+<p>速读：《The Living Library: Transforming Archival Collections into Conversational Knowledge Systems -- Lessons from the Theodore Roosevelt Presidential Library》（7.0/10）, 《PACE: Perceived-Latency-Aware Cascading Service Routing and Filler Control for QoE-Efficient Retrieval-Augmented Dialogue Serving》（7.0/10）, 《Sci-MMR: Benchmarking Multi-Step Evidence-Grounded Scientific Reasoning in Multimodal Agents》（7.0/10）</p>
 <p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
@@ -74,12 +74,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">9 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="CiteGuard-RAG: A Validation-Centered AI System for Evidence-Grounded Question Answering">CiteGuard-RAG: A Validation-Centered AI System for Evidence-Grounded Question Answering</span></li><li><span class="dpr-home-dashboard-paper-title" title="Glyph: A Multi-Strategy Agentic System for Column Description and Sensitivity-Ontology Tagging of Enterprise Data Catalogs">Glyph: A Multi-Strategy Agentic System for Column Description and Sensitivity-Ontology Tagging of Enterprise Data Catalogs</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bridging Thought and Action: Taming Long-Horizon Instability in Open-Source LLM Agents with a MetaTool-Enhanced ROS Framework">Bridging Thought and Action: Taming Long-Horizon Instability in Open-Source LLM Agents with a MetaTool-Enhanced ROS Framework</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GraMRAG: Orchestrating Multi-Agent Multi-Step Reasoning via Graph Memory with Reinforcement Learning">GraMRAG: Orchestrating Multi-Agent Multi-Step Reasoning via Graph Memory with Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="CoMem: Collective-Individual Memory Synergy for Evolutionary Multi-Agent Systems">CoMem: Collective-Individual Memory Synergy for Evolutionary Multi-Agent Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Semantic-TVM: Structure-Preserving Trustworthy Virtual Memory for Memory-Augmented and Tool-Using Agents">Semantic-TVM: Structure-Preserving Trustworthy Virtual Memory for Memory-Augmented and Tool-Using Agents</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>5</strong></span><span class="dpr-home-dashboard-tag">agent <strong>3</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>3</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -90,9 +90,9 @@
     <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="HyperProve: Answer-Guided Hypergraph Expansion for Multi-Hop Question Answering">HyperProve: Answer-Guided Hypergraph Expansion for Multi-Hop Question Answering</span></li><li><span class="dpr-home-dashboard-paper-title" title="Salesforce Koa: An Enterprise Language Model for Agentic Tool Use">Salesforce Koa: An Enterprise Language Model for Agentic Tool Use</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sci-MMR: Benchmarking Multi-Step Evidence-Grounded Scientific Reasoning in Multimodal Agents">Sci-MMR: Benchmarking Multi-Step Evidence-Grounded Scientific Reasoning in Multimodal Agents</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="The Living Library: Transforming Archival Collections into Conversational Knowledge Systems -- Lessons from the Theodore Roosevelt Presidential Library">The Living Library: Transforming Archival Collections into Conversational Knowledge Systems -- Lessons from the Theodore Roosevelt Presidential Library</span></li><li><span class="dpr-home-dashboard-paper-title" title="PACE: Perceived-Latency-Aware Cascading Service Routing and Filler Control for QoE-Efficient Retrieval-Augmented Dialogue Serving">PACE: Perceived-Latency-Aware Cascading Service Routing and Filler Control for QoE-Efficient Retrieval-Augmented Dialogue Serving</span></li><li><span class="dpr-home-dashboard-paper-title" title="Sci-MMR: Benchmarking Multi-Step Evidence-Grounded Scientific Reasoning in Multimodal Agents">Sci-MMR: Benchmarking Multi-Step Evidence-Grounded Scientific Reasoning in Multimodal Agents</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>8</strong></span><span class="dpr-home-dashboard-tag">cmv <strong>3</strong></span><span class="dpr-home-dashboard-tag">agent <strong>2</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>12</strong></span><span class="dpr-home-dashboard-tag">agent <strong>1</strong></span><span class="dpr-home-dashboard-tag">cmv <strong>1</strong></span></div>
 </section>
 </div>
 
