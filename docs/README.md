@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-22</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-23</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 0 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 27 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>13</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-22 23:09:18 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-23 22:55:26 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日无新推荐，系统未产出可展示论文。</p>
+<p>2026-09-23日报收录27篇，精读13篇、速读14篇，ThinkFlow与ORDER以9.0分领跑。最值得看的是终身对话代理的自演化概率潜记忆，以及面向RAG的任务条件路由，速读可补RAG答案质量预测、来源风险分诊和多模态证据选择。普通读者建议先读ORDER理解RAG路由，再读ThinkFlow看长期记忆，速读按“质量与风险”主题挑读。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ThinkFlow: Self-Evolving Probabilistic Latent Memory for Lifelong Conversational Agents">ThinkFlow: Self-Evolving Probabilistic Latent Memory for Lifelong Conversational Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="ORDER: Task-Conditioned Routing for Retrieval-Augmented Generation">ORDER: Task-Conditioned Routing for Retrieval-Augmented Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="One Size Does Not Fit All! Dynamic Retriever and Generator Selection for RAG">One Size Does Not Fit All! Dynamic Retriever and Generator Selection for RAG</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>7</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>6</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">14 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Predicting Partial Answer Quality and Utility in Agentic Retrieval-Augmented Generation">Predicting Partial Answer Quality and Utility in Agentic Retrieval-Augmented Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Query-Aware Source-Risk Triage for Retrieval-Augmented Generation">Query-Aware Source-Risk Triage for Retrieval-Augmented Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Layers, Sinks, and Scaling: Adaptive Evidence Selection for Multimodal Large Language Models">Layers, Sinks, and Scaling: Adaptive Evidence Selection for Multimodal Large Language Models</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>7</strong></span><span class="dpr-home-dashboard-tag">agent <strong>2</strong></span><span class="dpr-home-dashboard-tag">cmv <strong>2</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>2</strong></span><span class="dpr-home-dashboard-tag">ancient-text <strong>1</strong></span></div>
 </section>
 </div>
 
