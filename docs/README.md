@@ -4,17 +4,24 @@
     <a class="dpr-home-notice-tutorial" href="#/tutorial/README">使用教程 <span aria-hidden="true">›</span></a>
   </div>
   <div class="dpr-home-notice-entry">
-    <time class="dpr-home-notice-date" datetime="2026-07-20">07.20</time>
+    <time class="dpr-home-notice-date" datetime="2026-09-09">09.09</time>
     <div>
-      <strong class="dpr-home-notice-entry-title">反馈功能上线</strong>
-      <span class="dpr-home-notice-entry-summary">新增反馈功能，欢迎大家踊跃反馈各种建议，我们会第一时间查看并协调处理。</span>
+      <strong class="dpr-home-notice-entry-title">90天/365天 arXiv 专题回溯</strong>
+      <span class="dpr-home-notice-entry-summary">支持分片召回、断点评审与分页查看，核心论文与待复核结果分开展示。DeepSeek 费用按实际用量计算，不下载全量 PDF。</span>
     </div>
   </div>
   <div class="dpr-home-notice-entry">
-    <time class="dpr-home-notice-date" datetime="2026-07-19">07.19</time>
+    <time class="dpr-home-notice-date" datetime="2026-09-09">09.09</time>
     <div>
-      <strong class="dpr-home-notice-entry-title">首页新增社区统计</strong>
-      <span class="dpr-home-notice-entry-summary">现在可以看到今天看论文的人数和项目加入人数。</span>
+      <strong class="dpr-home-notice-entry-title">ECCV 2026 已更新</strong>
+      <span class="dpr-home-notice-entry-summary">已收录 2,834 篇论文，摘要与 PDF 链接齐全，可按会议年份检索。EMNLP 2026 暂待可信官方数据开放。</span>
+    </div>
+  </div>
+  <div class="dpr-home-notice-entry">
+    <time class="dpr-home-notice-date" datetime="2026-09-05">09.05</time>
+    <div>
+      <strong class="dpr-home-notice-entry-title">CVPR 2026 已更新</strong>
+      <span class="dpr-home-notice-entry-summary">已收录 CVPR 2026 官方 Open Access 论文 4,042 篇，可在会议检索中查看。EMNLP 2026 预计于 10 月中下旬更新，具体以官方论文集开放时间为准。</span>
     </div>
   </div>
   <div class="dpr-home-site-stats" data-dpr-site-stats hidden aria-live="polite">
@@ -41,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-23</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-24</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 27 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 23 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>13</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>14</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>10</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-23 22:55:26 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-24 22:40:58 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +69,10 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-09-23日报收录27篇，精读13篇、速读14篇，ThinkFlow与ORDER以9.0分领跑。最值得看的是终身对话代理的自演化概率潜记忆，以及面向RAG的任务条件路由，速读可补RAG答案质量预测、来源风险分诊和多模态证据选择。普通读者建议先读ORDER理解RAG路由，再读ThinkFlow看长期记忆，速读按“质量与风险”主题挑读。</p>
+<p>今日共生成 23 篇推荐（精读 10 篇，速读 13 篇）</p>
+<p>精读：《Beyond Similarity through Zero-Token Geometric Graphs for Multi-Hop RAG》（9.0/10）, 《RAFT: A Stateful Retrieval-Augmented Framework for Troubleshooting Agents》（9.0/10）</p>
+<p>速读：《Collaborative Memory for Multi-Agent VLM Systems》（8.0/10）, 《Symbolic Temporal Supervision of LLM Agents Using Contracts》（8.0/10）, 《WFM: Wiki Foundation Model for Complex Agentic Reasoning》（8.0/10）</p>
+<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +81,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">13 篇</strong>
+    <strong class="dpr-home-dashboard-count">10 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ThinkFlow: Self-Evolving Probabilistic Latent Memory for Lifelong Conversational Agents">ThinkFlow: Self-Evolving Probabilistic Latent Memory for Lifelong Conversational Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="ORDER: Task-Conditioned Routing for Retrieval-Augmented Generation">ORDER: Task-Conditioned Routing for Retrieval-Augmented Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="One Size Does Not Fit All! Dynamic Retriever and Generator Selection for RAG">One Size Does Not Fit All! Dynamic Retriever and Generator Selection for RAG</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Beyond Similarity through Zero-Token Geometric Graphs for Multi-Hop RAG">Beyond Similarity through Zero-Token Geometric Graphs for Multi-Hop RAG</span></li><li><span class="dpr-home-dashboard-paper-title" title="RAFT: A Stateful Retrieval-Augmented Framework for Troubleshooting Agents">RAFT: A Stateful Retrieval-Augmented Framework for Troubleshooting Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Detecting Hallucination in LLMs: Tracing the Topological Signatures of Impaired Context Sharing">Detecting Hallucination in LLMs: Tracing the Topological Signatures of Impaired Context Sharing</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>7</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>6</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>4</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +94,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">14 篇</strong>
+    <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Predicting Partial Answer Quality and Utility in Agentic Retrieval-Augmented Generation">Predicting Partial Answer Quality and Utility in Agentic Retrieval-Augmented Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Query-Aware Source-Risk Triage for Retrieval-Augmented Generation">Query-Aware Source-Risk Triage for Retrieval-Augmented Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Layers, Sinks, and Scaling: Adaptive Evidence Selection for Multimodal Large Language Models">Layers, Sinks, and Scaling: Adaptive Evidence Selection for Multimodal Large Language Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Collaborative Memory for Multi-Agent VLM Systems">Collaborative Memory for Multi-Agent VLM Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="Symbolic Temporal Supervision of LLM Agents Using Contracts">Symbolic Temporal Supervision of LLM Agents Using Contracts</span></li><li><span class="dpr-home-dashboard-paper-title" title="WFM: Wiki Foundation Model for Complex Agentic Reasoning">WFM: Wiki Foundation Model for Complex Agentic Reasoning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>7</strong></span><span class="dpr-home-dashboard-tag">agent <strong>2</strong></span><span class="dpr-home-dashboard-tag">cmv <strong>2</strong></span><span class="dpr-home-dashboard-tag">mmkqa <strong>2</strong></span><span class="dpr-home-dashboard-tag">ancient-text <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>11</strong></span><span class="dpr-home-dashboard-tag">agent <strong>2</strong></span></div>
 </section>
 </div>
 
