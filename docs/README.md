@@ -48,7 +48,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-26</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-27</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 21 篇</strong>
@@ -58,7 +58,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-26 21:42:26 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-27 21:54:48 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-09-26 日报完成 21 篇筛选，精读 8 篇、速读 13 篇，重点覆盖智能体记忆与工具使用。最值得看的是两篇 9.0 分精读：小模型工具智能体如何用异构图记忆从失败中学习，以及如何按作用域持久化记忆以避免跨家族干扰。普通读者可先读这两篇精读，再按兴趣选读多模态检索、知识图谱向量搜索或智能体自改进方向的速读。</p>
+<p>2026-09-27 日报：完成21篇论文筛选，精读</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,9 +81,9 @@
     <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning from Failures: Heterogeneous Graph Memory for Small Language Model Tool-Using Agents">Learning from Failures: Heterogeneous Graph Memory for Small Language Model Tool-Using Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Scope Before You Persist: Preventing Cross-Family Interference in Agent Memory">Scope Before You Persist: Preventing Cross-Family Interference in Agent Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="ArenaFlow: From Trajectory Ranking to Hierarchical Credit Propagation for Open-Ended Agent RL">ArenaFlow: From Trajectory Ranking to Hierarchical Credit Propagation for Open-Ended Agent RL</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Propose, Verify, Commit: Evidence-Grounded Memory for Long-Horizon Multi-Actor Conversations">Propose, Verify, Commit: Evidence-Grounded Memory for Long-Horizon Multi-Actor Conversations</span></li><li><span class="dpr-home-dashboard-paper-title" title="AgentBetta: Verification-Driven Adaptive Configuration of an AI Nano-Agent through Selective Expansion and Verified Contraction">AgentBetta: Verification-Driven Adaptive Configuration of an AI Nano-Agent through Selective Expansion and Verified Contraction</span></li><li><span class="dpr-home-dashboard-paper-title" title="TTSE: A Two-Track Online Self-Evolution Framework">TTSE: A Two-Track Online Self-Evolution Framework</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>6</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>3</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -94,9 +94,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MM-ContextFold: Context Folding for Multimodal Agentic Retrieval">MM-ContextFold: Context Folding for Multimodal Agentic Retrieval</span></li><li><span class="dpr-home-dashboard-paper-title" title="Efficient Dense Vector Search within Knowledge Graph Content Embeddings">Efficient Dense Vector Search within Knowledge Graph Content Embeddings</span></li><li><span class="dpr-home-dashboard-paper-title" title="RRSI: Regularized Recursive Self-Improvement of Agent Harnesses">RRSI: Regularized Recursive Self-Improvement of Agent Harnesses</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SemDHT: Certified Semantic Discovery for Peer-to-Peer Agent Networks over Exact-Key DHTs">SemDHT: Certified Semantic Discovery for Peer-to-Peer Agent Networks over Exact-Key DHTs</span></li><li><span class="dpr-home-dashboard-paper-title" title="Q-TIE: A Lightweight and Generalizable Re-ranking Framework for Temporal Information Retrieval">Q-TIE: A Lightweight and Generalizable Re-ranking Framework for Temporal Information Retrieval</span></li><li><span class="dpr-home-dashboard-paper-title" title="EDGEGEN: Improving Tool-Calling Agents Beyond Happy Paths with Synthetic Edge Case Generation">EDGEGEN: Improving Tool-Calling Agents Beyond Happy Paths with Synthetic Edge Case Generation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>9</strong></span><span class="dpr-home-dashboard-tag">agent <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>13</strong></span></div>
 </section>
 </div>
 

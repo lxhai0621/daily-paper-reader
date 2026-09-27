@@ -1,0 +1,519 @@
+Title: ChunkRank: Model-Aware Text Chunking and Abstention-Aware Answer Selection for LLM Pipelines
+
+URL Source: https://arxiv.org/pdf/2609.29828v1
+
+Published Time: Fri, 25 Sep 2026 01:17:12 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# ChunkRank: Model-Aware Text Chunking and Abstention-Aware Answer Selection for LLM Pipelines 
+
+Amit Nautiyal iD 
+
+> research.amit.n@gmail.com
+
+Ayush Bhatt iD 
+
+> ayushbhatt1224@gmail.com
+
+Gaurav Nautiyal iD 
+
+> 26021892@geu.ac.in
+
+Abstract 
+
+We present ChunkRank , an open-source Python library that derives chunk boundaries from a target model’s tokenizer and context window, and selects an answer among candi-dates produced independently per chunk. It ships a validated registry of 90 models across 15 providers and six answer-selection methods, and needs only three core dependencies. For chunking, ChunkRank avoids context-window overflow automatically from the model name, whereas character-based splitters overflow or waste the budget, and a fidelity study across 11 languages shows why token-exact budgets mat-ter beyond English. For answer selection we report a negative result: on NaturalQuestions, TriviaQA and HotpotQA, with extractive and generative readers, no content-based ranker re-liably beats taking the first non-empty answer. The reason is reader abstention on chunks that lack the answer, not answer position. A long-context baseline shows that chunking matches single-call reading on single-hop questions, so ChunkRank targets small-window and beyond-window settings. Code, registry and evaluation harness are released. 
+
+1 Introduction 
+
+All deployed large language models accept inputs up to some fixed token budget. Although this limit has grown considerably in recent years (from 2,048 tokens in GPT-3 (Brown et al., 2020) to 1M tokens in Gemini 1.5 (Gemini Team, Google, 2024) and 10M tokens in Llama 4 Scout (Meta AI, 2025)), documents such as legal contracts, research cor-pora, codebases, and multi-chapter reports rou-tinely exceed even the largest current windows. Long documents must therefore be split before they can be processed, and every practitioner working on such documents needs a reliable, reusable com-ponent for doing so. The NLP community has a long tradition of re-leasing general-purpose toolkits that lower the bar-rier to reproducible engineering (Section 2), but chunking for LLM pipelines has not received the same treatment. Existing splitters (Chase, 2022; Liu, 2022; deepset, 2019) bundle character- or token-based logic as one utility inside a larger re-trieval framework, requiring a user-supplied chunk size and never consulting the target model’s tok-enizer. Because tokenization varies across model families, a 512-character window is anywhere from 100 to 400 tokens depending on the encoder (Sen-nrich et al., 2016; Kudo and Richardson, 2018), so a size tuned for one model silently truncates or wastes context on another, a mismatch practition-ers discover through degraded output rather than explicit errors, and, absent a standalone model-aware resource, re-solve independently and incon-sistently. Chunking introduces a second, less-discussed challenge: answer multiplicity . Queried indepen-dently against each chunk, the LLM may produce a different answer per segment; most applications simply return the first chunk’s, an arbitrary and em-pirically suboptimal choice. RAG systems (Lewis et al., 2020; Izacard and Grave, 2021; Guu et al., 2020) address a related problem by ranking re-trieved passages before generation, but within a monolithic pipeline that conflates retrieval, index-ing, chunking, and generation, and not as a stan-dalone resource a non-RAG pipeline can adopt. We introduce ChunkRank to close this resource gap: an installable package (not a code snippet embedded in a larger framework) with a versioned model registry, a documented and stable API across three levels of abstraction, a public test suite ex-ercised on four Python versions, and a permissive license. This paper documents the resource’s de-sign, the engineering decisions that make it adopt-able in constrained environments, and an empirical study showing that answer selection over chunks is dominated by reader abstention, so a trivial first-non-empty rule is hard to beat, with real oracle arXiv:2609.29828v1 [cs.CL] 24 Sep 2026 headroom that content-based ranking does not cap-ture. This paper makes the following contributions: 1. We release ChunkRank, an open-source, ver-sioned resource that packages model-aware chunk boundary computation and post-chunk answer ranking as reusable, independently documented components (Sections 4–5). 2. We release a community-extensible model reg-istry of 90 pre-configured models across 15 providers, with a documented schema and a runtime registration API so that new models can be added without a library upgrade (Sec-tion 4.1). 3. We document the resource’s reproducibility guarantees: license, dependency footprint, supported Python versions, and public test coverage, to support long-term reuse by the community (Section 6). 4. We validate the resource empirically and re-port a negative result about answer selection: across NaturalQuestions, TriviaQA, and Hot-potQA, with both an extractive and a gen-erative reader and paired bootstrap tests, no content-based ranker reliably beats taking the first non-empty answer, because selection over chunks is dominated by the reader’s ability to abstain (Section 7). We adopt first-non-empty as the library default, add a long-context base-line that delimits when chunking is needed at all, and release the full harness, configuration, and result tables. 
+
+Downstream impact. The setting ChunkRank targets is increasingly common: tool-using agents and multi-step reasoning chains that feed long, externally-retrieved documents (web pages, code, PDFs, tool outputs) into a model with a fixed bud-get, often one whose tokenizer is not the devel-oper’s own. There, a silent overflow surfaces as a truncated tool result or degraded answer sev-eral steps downstream, where it is hard to at-tribute. By deriving safe boundaries from the named model and turning implicit first-chunk selec-tion into an explicit, swappable answer-selection step, ChunkRank makes both failure modes explicit at the point of chunking, and as model-agnostic middleware drops into an agent loop, an offline document-processing workflow, or a RAG system without a pipeline rewrite. ChunkRank is available under the Apache 2.0 license on PyPI at https: //pypi.org/project/chunkrank/ 
+
+and on GitHub at https://github.com/ AmitoVrito/chunkrank , where the source, model registry JSON, and test suite are publicly browsable. 
+
+2 Related Work 
+
+2.1 NLP Toolkits and Resource Papers 
+
+The NLP community has a long history of resource and tool papers that package research-grade func-tionality for reuse: NLTK (Bird et al., 2009), spaCy (Honnibal et al., 2020), Stanza (Qi et al., 2020), and Flair (Akbik et al., 2019) package tokenization, tag-ging, and parsing behind stable, versioned APIs, and Hugging Face Transformers (Wolf et al., 2020) generalized the pattern to pretrained-model access. ChunkRank follows this tradition but fills a gap none of these do: adapting segmentation to the to-kenizer and context budget of a named, deployed LLM , and resolving the resulting answer-selection problem, as a standalone, dependency-light compo-nent. 
+
+2.2 Text Chunking in LLM Pipelines 
+
+Token-budget management for LLMs is discussed informally in practitioner documentation but has received little formal treatment as a resource problem. LangChain’s recursive character split-ter (Chase, 2022) enforces a character-count ceiling that the user must manually translate into an approximate token count; LlamaIndex’s 
+
+SentenceSplitter (Liu, 2022) improves co-herence but still requires a user-supplied token limit; DrQA (Chen et al., 2017) pre-segments Wikipedia into fixed-length passages without model-specific adaptation. Chonkie (Chonkie AI, 2024) is a more recent lightweight, chunking-focused library, but its splitters likewise take a user-supplied chunk size and, by default, count in char-acters rather than model tokens (Section 7.3). In each case, chunking is an internal utility of a larger retrieval framework, or a standalone splitter that still requires manual token configuration, rather than an independently versioned, model-aware re-source. Token-aware splitting itself is one line in these libraries once the user supplies the tokenizer; to our knowledge, what no prior open library ships is a maintained model-to-tokenizer-and-budget reg-istry that resolves those parameters automatically Tool Model- Auto Post-chunk Light- Async aware registry ranking weight stream                     
+
+> LangChain splitter No No No No No LlamaIndex splitter No No No No No Chonkie No No No Yes No
+> ChunkRank Yes Yes Yes Yes Yes
+
+Table 1: Feature comparison with the widely-used chunking utilities. “Model-aware” means chunk size is derived from the target model’s tokenizer and con-text window without manual configuration (LangChain and Chonkie can be pointed at a tokenizer, but the user must supply it; neither resolves it automatically from a model name); “Auto registry” means the library ships pre-configured parameters for named models. Quantita-tive overflow/utilisation results are in Table 3. 
+
+from a named model and exposes the whole as a standalone package (Table 1). 
+
+2.3 Answer Ranking and Passage Re-ranking 
+
+The classical BM25 function (Robertson and Zaragoza, 2009), built on TF-IDF weighting (Sparck Jones, 1972), remains a strong baseline (Thakur et al., 2021). Neural re-ranking with BERT (Devlin et al., 2019; Nogueira and Cho, 2019) pro-duced monoT5 (Nogueira et al., 2020), ColBERT (Khattab and Zaharia, 2020), and SPLADE (For-mal et al., 2021); sentence-level dense encoders (Reimers and Gurevych, 2019) now dominate se-mantic similarity and back most dense retrieval (Karpukhin et al., 2020). All target retrieval , find-ing the most relevant passage in a large corpus, typ-ically requiring a full retrieval stack. ChunkRank instead ranks among candidate answers from the chunks of a single document, with no corpus, index, or retrieval stack, a structurally simpler post-chunk 
+
+setting not previously packaged as a standalone resource. 
+
+2.4 Retrieval-Augmented Generation 
+
+RAG (Lewis et al., 2020) combines a retriever with a generative model. Extensions such as FiD (Izacard and Grave, 2021), REPLUG (Shi et al., 2023), Self-RAG (Asai et al., 2024), RECOMP (Xu et al., 2024), and GraphRAG (Edge et al., 2024) couple retrieval, compression, or graph structure to a specific generator, and are released, if at all, as research code rather than reusable middleware. ChunkRank is not a RAG system (no index, no corpus, no modified generation) but drops into any RAG pipeline. Nor do longer context windows (128k in GPT-4 (OpenAI, 2023) to 10M in Llama 4 Scout (Meta AI, 2025)) eliminate chunking: cost scales with length, long contexts degrade positional attention (Liu et al., 2024), and most self-hosted or edge models keep small budgets, so a maintained model-aware chunker stays relevant as budgets di-versify rather than converge. 
+
+3 Problem Definition 
+
+Let D be a document and M a language model with tokenizer TM , maximum context window WM
+
+(tokens), and a token budget RM reserved for the prompt template and generated output. Define the 
+
+effective chunk budget BM = WM − RM .
+
+3.1 Model-Aware Chunking 
+
+A chunking function CM partitions D into an or-dered sequence ⟨c1, . . . , c n⟩ subject to the hard constraint ∀ i : |T M (ci)| ≤ BM and the soft ob-jective of preserving coherence across boundaries. A user-configurable overlap of δ < B M tokens (suffix ci = prefix ci+1 ) trades storage for continu-ity. 
+
+3.2 Post-Chunk Answer Selection 
+
+Given a query q and the answers ai produced by applying the model to each chunk ci (with reader score si where available), let A = {(ai, i, s i) : 
+
+ai̸ = ∅} be the non-empty candidates. The selec-tion objective is: 
+
+a∗ = arg max  
+
+> (ai,i,s i)∈A
+
+S(q, a i, i, s i)
+
+where S maps a candidate, its position i, and its score si to a real value. This general form covers content-based scorers that use only (q, a i) (BM25, TF-IDF, embedding, cross-encoder), a position-based rule ( first : S = −i), and a score-based rule ( confidence : S = si). ChunkRank sup-ports six instantiations, detailed in Section 4.4. Note that this formulation is extractive at the meta-level : it selects among already-generated an-swers rather than generating a new one, which pre-serves the determinism of the underlying model call. 
+
+4 System Design 
+
+ChunkRank is organized into four components that run sequentially: Model Registry → Tokenizer Adapter → Chunker → Ranker (Figure 1, Ap-pendix A). Each component exposes a clean inter-face and can be replaced or extended independently, which is what allows the resource to be adopted in-crementally rather than as an all-or-nothing frame-work. 4.1 Model Registry 
+
+The registry is the single source of truth for model-specific parameters, and is the primary reusable ar-tifact this paper releases as a community resource. Each entry stores five fields: the model name ,
+
+max context (context window in tokens), the 
+
+tokenizer backend ( hf or tiktoken ), the 
+
+tokenizer id (tokenizer name or encoding), and default reserve (tokens held back for the prompt template and generated output). The registry ships with 90 pre-configured models across 15 providers: OpenAI, Anthropic, Google, Meta, Mistral, Microsoft, Alibaba (Qwen), Cohere, DeepSeek, TII, EleutherAI, IBM, xAI, AllenAI, and Hugging Face. Context windows range from 512 tokens (BERT-base (Devlin et al., 2019)) to 10M tokens (Llama 4 Scout (Meta AI, 2025)). The registry is stored as a plain JSON file distributed with the package, so it can be inspected, diffed, and extended by the community through ordinary version control without touching library code. Runtime model registration is supported via a one-line API call (chunkrank.register model(name, max context=..., tokenizer=..., tokenizer id=..., default reserve=...) ), so the resource does not need to be re-released every time a provider ships a new model. Runtime entries are stored in memory and take precedence over the static JSON registry, eliminating the need to upgrade the library when a new model releases. If a model is absent from both sources, ChunkRank falls back to a safe default: a 128k-token context window, tiktoken o200k base encoding, and a 512-token reserve. 
+
+Registry validation. To verify the 90 entries rather than trust them, we validate every entry along three axes and release the validation harness with the library. (i) Schema and consistency : all 90 entries type-check and satisfy max context >
+
+reserve > 0. (ii) Tokenizer resolution : all 55 tik-token encodings resolve, and of the 35 Hugging Face entries, 19 load in a stock environment while the rest are gated models that load for authenti-cated users or require a newer transformers ;no entry is malformed. 41 non-OpenAI models are mapped to o200k base as an approximate to-ken counter (exact tokenizers being proprietary or gated); on English this under-counts by 0.3–11 .3% 
+
+vs. the true tokenizer where public (Appendix E), an overflow risk the default reserve absorbs at typical budgets but not necessarily at very large ones (Limitation 8), with a larger cross-script er-ror quantified in Section 7.4. (iii) Context-window audit : we check every Anthropic entry against the provider’s live Models API and a documented sub-set of 27 other-provider models against published specifications. The audit caught two stale context windows, later-revised models listed at 200k that in fact expose a 1M window, which we corrected, and the 27 documented values all match. Shipping the harness lets the community re-run these checks as the registry grows, so registry correctness is a maintained, testable property rather than a one-time claim. 
+
+4.2 Tokenizer Adapter 
+
+Tokenizer implementations differ substantially in API surface and initialization overhead. The Tokenizer Adapter presents a uniform two-method interface (encode(text) → List[int] ,
+
+count(text) → int ) to the rest of the system. Three backends are supported: • tiktoken : Used for OpenAI, Anthropic, Mis-tral, Cohere, DeepSeek, and Qwen models, with the encoding label loaded directly from the registry entry and the tiktoken object cached per process. • Hugging Face Transformers (Wolf et al., 2020): Used for Meta Llama and encoder-based models (BERT, T5, Longformer, BigBird), loaded via AutoTokenizer. from pretrained() with fast tokeniza-tion enabled. • Character-ratio fallback : When neither tik-token nor Transformers is installed, token count is approximated as ⌊| s|/4⌋, where |s|
+
+is the UTF-8 character length, conservative, dependency-free, but less accurate for non-Latin scripts where the ratio can exceed 4:1. Switching tokenizer backends requires only a registry update; no application code changes are needed. This design choice is what keeps the re-source usable in environments where heavier tok-enizer dependencies cannot be installed. 
+
+4.3 Chunker 
+
+The Chunker receives a document string and the model’s effective token budget BM from the adapter, and returns a list of text segments each satisfying the hard token constraint. The budget is derived by default from the model’s context win-dow (Section 4.1) but remains a configurable pa-rameter. Because the accuracy-optimal budget is dataset-dependent, ChunkRank exposes it rather than hard-coding a split size. Two strategies are available. 
+
+Token-Budget Sliding Window (default). This strategy operates without sentence boundary de-tection, making it suitable for any language and requiring no additional dependencies (Algorithm 1, Appendix C). Rather than shrinking the window by a fixed factor per iteration, the inner loop binary-searches the character range [pos + 1 , end ] (width at most B · r), converging in O(log B) tokenizer calls per chunk since r is a constant, tighter and more predictable than a geometric-decay scheme as the effective budget B grows for larger-context models. Overlap is applied in character space at the same 4:1 ratio, preserving δ tokens of context without an extra tokenizer call per chunk. 
+
+Semantic Similarity (optional). When 
+
+sentence-transformers (Reimers and Gurevych, 2019) is installed, ChunkRank can group sentences by cosine similarity before enforcing the token budget, opening a new chunk when the next sentence would violate it. This benefits documents with distinct topical sections at the cost of a one-time embedding pass. 
+
+4.4 Ranker 
+
+The Ranker selects one answer from the per-chunk candidates. Empty answers (chunks for which the reader or generator produced nothing) are dropped first, so every method operates on the same non-empty candidate set. When a method assigns equal scores to all candidates, ChunkRank breaks ties by document order ; a method with no discrimina-tive signal therefore degenerates gracefully to first-chunk selection rather than to an arbitrary choice. Six methods are available, with first as the de-fault: 
+
+First non-empty (default). Returns the answer from the first chunk that produced a non-empty out-put (document order). It performs no query–answer scoring and has no dependencies; it is abstention-aware , exploiting the reader’s tendency to return nothing on chunks that do not contain the answer. It is the default because, empirically (Section 7), it matches or beats every content-based method on our datasets. 
+
+Reader confidence. Selects the non-empty an-swer with the highest caller-supplied confidence (e.g. an extractive reader’s span score or a gener-ator’s log-probability), the classic multi-passage reading-comprehension selection rule (Chen et al., 2017). Deterministic given the scores, with no ad-ditional dependencies. 
+
+BM25. BM25 (Robertson and Zaragoza, 2009) scores a document d against query q as: BM25 (q, d ) = X
+
+> t∈q
+
+IDF (t) ·
+
+f (t, d ) · (k1 + 1) 
+
+f (t, d ) + k1 ·
+
+
+
+1 − b + b · |d|
+
+> avgdl
+
+
+
+where f (t, d ) is term frequency in d, IDF (t) is inverse document frequency over the candidate set, and k1 = 1 .5, b = 0 .75 are standard parameters (rank-bm25 implementation). BM25 is entirely deterministic, requiring no floating-point precision choices, so reproducing a result never depends on a hardware- or version-dependent forward pass. 
+
+TF-IDF Cosine Similarity. Query and answers are vectorized via scikit-learn’s 
+
+TfidfVectorizer (Pedregosa et al., 2011; Sparck Jones, 1972); similarity is the cosine be-tween query and answer vectors, also deterministic, but normalizing document length differently from BM25. 
+
+Dense Embedding. Query and answers are en-coded by a sentence-level transformer into fixed-length vectors eq, ea ∈ Rd, scored by cosine simi-larity (Reimers and Gurevych, 2019). This captures semantic paraphrase invisible to lexical methods, but requires sentence-transformers and is sensitive to encoder choice. 
+
+Cross-Encoder. A cross-encoder (Nogueira and Cho, 2019; Wang et al., 2020) scores the concatenated pair (q, a i) directly (ms-marco-MiniLM-L-6-v2 by default); cross-encoders consistently outperform bi-encoders on re-ranking (Thakur et al., 2021) but are slower, requiring a separate forward pass per candidate. Table 8 (Appendix F) summarizes the trade-offs: 
+
+first and reader-confidence are dependency-free selection rules (the default, first , per-forms no query–answer scoring at all); BM25 and TF-IDF are deterministic and dependency-light but purely lexical, while embedding and cross-encoder capture semantics at the cost of 
+
+sentence-transformers and slower infer-ence. 
+
+5 Implementation 
+
+5.1 Dependency Philosophy 
+
+ChunkRank targets environments where in-stalling heavy ML stacks is impractical (CI systems, serverless functions, restricted clus-ters, edge deployments); minimizing installa-tion friction is a design requirement, not an af-terthought. The core system (registry, tiktoken and character-fallback tokenizer adapters, sliding-window chunker, BM25 and TF-IDF ranking) re-quires only three runtime dependencies: numpy 
+
+(≥1.26, array operations), scikit-learn 
+
+(≥1.5, TF-IDF vectorization and cosine simi-larity), and rank-bm25 (≥0.2.2, BM25 scor-ing). Optional extras activate neural capabilities via pip install chunkrank[semantic] 
+
+(sentence-transformers) or chunkrank[all] 
+
+(all optional backends); PyTorch is never ahard dependency and is only imported when the user selects method="embedding" or 
+
+method="cross-encoder" .
+
+5.2 API Design 
+
+ChunkRank exposes three interaction levels for dif-ferent integration effort: a one-shot Function API 
+
+for scripts and notebooks, a stateful Pipeline API 
+
+that caches chunker configuration across repeated queries over one document, and a Component API 
+
+exposing the chunker and ranker directly; all three are shown in Appendix B. 
+
+5.3 Async, Caching, and Compatibility 
+
+AsyncChunkRankPipeline runs CPU-bound work in threads ( asyncio.to thread() ) and LLM calls as coroutines so neither blocks the event loop; both pipelines expose a stream() 
+
+method. ChunkCache persists chunked doc-uments to disk keyed by a SHA-256 hash of (text, model, strategy, overlap), skipping chunk-ing on a hit, using only the standard library. ChunkRank targets Python 3.10–3.13, uses 
+
+importlib.resources.files() (PEP 451) for registry access, and its test suite passes on all four versions. 
+
+6 Resource Release and Reproducibility 
+
+Beyond the library, we release the artifacts needed to reproduce and extend this work, documenting what is available, how it is versioned, and how it is maintained. 
+
+Distribution, licensing, and versioning. 
+
+ChunkRank is published on PyPI as the 
+
+chunkrank package and on GitHub at https: //github.com/AmitoVrito/chunkrank 
+
+under the Apache 2.0 license, permitting unre-stricted commercial and academic reuse, including inside larger RAG frameworks. The repository hosts the source code, the versioned model registry JSON (Section 4.1, diffable independently of code to audit exactly which models changed between releases), and the public test suite. The package follows semantic versioning; the results in this paper use release 2.0.0 . As of 2026-09-23, it has been downloaded 8,806 times from PyPI (554 in the preceding 30 days), a figure that includes mirror and CI traffic and is therefore an upper bound, but one that indicates adoption beyond the authors’ own usage. 
+
+Test coverage and evaluation artifacts. The public test suite exercises the registry, tokenizer adapters, both chunking strategies, all six answer-selection methods, the disk cache, and the sync and async pipelines, and runs on CPython 3.10 through 3.13. Alongside the library, we release the evaluation harness used in Section 7: the dataset fil-tering script, the evaluation configuration, and the full per-method result tables (Tables 4, 10, and 9), so the empirical claims here can be independently checked and extended to new datasets or selection methods without re-implementing the pipeline. 
+
+Computational reproducibility. The reported numbers were produced with 
+
+chunkrank 2.0.0 and pinned de-pendencies (transformers 4.44.2, 
+
+sentence-transformers 3.0.1, 
+
+torch 2.2.2 on CPU, numpy <2). To make neural ranking portable across machines, every model is pinned to an exact Hugging Face revision (reader deepset/roberta-base-squad2 @
+
+adc3b06f , embedding all-MiniLM-L6-v2 @1110a243 , cross-encoder ms-marco-MiniLM-L-6-v2 @233902d2 ) and run with device="cpu" ; we verified the neural rankings are bit-identical on CPU and Apple MPS. The released evaluation harness invokes chunkrank.Ranker directly for every selec-tion method, so a re-run reproduces the paper’s numbers from the installed package rather than a separate re-implementation. 
+
+Extensibility. Three extension points support community contribution without forking the li-brary: new registry entries as a JSON diff, new chunking strategies behind the existing Chunker 
+
+interface, and new ranking methods behind the ex-isting Ranker interface, the same interfaces used internally, so third-party extensions are not second-class citizens. 
+
+7 Experiments 
+
+7.1 Task and Motivation 
+
+We evaluate ChunkRank on long-document single-hop QA : each example pairs a document exceed-ing the model’s chunk budget with a factual ques-tion whose answer lies in one contiguous passage, and candidate answers come from querying the QA model (extractive reader or generative LLM) against each chunk independently. This validates real-world utility rather than a leaderboard, and we release the harness (Section 6) for reuse. Un-like RAG/re-ranking benchmarks (BEIR (Thakur et al., 2021), MS MARCO (Bajaj et al., 2016)) that search a corpus of thousands of passages, our candidate set is small (typically 3–20 chunks from one document) and pre-defined, the dominant case for practitioners applying LLMs to individual doc-uments, yet one with no dedicated benchmark or reusable harness prior to this release. 
+
+7.2 Experimental Setup Data. We build evaluation sets from Natu-ralQuestions (NQ) (Kwiatkowski et al., 2019) and TriviaQA (Joshi et al., 2017), keeping examples whose answer context exceeds 8,000 tokens (forc-ing chunking at a 6,000-token budget): 500 exam-ples each. 
+
+Answer generation and chunking. Candi-date answers are extracted per chunk with 
+
+deepset/roberta-base-squad2 (Devlin et al., 2019), an extractive RoBERTa QA model (Liu et al., 2019), the standard paradigm for NQ/TriviaQA, fully reproducible, CPU-only, no fine-tuning, using ChunkRank’s sliding window (6,000-token budget, 64-token overlap; mean 3.5 / 4.0 chunks per document on NQ / TriviaQA). Be-cause the extractive reader has a 512-token input               
+
+> Reader / dataset Empty chunks No-answer ex.
+> NQ, extractive 52% 22% TriviaQA, extractive 57% 16% HotpotQA, extractive 85% 38% NQ, generative 36% 2% TriviaQA, generative 51% 7% HotpotQA, generative 79% 18%
+> Table 2: Abstention rates. “Empty chunks” is the share of chunks for which the reader returned no answer; “No-answer ex.” is the share of examples with no non-empty candidate at all (every method scores 0). The extractive reader reads full chunks. These rates drive the results: first-non-empty exploits exactly this abstention.
+
+limit, each chunk is processed by the Hugging Face question-answering pipeline, which slides a 512-token window (stride 128) over the whole chunk and returns its single highest-confidence span (or nothing, when it finds no answer). The reader therefore both extracts an answer per chunk and abstains on chunks that lack one; the per-chunk confidence it produces is what the confidence 
+
+selector uses, while the content-based methods (Section 4.4) re-score the returned answer strings 
+
+against the query. On a chunk that contains no an-swer the reader usually returns nothing, so a large fraction of chunks are empty (52% on NQ, 57% on TriviaQA for this reader; Table 2), which is cen-tral to the results below. Section 7.6 repeats the study with a generative reader that leaves far fewer examples with no answer at all. 
+
+Baselines and metrics. All methods select over the non-empty candidates. First (non-empty) /
+
+Last return the first / last non-empty candidate; 
+
+Random samples one uniformly; Oracle takes the candidate with the highest F1 against the gold an-swer, the best any selector could achieve, an upper bound. We report Exact Match (EM) and token-level F1 (Kwiatkowski et al., 2019) with 95% boot-strap confidence intervals and paired bootstrap tests against first-non-empty. 
+
+7.3 Chunking Correctness 
+
+Before evaluating ranking, we validate the resource’s primary contribution: chunking that never exceeds the target model’s budget. We split the 500 long TriviaQA documents for gpt-4o-mini (6,000-token budget, 
+
+o200k base ) with ChunkRank, LangChain’s 
+
+RecursiveCharacterTextSplitter 
+
+(Chase, 2022), and Chonkie’s TokenChunker Splitter Overflow Mean util. Max tok.                   
+
+> LangChain char (naive 4:1) 0.64% 75.0% 7,375 Chonkie char (default) 0.60% 76.0% 7,397 LangChain char (aggressive) 0.00% 39.3% 4,559 LangChain tiktoken (manual) 0.00% 84.5% 5,979 Chonkie tiktoken (manual) 0.00% 86.2% 6,000
+> ChunkRank (auto) 0.00% 75.9% 6,000
+
+Table 3: Chunk overflow rate, mean budget utilisa-tion, and largest chunk across 500 TriviaQA documents (gpt-4o-mini , 6,000-token budget). Character-based splitters (top two) overflow the budget; token-aware ones (middle) do not, but require manual per-model tokenizer configuration. ChunkRank guaran-tees zero overflow automatically from the model name, at lower utilisation ( 75 .9% vs. 84 –86% ), a deliberate safety margin. 
+
+(Chonkie AI, 2024), counting chunks over 6,000 tokens and budget utilisation (Table 3). Character-based splitting, the default in both LangChain (a character ceiling) and Chonkie (a character backend), overflows 0.6% of chunks, the largest reaching 7,397 tokens ( 23% over budget), because the character-to-token ratio varies across documents. Shrinking the ceiling until overflow vanishes (LangChain 12k) wastes 
+
+61% of the budget and yields 1.9× more chunks. Token-aware configurations of both libraries reach zero overflow at high utilisation, but only once the user manually supplies the target model’s tokenizer. ChunkRank reaches zero overflow automatically 
+
+from the model name, at lower utilisation ( 75 .9% 
+
+vs. 84 –86% ), a deliberate safety margin. Its zero overflow is guaranteed by construction (it splits with the same tokenizer it is measured against, which is the point: that tokenizer is the target model’s). The contribution is thus not token counting (any library can be configured for it) but deriving tokenizer and budget from a named model without manual setup. 
+
+7.4 Multilingual Tokenizer Fidelity 
+
+Our QA evaluation is English-only, but the chunk-ing contribution can be probed multilingually. The character-ratio fallback ( ⌊| s|/4⌋) is calibrated for Latin-script English; measured on UDHR Arti-cle 1 across 11 languages (Appendix D), it over-counts English by 27% (safe) but under -counts logographic and syllabic scripts by up to 71% 
+
+(Chinese, Japanese), since one character maps to roughly one token. Consequently a character win-dow safe at 6,000 English tokens holds ∼20,000 tokens of Japanese ( 3.4× budget) and overflows for every non-Latin script tested. Only a tokenizer-derived budget, which ChunkRank computes from the model name, is safe across scripts (hence the fallback is opt-out, not default). 
+
+7.5 Answer Selection Results 
+
+Table 4 reports EM and F1 at the 6,000-token bud-get with 95% bootstrap CIs. Every method selects over one candidate set per example: the non-empty answers the reader produced, with empty spans dropped as the library does (Section 4.4). The head-line is a negative result. On neither NQ nor Trivi-aQA does any content-based ranker (lexical, dense-embedding, cross-encoder) significantly beat sim-ply taking the first non-empty answer: embedding ties first-non-empty or falls below it, while reader-confidence, the other reader-based rule, ties it (and is numerically higher on TriviaQA, p = 0 .18 ). The oracle headroom that remains is captured by no method we tested. BM25 and TF-IDF add no sig-nal on short factoid answers, which rarely share query terms, so all their candidate scores are equal on 79 –90% of multi-candidate examples and they fall back to document order, reducing in practice to first-chunk. 
+
+Abstention, not ranking, does the work. First-non-empty is hard to beat because the reader ab-stains: on a chunk that does not contain the answer it returns nothing, so the first non-empty answer is the answer from the first chunk the reader was confident about. Re-scoring the returned answer 
+
+strings against the query adds little on top of this implicit filtering: real oracle headroom remains (Table 4), but no content-based selector captures it, and the reader-based rules (first-non-empty, reader-confidence) are the strongest we tested. 
+
+Where there is a genuine choice. A tie is triv-ial when an example has only one non-empty candidate, so we restrict to examples with ≥ 2
+
+non-empty candidates, where a selector must ac-tually choose. With the generative reader this is the common case ( n=70 /100 on NQ, 58 /100 
+
+on TriviaQA, 181 /400 on HotpotQA), and there first-non-empty is not merely tied but significantly 
+
+beats every content-based method: 40.0 EM ver-sus 22.9 (embedding) and 18.6 (cross-encoder) on NQ ( p < 0.001 ), 58.6 versus 44.8 on TriviaQA (p = 0 .004 ), and 38.7 versus 26.5 on HotpotQA (p = 0 .002 ). With the extractive reader reading full chunks, roughly half of all examples now have a real choice ( n=242 on NQ, 247 on TriviaQA, Method NaturalQuestions TriviaQA                                               
+
+> EM F1 EM F1 First (non-empty) 22.4 29.1 45.4 51.0 Last 14.0 20.7 40.8 47.1 Random 18.8 24.8 43.8 49.4 BM25 21.8 28.6 45.2 50.5 TF-IDF 20.4 27.4 44.8 51.2 Embedding 18.8 25.9 45.2 52.3 Cross-Encoder 19.6 27.0 45.2 51.7 Reader-conf. 20.8 27.0 47.4 53.2
+> Oracle 25.6 34.2 56.2 61.5
+> Table 4: Exact Match (EM) and token-level F1 for an-swer selection over the non-empty candidate set (chunk budget = 6,000 tokens, 500 examples per dataset; ex-tractive reader reading full chunks). Bold marks the best non-oracle result per column. No content-based method (BM25, TF-IDF, embedding, cross-encoder) sig-nificantly beats first-non-empty: on NQ, embedding and cross-encoder are significantly below it ( p < 0.02 ), and on TriviaQA all differences from first-non-empty are non-significant (reader-confidence is numerically high-est, p= 0 .18 ). The reader-based selectors (first-non-empty, reader-confidence) match or beat the content-based ones throughout. Oracle headroom remains but is captured by no method.
+
+122 on HotpotQA), and there too no content-based method significantly beats first-non-empty; on NQ it is significantly better (first-non-empty 27.7 vs. embedding 20.2, p = 0 .004 ), and on TriviaQA the differences are non-significant. The negative re-sult is therefore not an artifact of single-candidate ties: where a real choice exists, taking the first non-empty answer is at least as good as, and under the stronger reader clearly better than, re-scoring the candidates. 
+
+The effect is not positional. A tempting expla-nation for a strong first-chunk baseline is posi-tional bias in Wikipedia-derived data, where the answer tends to sit near the start. We rule this out on HotpotQA (distractor) (Yang et al., 2018), where the answer-bearing paragraph sits at a near-uniform position (mean index 4.6; only 10% first; Appendix H). Even there, first-non-empty is not beaten by any content-based ranker (Table 10). It is abstention, not answer position, that makes first-non-empty strong, which is why ChunkRank ships it as the default and exposes the content-based methods for callers whose readers do not abstain. 
+
+7.6 Validation with a Generative LLM 
+
+To test whether the finding depends on the ex-tractive reader, we repeat the study on 100 ex-amples per dataset with a production genera-tive reader, Claude Haiku 4.5 (Anthropic, 2025), queried through its API, with paired bootstrap tests. Absolute scores rise sharply (the generative model is a far stronger reader), but the conclusion holds: first-non-empty is not beaten. On NQ, first-non-empty reaches 36.0 EM and embedding is signifi-cantly lower (24.0, p < 0.001 ); on TriviaQA, first-non-empty reaches 59.0 and embedding is again lower (51.0, p = 0 .006 ). Crucially, the generative reader leaves far fewer examples with no answer at all (2–18% vs. 16–38% for the extractive reader; Table 2), yet first-non-empty still wins, so the result is not an artifact of a reader that abstains too read-ily. The oracle remains well above every method (68.0 EM on TriviaQA), so real headroom exists that none of the tested selectors captures. This run is at n=100 and released through the same harness, which exposes both an extractive and a generative backend. 
+
+7.7 Latency Analysis 
+
+We benchmark chunking and selection latency on CPU (median of 100 runs; full table in Ap-pendix G). Chunking a document into up to 11 chunks completes in under 15 ms, regardless of tok-enizer backend. Selection is model-independent and ranges from effectively free ( first and 
+
+confidence , the default, and BM25 at <
+
+0.2 ms) to ∼30 ms for the neural methods at 5–20 candidates. The whole pipeline adds under 50 ms, negligible next to the seconds-scale reader calls it wraps. 
+
+7.8 When Not to Chunk: A Long-Context Baseline 
+
+Why chunk at all when a large-window model could read the whole document in one call? We test this directly: for the same generative examples (NQ / TriviaQA n=100 , HotpotQA n=400 ), we send each full document to Claude Haiku 4.5 in a single call (all documents fit its 200k-token win-dow) and compare against chunked first-non-empty selection (Table 5). On single-hop QA where the document fits, the two are statistically indistinguishable (NQ 36.0 vs. 35.0, p=0 .87 ; TriviaQA 59.0 vs. 57.0, p=0 .70 ), and total input tokens are essentially equal (chun-Method NQ TriviaQA HotpotQA              
+
+> Chunked (first-non-empty) 36.0 59.0 34.6 Long-context (single call) 35.0 57.0 55.1
+> pvs. chunked 0.87 0.70 <0.001
+> Table 5: Whole-document single-call (Claude Haiku 4.5) vs. chunked first-non-empty, EM. Single-hop NQ/TriviaQA ( n=100 ): a tie, at essentially equal input-token cost. Multi-hop HotpotQA ( n=136 subset; chun-ked matches its full-set 33 .5): long-context wins, as expected when chunking splits multi-hop evidence (Lim-itation 1). All documents fit the 200k-token window.
+
+ked 1.02 × single-call, since the chunks reconstruct the document plus a small overlap and a per-chunk prompt). For documents that fit a large window, chunking therefore yields no accuracy or cost ad-vantage. On multi-hop HotpotQA, single-call long-context wins (55.1 vs. 34.6 EM on the n=136 sub-set completed before an API limit; the chunked score on that subset matches its full-set value of 
+
+33 .5, confirming the subset is representative), be-cause splitting a document into 256-token pieces separates the evidence a multi-hop question must combine. This is the single-document, single-hop scope described in Limitation 1. We include Hot-potQA only as a probe of that limitation: its docu-ments average ∼1.3k tokens and were deliberately split at a 256-token budget, so this is not evidence that long-context beats chunking in general. This defines when the resource applies: chunk-ing gives no benefit when a document fits a large-window model, but it is required for the many reg-istry models with 512–32k-token windows (self-hosted and edge models) and for documents be-yond any context window, where a single call is impossible. 
+
+8 Conclusion 
+
+We have presented ChunkRank, an open-source, versioned resource that packages model-aware text chunking and post-chunk answer ranking as lightweight, modular middleware for LLM pipelines. Unlike chunking utilities bundled in-side larger retrieval frameworks, it is a standalone, independently documented package: a registry of 90 models across 15 providers, a three-tier API, a PyTorch-free core, and only three dependencies, adoptable incrementally and extensible without forking. All evaluation code, configuration, and results reported here are released alongside it to support replication. Experiments validate the chunking contribution and report a clear negative result for answer se-lection. For chunking, ChunkRank produces zero budget overflow automatically from the model name, where character-based splitters overflow or waste the budget (Sections 7.3–7.4). For an-swer selection, across NaturalQuestions, TriviaQA, and HotpotQA, with an extractive and a genera-tive reader and paired bootstrap tests, no content-based ranker (lexical, embedding, cross-encoder, or reader-confidence) reliably beats taking the first non-empty answer: selection over chunks is dom-inated by the reader’s ability to abstain, not by re-scoring answer strings. A long-context baseline further shows that chunking is not needed when a document fits a large-window model, delimiting where the resource applies. The contribution is thus not a stronger re-ranker but a modular, repro-ducible, community-maintainable resource, with an honest account of what answer selection over chunks can and cannot do. Future work includes multilingual calibration data, learned chunk bound-aries, multi-document fusion, and CPU-only em-bedding backends. 
+
+9 Limitations 
+
+1. Single-document, single-hop scope. 
+
+ChunkRank processes one document at a time and post-chunk selection cannot synthesise evidence across chunks, so multi-document and multi-hop question answering are outside its current scope. Our HotpotQA study (Appendix H) does not evaluate multi-hop reasoning: it concatenates the distractor paragraphs into a single document and uses it only to test whether first-non-empty’s strength is merely positional (it is not), with single-span answers, which is also why absolute scores there are capped. 2. Extractive answer selection. The ranker se-lects among pre-generated answers. It does not merge complementary information from multiple chunks, a capability studied in FiD (Izacard and Grave, 2021). If the answer to a query spans multiple chunks, ChunkRank may return an incomplete response. 3. Rule-based chunking. Both chunking strate-gies apply fixed rules. We have not ex-plored learning-based approaches that opti-mize chunk boundaries for downstream task performance. 4. Character-ratio fallback accuracy. The len/ 4 approximation is inaccurate for lan-guages with high character-to-token ratios (e.g., Chinese, Japanese, Korean), where a single character may correspond to fewer than one BPE token. Users processing such texts should install either tiktoken or the Hugging Face tokenizer for the target model. As a re-leased resource, this is a documented rather than silent limitation, and is a priority area for community-contributed multilingual calibra-tion data in future releases. 5. Semantic chunking dependency. Enabling the semantic similarity strategy requires 
+
+sentence-transformers , which rein-troduces a PyTorch dependency. This is at tension with the lightweight design goal; we intend to support lightweight CPU-only em-bedding backends in a future release. 6. Non-factoid queries. The evaluation focuses on factoid QA where a single chunk con-tains the complete answer. For summariza-tion, multi-hop reasoning, or open-ended gen-eration, the ranking criteria and evaluation metrics require reconsideration. Post-chunk ranking as implemented here is not suited to queries whose correct answer requires synthe-sizing information across chunks. 7. Evaluation scope. The answer-selection eval-uation uses 500 examples per dataset on NQ and TriviaQA and 400 on HotpotQA, with paired bootstrap confidence intervals and significance tests (Section 7), across three datasets spanning front-loaded and distributed answer positions, and we confirm the main finding with a generative reader in addition to extractive QA (Section 7.6); the generative run is preliminary ( n=100 per dataset). Three gaps remain: all three datasets are Wikipedia-derived, so domain diversity (legal, biomed-ical, code) is untested; the generative valida-tion covers a single provider model; and our negative result concerns the specific selectors we implemented, so a learned or reader-aware selector could still beat first-non-empty. We release the evaluation harness, with extractive and generative backends, so the community can extend it to new domains, generators, and selectors without re-implementation. 8. English-centric fallback and proxy tokeniz-ers. The character-ratio fallback ( ⌊| s|/4⌋)is calibrated for Latin-script English; Sec-tion 7.4 quantifies its error across 11 lan-guages (up to a 71% token under-count for Chinese/Japanese, i.e. overflow risk), so it is an opt-out path, and the tiktoken and Hug-ging Face backends, which count tokens di-rectly, are the correct choice for non-Latin scripts. Relatedly, 41 non-OpenAI models are mapped to o200k base as an approx-imate token counter rather than their exact tokenizer; this under-counts by 0.3–11 .3% on English (Appendix E). The default per-model 
+
+reserve absorbs this at typical budgets, but a fixed reserve does not scale: at a 128k-token budget an 11 .3% under-count is ∼14k tokens, far exceeding a 512–1,024-token reserve, so the zero-overflow guarantee is exact only for the 49 entries with a native tokenizer (tikto-ken or Hugging Face) and approximate for the 41 proxy-mapped models. For those, or at very large budgets, the exact tiktoken or Hug-ging Face tokenizer should be used. The QA evaluation itself remains English-only; multi-lingual QA is future work. 
+
+Ethics Statement 
+
+ChunkRank is infrastructure: it operates purely on documents and queries passed to it by the calling application and does not itself collect, transmit, or retain any user data. It maintains no server, no telemetry, and no persistent state beyond the op-tional, entirely local, user-controlled disk cache described in Section 5, which stores only chun-ked document text under a path the user chooses. ChunkRank does not call any external service on its own behalf; the only network access in a typ-ical deployment is the LLM API call the user’s own application makes, which is entirely outside ChunkRank’s control. Because ChunkRank is model- and provider-agnostic infrastructure rather than a trained model, it does not introduce new biases beyond those already present in whichever LLM and tokenizer the user configures it to work with; it does not amplify or mitigate those biases. The evaluation in Section 7 uses NaturalQuestions and TriviaQA, both public, widely used, English-language QA benchmarks derived from Wikipedia and licensed for research use, and introduces no new human-subjects data collection. 
+
+Acknowledgements 
+
+The authors thank the open-source communi-ties behind rank-bm25 , scikit-learn , and 
+
+sentence-transformers for maintaining the libraries on which ChunkRank depends. 
+
+References 
+
+Alan Akbik, Tanja Bergmann, Duncan Blythe, Kashif Rasul, Stefan Schweter, and Roland Vollgraf. 2019. FLAIR: An easy-to-use framework for state-of-the-art NLP. In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics (Demonstrations) , pages 54–59. ACL. Anthropic. 2025. Claude Haiku 4.5. https: //www.anthropic.com/claude/haiku .Model card and documentation, https://docs. claude.com/en/docs/about-claude/ models/overview .Akari Asai, Zeqiu Wu, Yizhong Wang, Avirup Sil, and Hannaneh Hajishirzi. 2024. Self-RAG: Learning to retrieve, generate, and critique through self-reflection. In The Twelfth International Conference on Learning Representations .Payal Bajaj, Daniel Campos, Nick Craswell, Li Deng, Jianfeng Gao, Xiaodong Liu, Rangan Majumder, Andrew McNamara, Bhaskar Mitra, Tri Nguyen, et al. 2016. MS MARCO: A human generated ma-chine reading comprehension dataset. arXiv preprint arXiv:1611.09268 .Steven Bird, Ewan Klein, and Edward Loper. 2009. Nat-ural language processing with Python: Analyzing text with the natural language toolkit. O’Reilly Media. Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. 2020. Language models are few-shot learners. Advances in Neural Information Processing Systems , 33:1877–1901. Harrison Chase. 2022. LangChain. https:// github.com/langchain-ai/langchain .GitHub repository. Danqi Chen, Adam Fisch, Jason Weston, and Antoine Bordes. 2017. Reading Wikipedia to answer open-domain questions. In Proceedings of the 55th Annual Meeting of the Association for Computational Lin-guistics , pages 1870–1879. ACL. Chonkie AI. 2024. Chonkie: A no-nonsense, lightweight and fast chunking library. https: //github.com/chonkie-inc/chonkie .GitHub repository. deepset. 2019. Haystack: Open source nlp frame-work. https://github.com/deepset-ai/ haystack . GitHub repository. Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. 2019. BERT: Pre-training of deep bidirectional transformers for language under-standing. In Proceedings of the 2019 Conference of the North American Chapter of the Association for Computational Linguistics , pages 4171–4186. ACL. Darren Edge, Ha Trinh, Newman Cheng, Joshua Bradley, Alex Chao, Apurva Mody, Steven Truitt, and Jonathan Larson. 2024. From local to global: A graph RAG approach to query-focused summariza-tion. arXiv preprint arXiv:2404.16130 .Thibault Formal, Benjamin Piwowarski, and St´ ephane Clinchant. 2021. SPLADE: Sparse lexical and ex-pansion model for first stage ranking. In Proceedings of the 44th International ACM SIGIR Conference on Research and Development in Information Retrieval ,pages 2288–2292. ACM. Gemini Team, Google. 2024. Gemini 1.5: Unlocking multimodal understanding across millions of tokens of context. arXiv preprint arXiv:2403.05530 .Kelvin Guu, Kenton Lee, Zora Tung, Panupong Pasupat, and Ming-Wei Chang. 2020. REALM: Retrieval-augmented language model pre-training. arXiv preprint arXiv:2002.08909 .Matthew Honnibal, Ines Montani, Sofie Van Lan-deghem, and Adriane Boyd. 2020. spaCy: Industrial-strength natural language processing in Python. 
+
+https://spacy.io .Gautier Izacard and Edouard Grave. 2021. Leveraging passage retrieval with generative models for open do-main question answering. In Proceedings of the 16th Conference of the European Chapter of the Associa-tion for Computational Linguistics , pages 874–880. ACL. Mandar Joshi, Eunsol Choi, Daniel Weld, and Luke Zettlemoyer. 2017. TriviaQA: A reading compre-hension dataset containing complex, compositional questions over wikipedia and the web. In Proceed-ings of the 55th Annual Meeting of the Association for Computational Linguistics , pages 1601–1611. ACL. Vladimir Karpukhin, Barlas O˘ guz, Sewon Min, Patrick Lewis, Ledell Wu, Sergey Edunov, Danqi Chen, and Wen-tau Yih. 2020. Dense passage retrieval for open-domain question answering. In Proceedings of the 2020 Conference on Empirical Methods in Natural Language Processing (EMNLP) , pages 6769–6781. ACL. Omar Khattab and Matei Zaharia. 2020. ColBERT: Effi-cient and effective passage search via contextualized late interaction over BERT. In Proceedings of the 43rd International ACM SIGIR Conference on Re-search and Development in Information Retrieval ,pages 39–48. ACM. Taku Kudo and John Richardson. 2018. SentencePiece: A simple and language independent subword tok-enizer and detokenizer for neural text processing. In 
+
+Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing: System Demonstrations , pages 66–71. ACL. Tom Kwiatkowski, Jennimaria Palomaki, Olivia Red-field, Michael Collins, Ankur Parikh, Chris Alberti, Danielle Epstein, Illia Polosukhin, Jacob Devlin, Ken-ton Lee, et al. 2019. Natural questions: A benchmark for question answering research. Transactions of the Association of Computational Linguistics , 7:452– 466. Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Heinrich K¨ uttler, Mike Lewis, Wen-tau Yih, Tim Rockt¨ aschel, Sebastian Riedel, and Douwe Kiela. 2020. Retrieval-augmented generation for knowledge-intensive NLP tasks. In Advances in Neural Information Processing Systems , volume 33, pages 9459–9474. Curran Associates. Jerry Liu. 2022. LlamaIndex. https: //github.com/run-llama/llama_index .GitHub repository. Nelson F. Liu, Kevin Lin, John Hewitt, Ashwin Paran-jape, Michele Bevilacqua, Fabio Petroni, and Percy Liang. 2024. Lost in the middle: How language mod-els use long contexts. Transactions of the Association for Computational Linguistics , 12:157–173. Yinhan Liu, Myle Ott, Naman Goyal, Jingfei Du, Man-dar Joshi, Danqi Chen, Omer Levy, Mike Lewis, Luke Zettlemoyer, and Veselin Stoyanov. 2019. RoBERTa: A robustly optimized BERT pretraining approach. arXiv preprint arXiv:1907.11692 .Meta AI. 2025. The Llama 4 herd: The begin-ning of a new era of natively multimodal AI innovation. https://ai.meta.com/blog/ llama-4-multimodal-intelligence/ .Model card and blog; Llama 4 Scout, 10M-token context. Rodrigo Nogueira and Kyunghyun Cho. 2019. Pas-sage re-ranking with BERT. arXiv preprint arXiv:1901.04085 .Rodrigo Nogueira, Zhiying Jiang, Ronak Pradeep, and Jimmy Lin. 2020. Document ranking with a pre-trained sequence-to-sequence model. In Findings of the Association for Computational Linguistics: EMNLP 2020 , pages 708–718. ACL. OpenAI. 2023. GPT-4 technical report. arXiv preprint arXiv:2303.08774 .Fabian Pedregosa, Ga¨ el Varoquaux, Alexandre Gram-fort, Vincent Michel, Bertrand Thirion, Olivier Grisel, Mathieu Blondel, Peter Prettenhofer, Ron Weiss, Vin-cent Dubourg, et al. 2011. Scikit-learn: Machine learning in Python. Journal of Machine Learning Research , 12:2825–2830. Peng Qi, Yuhao Zhang, Yuhui Zhang, Jason Bolton, and Christopher D. Manning. 2020. Stanza: A Python natural language processing toolkit for many human languages. In Proceedings of the 58th Annual Meet-ing of the Association for Computational Linguistics: System Demonstrations , pages 101–108. ACL. Nils Reimers and Iryna Gurevych. 2019. Sentence-BERT: Sentence embeddings using Siamese BERT-networks. In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Processing ,pages 3982–3992. ACL. Stephen Robertson and Hugo Zaragoza. 2009. The probabilistic relevance framework: BM25 and be-yond. Foundations and Trends in Information Re-trieval , 3(4):333–389. Rico Sennrich, Barry Haddow, and Alexandra Birch. 2016. Neural machine translation of rare words with subword units. In Proceedings of the 54th Annual Meeting of the Association for Computational Lin-guistics , pages 1715–1725. ACL. Weijia Shi, Sewon Min, Michihiro Yasunaga, Min-joon Seo, Richard James Lewis, Mike Lewis, Luke Zettlemoyer, and Wen-tau Yih. 2023. REPLUG: Retrieval-augmented black-box language models. 
+
+arXiv preprint arXiv:2301.12652 .Karen Sparck Jones. 1972. A statistical interpretation of term specificity and its application in retrieval. 
+
+Journal of Documentation , 28(1):11–21. Nandan Thakur, Nils Reimers, Andreas R¨ uckl´ e, Ab-hishek Srivastava, and Iryna Gurevych. 2021. BEIR: A heterogeneous benchmark for zero-shot evaluation of information retrieval models. In Proceedings of the Thirty-Fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track .Wenhui Wang, Furu Wei, Li Dong, Hangbo Bao, Nan Yang, and Ming Zhou. 2020. MiniLM: Deep self-attention distillation for task-agnostic compression of pre-trained transformers. In Advances in Neural Information Processing Systems , volume 33, pages 5776–5788. Curran Associates. Thomas Wolf, Lysandre Debut, Victor Sanh, Julien Chaumond, Clement Delangue, Anthony Moi, Pier-ric Cistac, Tim Rault, R´ emi Louf, Morgan Funtowicz, et al. 2020. Transformers: State-of-the-art natural language processing. In Proceedings of the 2020 Conference on Empirical Methods in Natural Lan-guage Processing: System Demonstrations , pages 38–45. ACL. Fangyuan Xu, Weijia Shi, and Eunsol Choi. 2024. RE-COMP: Improving retrieval-augmented LMs with compression and selective augmentation. In The Twelfth International Conference on Learning Repre-sentations .Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Bengio, William Cohen, Ruslan Salakhutdinov, and Christo-pher D. Manning. 2018. HotpotQA: A dataset for diverse, explainable multi-hop question answering. In Proceedings of the 2018 Conference on Empiri-cal Methods in Natural Language Processing , pages 2369–2380. ACL. 
+
+A Architecture Diagram          
+
+> Document DModel name M
+> Model Registry Tokenizer Adapter Chunker LLM calls (per chunk) Ranker Best answer a∗
+> Query q
+> Chunk Cache
+> WM,TM
+> BM
+> c1. . . c n
+> a1. . . a n
+> miss hit
+
+Figure 1: ChunkRank pipeline. Solid arrows show the primary data flow; dashed arrows show the optional disk-cache path. WM is the model context window, TM
+
+its tokenizer, and BM = WM − RM the effective chunk budget. 
+
+B Three-Tier API 
+
+The Function, Pipeline, and Component APIs (Sec-tion 5): 
+
+import chunkrank # Level 1: one-shot function API chunks = chunkrank.split(text, model=" gpt-4o-mini") answers = chunkrank.answer(question, chunks) # calls your LLM best = chunkrank.rank(answers) # Level 2: stateful pipeline API from chunkrank import ChunkRankPipeline pipe = ChunkRankPipeline(model="gpt-4o-mini", retrieval_top_k=3) answer = pipe.process(question, text) # Level 3: component API from chunkrank import Chunker, ChunkerConfig, Ranker config = ChunkerConfig(model="claude -3-5-sonnet", strategy="semantic", overlap_tokens =64) chunker, ranker = Chunker(config), Ranker(method="cross-encoder") chunks = chunker.split(text) answers = [my_llm(question, c) for c in chunks] # your LLM call ranked = ranker.rank(question, answers) 
+
+C Token-Budget Sliding Window 
+
+Algorithm 1 gives the default chunker (Section 4.3). The inner loop binary-searches the character range 
+
+[pos + 1 , end ] (width at most B · r), converging in 
+
+O(log B) tokenizer calls per chunk. 
+
+Algorithm 1 Token-Budget Sliding Window 
+
+Require: document D, budget B, overlap δ, ini-tial ratio r = 4 
+
+1: pos ← 0; chunks ← [] 
+
+2: approx ← max(64 , B · r) {character estimate }
+
+3: while pos < |D| do 
+
+4: end ← min( |D|, pos + approx )
+
+5: if |T (D[pos : end ]) | > B then 
+
+6: lo , hi ← pos + 1 , end {binary search on chunk length }
+
+7: while lo < hi do 
+
+8: mid ← ⌈ (lo + hi )/2⌉
+
+9: if |T (D[pos : mid ]) | ≤ B then 
+
+10: lo ← mid 
+
+11: else 
+
+12: hi ← mid − 1
+
+13: end if 
+
+14: end while 
+
+15: end ← max( pos + 1 , lo )
+
+16: end if 
+
+17: chunks.append (D[pos : end ]) 
+
+18: if end ≥ | D| then 
+
+19: break 
+
+20: end if 
+
+21: pos ← end − δ · r if δ > 0 else end {apply overlap }
+
+22: end while 
+
+23: return chunks 
+
+D Multilingual Tokenizer Fidelity 
+
+Full per-language results for Section 7.4 (Table 6). 
+
+E Proxy-Tokenizer Error 
+
+The registry maps 41 non-OpenAI models to 
+
+o200k base as an approximate token counter. Table 7 measures the resulting error on a fixed 8,000-character English document (o200k base: 1,513 tokens) against the true tokenizer, for the non-OpenAI models whose tokenizer is public. The proxy consistently under -counts (the true model emits more tokens), by up to 11 .3% (Mistral); a proxy under-count is an overflow risk, which the default per-model reserve absorbs. Models with proprietary tokenizers (Claude, Gemini, Grok, Co-here) cannot be measured directly. Language Script ch/tok len/4 err. 
+
+English Latin 5.15 +27% 
+
+Spanish Latin 4.50 +11% 
+
+French Latin 4.54 +12% 
+
+German Latin 4.32 +8% 
+
+Russian Cyrillic 3.81 −5% 
+
+Hindi Devanagari 3.46 −15% 
+
+Arabic Arabic 2.70 −33% 
+
+Thai Thai 2.08 −49% 
+
+Korean Hangul 1.71 −59% 
+
+Chinese Han 1.23 −71% 
+
+Japanese Japanese 1.18 −71% 
+
+Table 6: Characters per o200k base token and the error of the len/4 character-ratio estimate on UDHR Article 1 (negative error = under-count = overflow risk). Latin scripts are safe; logographic and abugida scripts under-count by up to 71% , so a character budget cali-brated for English overflows the token budget.                
+
+> Registry model True tokenizer True tok. Proxy err.
+> qwen2.5-* Qwen2.5-7B 1,549 −2.3%
+> deepseek-v3 deepseek-llm-7b 1,561 −3.1%
+> mistral-* Mistral-7B-v0.2 1,705 −11 .3%
+> (older BPE) gpt2 1,517 −0.3%
+
+Table 7: Token count of the o200k base proxy (1,513) vs. the true tokenizer on an 8,000-character En-glish document. Negative error = proxy under-count =
+
+the true model emits more tokens than budgeted (over-flow risk, absorbed by the reserve). 
+
+F Ranker Method Trade-offs G Latency Benchmark H Ranking Without Positional Bias (HotpotQA) 
+
+Full results for the positional check (Section 7). We use HotpotQA (Yang et al., 2018) in the dis-tractor setting as a single-document diagnostic: we concatenate the ten distractor paragraphs into one document (so the answer-bearing paragraph sits at mean index 4.6, only 10% at position 0) and ask whether a strong first-chunk baseline is merely po-sitional. We keep the 400 examples whose answer is a non-yes/no span appearing verbatim in the con-text, split at a 256-token budget ( ∼8 chunks each), and run the same harness as Table 4 over the non-empty candidate set (random-baseline seed 42). Even here, where the answer is not front-loaded, no content-based method significantly beats first-non-empty (Table 10): embedding, cross-encoder, and reader-confidence edge it by 0.4–1.0 EM, but none of the differences is significant (paired boot-strap p > 0.4). This rules out the positional ex-planation: abstention, not answer position, is what                     
+
+> Method Deterministic Dependencies Semantic Relative speed
+> BM25 ✓rank-bm25 No Fastest TF-IDF ✓scikit-learn No Fast Embedding ∼sentence-transformers Yes Moderate Cross-Encoder ∼sentence-transformers Yes Slow
+
+Table 8: Ranker method comparison. “Deterministic” marks methods whose output is identical across runs given the same input. Embedding and cross-encoder results may vary across model versions.                            
+
+> Chunking (6k budget) 1 chunk 6 chunks 11 chunks
+> gpt-4o-mini 0.7 ms 6.6 ms 14.2 ms llama-4-scout 0.7 ms 7.6 ms 13.9 ms
+> Selection 5 cand. 10 cand. 20 cand.
+> First / Reader-conf. <0.01 ms <0.01 ms <0.01 ms BM25 0.06 ms 0.08 ms 0.12 ms TF-IDF 1.8 ms 1.8 ms 2.2 ms Embedding 28.4 ms 30.4 ms 32.2 ms Cross-Encoder 28.5 ms 30.5 ms 31.7 ms
+
+Table 9: Wall-clock latency (CPU only, median of 100 runs, chunkrank 2.0.0). Chunking scales with the num-ber of chunks and is essentially model-independent (tik-token vs. Hugging Face tokenizer overhead is small); se-lection scales with candidate count. The default first 
+
+and confidence selectors are effectively free; only the neural methods add tens of milliseconds. Read-er/LLM inference itself (not shown) dominates total pipeline latency by orders of magnitude. 
+
+makes first-non-empty strong. We do not evaluate multi-hop reasoning, which post-chunk selection cannot perform and which caps the absolute scores (Limitation 1). Method EM F1                   
+
+> First (non-empty) 21.8 27.9 Last 20.0 26.6 Random 20.5 26.9 BM25 21.8 27.8 TF-IDF 21.8 28.0 Embedding 22.2 29.0 Cross-Encoder 22.5 29.1
+> Reader-conf. 22.8 28.7 Oracle 27.8 35.0
+
+Table 10: HotpotQA (distractor) EM/F1, 400 examples, 256-token budget, over the non-empty candidate set. 
+
+Bold marks the best non-oracle result per column, but no method significantly beats first-non-empty (all paired-bootstrap p > 0.4). Even with answers that are not front-loaded, first-non-empty is not beaten, so the baseline’s strength is due to reader abstention, not answer position.
