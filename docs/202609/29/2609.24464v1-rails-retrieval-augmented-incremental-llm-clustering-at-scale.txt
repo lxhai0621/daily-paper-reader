@@ -1,0 +1,535 @@
+Title: RAILS: Retrieval-Augmented Incremental LLM Clustering at Scale
+
+URL Source: https://arxiv.org/pdf/2609.24464v1
+
+Published Time: Tue, 22 Sep 2026 02:33:30 GMT
+
+Number of Pages: 13
+
+Markdown Content:
+# RAILS: Retrieval-Augmented Incremental LLM Clustering at Scale 
+
+Armin Oliya 
+
+Zendesk 
+
+armin.oliya@zendesk.com 
+
+Aleksandra Sawczuk 
+
+Zendesk 
+
+ola.sawczuk@zendesk.com 
+
+Radosław Białobrzeski 
+
+Zendesk 
+
+radoslaw.bialobrzeski@zendesk.com 
+
+Abstract 
+
+Using a Large Language Model (LLM) as the clusterer at production scale is hard: prompts cannot hold the entire label space, and per-document serial processing does not deliver the throughput real workloads require. We present RAILS , a retrieval-augmented incre-mental LLM clusterer that turns clustering into a simple loop over a growing label pool and scales through document batching with bounded concurrency. On six public bench-marks RAILS exceeds the strongest prior LLM-clustering method on average, lifting accuracy from 51 .2% to 59 .3% , NMI from 67 .2% to 
+
+74 .8% , and ARI from 45 .4% to 54 .7% . We further report production-deployment evidence from a SaaS ticket-topic-discovery pipeline, where RAILS has replaced a traditional HDB-SCAN stage with higher clustering quality, transparent prompt-driven control, and state-ful incremental operation. 
+
+1 Introduction 
+
+Customer support platforms ingest millions of tick-ets per week across thousands of customer accounts spanning industries from e-commerce and travel to gaming and food delivery. A topic discovery 
+
+pipeline groups these tickets into recurring themes that downstream products consume to detect knowl-edge gaps in help centres, generate and update self-service articles, and ground generative AI copilots. Because every downstream product inherits the topic layer’s decisions, its quality directly bounds the quality of the entire product surface. The conventional approach is unsupervised text clustering: encode tickets with a pre-trained model, optionally reduce dimensionality with UMAP (McInnes et al., 2018), and cluster with a density- or partition-based algorithm such as HDB-SCAN (Campello et al., 2013) or k-means. We operated such an embed-then-cluster pipeline in production for over a year, across hundreds of mil-lions of tickets, and accumulated the structural lim-itations that motivate this work (§2). We present RAILS, a retrieval-augmented incre-mental LLM clustering architecture that removes both the embedding model and the clustering al-gorithm from the critical path. An LLM directly assigns each ticket to a growing label pool via retrieval-augmented generation. This single de-sign choice yields three properties the established pipeline cannot deliver simultaneously: native statefulness from the persistent label pool; robust-ness across languages, channels (email, chat, voice transcripts), and noisy inputs, inherited from the LLM’s pre-training; and product-meaningful con-trol via natural-language prompts that also yield a transparent rationale for each assignment. To make this viable at production volume, we introduce ticket batching with an adaptive slow-start concur-rency mechanism that reconciles label-pool quality during bootstrapping with sustained throughput. We evaluate RAILS on six public clustering benchmarks where it exceeds prior baselines, and report production evidence from a topic-discovery pipeline that has replaced an HDBSCAN clustering stage. 
+
+2 Background and Problem Setting 
+
+The embed-then-cluster pattern scales well, but in sustained operation, surfaces three structural limi-tations that no amount of tuning could remove. The first is a hard dependency on the en-coder : embedding errors propagate irrecover-ably to every downstream stage, and channels the encoder was not explicitly tuned on cluster poorly(messaging transcripts, voice call summaries, or under-resourced languages). Any change to the embedding model requires re-embedding and re-clustering the entire ticket history. The second is the absence of native statefulness .1arXiv:2609.24464v1 [cs.LG] 21 Sep 2026 Concurrent workers: slow-start W ∈ [Wmin , W max ]              
+
+> LLM Prompt
+> Tickets:
+> •x1: “can’t reset password”
+> •x2: “payment didn’t go through”
+> •. . . (Btickets)
+> Labels:
+> ◦Login & Password Reset
+> ◦Payment Failure
+> ◦. . . (Ccandidates) Ticket Batch
+> B={x1, . . . , x B}
+> Top-KRetrieval (per ticket) Label Pool
+> L
+
+# j      
+
+> LLM
+> Assign? Noise Reuse ℓ∈ C
+> Create ℓ∗
+> Merge (threshold τ)
+> candidates C
+
+Figure 1: Architecture of retrieval-augmented incremental LLM clustering. Within each concurrency-managed worker, top-K candidate labels are retrieved from the per-brand pool L and packed with the ticket batch into a single LLM prompt. The LLM (a hosted, shared service) returns one of three outcomes per ticket: reuse an existing candidate, create a new label, or mark as noise . New labels are absorbed back into L via threshold-based merging. Slow-start scheduling ramps worker count W from Wmin to Wmax over the run. 
+
+Algorithms such as k-means and HDBSCAN pro-duce a fresh partition on every run with no notion of label persistence, so maintaining stable topic identifiers across runs falls to post-hoc merging heuristics that are brittle in practice. The third is the opacity of cluster membership :assignments are determined by geometric proxim-ity and a handful of hyperparameters, not by any product-meaningful definition of a topic. Stake-holder feedback such as “topics are too coarse for messaging” maps only indirectly to those hyper-parameters, and answering “why did this ticket land here?” requires reverse-engineering several pipeline components. Acting on either requires time-consuming sweeps and long feedback cycles. 
+
+3 Related Work 
+
+Prior work on LLM-assisted clustering falls into three camps. 
+
+LLM-supervised pipelines. Cluster-LLM (Zhang et al., 2023), PRISM (Douglas et al., 2026), and Dial-In LLM (Hong et al., 2025) use sparse LLM or human annotations to fine-tune encoders, coherence judges, or namers that steer a classical partitioning algorithm. These improve goal-alignment but require a training loop that must be re-run under domain or language shift. 
+
+LLM-as-constraint. A training-free line injects LLM knowledge into an existing algorithm: group-level must/cannot-link sets for k-means (Jia et al., 2026), set-level similarity judgments as fea-tures (Lin et al., 2026), or HDBSCAN+UMAP with multiple LLM-guided pipeline steps deployed on 90k+ chats (Pattnayak et al., 2025). All inherit the geometric assumptions of the underlying algo-rithm. 
+
+LLM-as-clusterer. A third line removes the clas-sical algorithm entirely. GoalEx (Wang et al., 2023) iteratively proposes labels from corpus subsets and classifies each document against the final set, as-suming a closed corpus. LLM-MemCluster (Zhu et al., 2025) maintains an in-prompt label mem-ory with assign-or-create decisions and a separate merge-suggestion action, switching between two prompt modes (strict vs. relaxed) at a user-specified label ceiling Kmax . It is evaluated serially on small benchmarks where the full memory fits in one prompt. 
+
+RAILS removes distance-based partitioning, fixed-k constraints, and training, and exposes clus-tering criteria as editable natural-language prompts. It exceeds the strongest prior LLM methods on av-erage across six benchmarks, and is demonstrated to scale by an actual production deployment in an industry setting. 
+
+4 Method 
+
+Algorithm 1 and Figure 1 give the top-level loop. Concrete values for B, K, the merge threshold τ ,and the concurrency bounds are deployment knobs reported in §7. 
+
+4.1 Label pool 
+
+The label pool L is a set of records 
+
+L = (ℓk, ek) |L| 
+
+> k=1
+
+,
+
+2Algorithm 1 Top-level RAILS algorithm 
+
+Require: Documents D, label pool L (initially empty or seeded), batch size B, retrieval depth 
+
+K, concurrency bounds Wmin , W max  
+
+> 1:
+
+M ← ⌈|D| /B ⌉; split D into batches 
+
+B1, . . . , BM 
+
+> 2:
+
+assignments ← ∅  
+
+> 3:
+
+W ← Wmin ; initialise semaphore S with W
+
+permits  
+
+> 4:
+
+for j = 1 , . . . , M (up to W batches in flight via S) do  
+
+> 5:
+
+Cj ← RETRIEVE (Bj , L, K ) 
+
+> 6:
+
+aj ← LLMC ALL (Bj , Cj ) ▷ one label per document  
+
+> 7:
+
+Λj ← { a ∈ aj | a / ∈ C j ∪ { NOISE } } ▷
+
+newly coined  
+
+> 8:
+
+lock (L): (L, aj ) ← MERGE (L, Λj , aj ) 
+
+> 9:
+
+assignments ← assignments ∪ aj 
+
+> 10:
+
+if batch j completed without provider throt-tling then  
+
+> 11:
+
+W ← min( W +1 , W max ) 
+
+> 12:
+
+end if  
+
+> 13:
+
+end for  
+
+> 14:
+
+return assignments, final pool L
+
+where ℓk is the canonical surface form of the la-bel and ek ∈ Rd is its embedding, computed by the same encoder used for document embeddings (§4.2). The pool L starts either empty (cold-start) or pre-populated with labels from a previous run or a curated taxonomy. This is what makes RAILS streaming-friendly: successive runs over newly-arrived documents inherit prior labels via retrieval while the LLM remains free to extend the pool with genuinely new themes. 
+
+4.2 Retrieval 
+
+Label and document embeddings are produced by a single sentence encoder. We use it as a soft com-ponent : its role is to surface plausible candidate labels for an LLM decision, not to determine the cluster assignment itself. A retrieval miss therefore does not produce a misclustering, only a slightly larger prompt or a duplicate-label proposal that the per-batch merge step would absorb (§4.4). For each document xi ∈ B with precomputed embedding qi, we take its top-K pool entries by co-sine similarity; the batch candidate set C(B) is their union, of size at most BK , which fits comfortably within modern LLM context windows. 
+
+4.3 LLM assignment and label generation 
+
+A single LLM call returns one label per document (Alg. 1, lines 6–7); each label is either an existing candidate, a freshly coined string, or the reserved  
+
+> NOISE
+
+token. Beyond throughput, grouping B doc-uments into a single call lets the model (i) reuse a candidate label across several semantically similar documents in the batch and (ii) coin one shared new label rather than B near-duplicates. The system prompt encodes the clustering task and granularity target – with cross-domain exam-ples at the desired specificity level – an explicit definition of NOISE as content-free inputs (auto-generated stubs, gibberish), and the output JSON schema. The user prompt contains the batch and the candidate set. 
+
+4.4 Per-batch label merge 
+
+Even with the candidate set C(B) in the prompt, the LLM can coin a synonym of a label that did not surface in top-K, and concurrent batches can inde-pendently coin synonyms for the same emerging topic; an embedding-based merge is the safety net that keeps the pool from fragmenting. For every new label ℓ ∈ Λ, let ℓk∗ be its nearest pool entry by cosine similarity. If s(e(ℓ), ek∗ ) >τ , ℓ is absorbed into ℓk∗ : all documents in the batch assigned to ℓ are reassigned to ℓk∗ and ℓ is discarded. The merge runs under a write lock on L and is the only operation that mutates the pool; it al-ways sees the latest committed state, so synonyms produced by concurrent batches are caught by whichever batch commits second. 
+
+4.5 Concurrency 
+
+Next to document batching, concurrency is the main lever for fitting RAILS to production through-put requirements. We gate batch execution with a semaphore that starts at Wmin permits (in practice 
+
+Wmin =1 ) and grows by one on each throttle-free completion up to Wmax . The slow start serves two purposes. First, it manages cold-start label-pool quality: the near-serial first batches populate 
+
+L with the most common topics; once those are present, later batches retrieve them as candidates and the LLM defaults to reuse, instead of many in-flight workers independently coining synonyms for the same emerging topic against a near-empty pool. Second, it is a graceful way to respect provider rate limits or self-hosted GPU capacity by ramping up 3only as fast as the backend tolerates. More sophisti-cated controllers are possible; we report this simple mechanism as sufficient for our deployment. 
+
+5 Experimental Setup 
+
+We evaluate RAILS on six public clustering benchmarks. Unless otherwise noted, all runs use batch size B=15 , top-K=5 , merge thresh-old τ =0 .85 , temperature 0 for deterministic de-coding, a cold-start pool L(0) =∅, and slow-start concurrency bounds Wmin =1 , Wmax =15 . Re-trieval and merge share a single sentence encoder, 
+
+all-mpnet-base-v2 1. For each dataset we author a per-benchmark prompt that fixes the task framing (e.g. paper subject area , utterance intent , relation type ) and provides granularity examples tailored to its label space, while holding the noise definition and JSON schema fixed across all six – the proto-col used by prior LLM-clustering work (Zhu et al., 2025); full prompts in Appendix F.2. We report RAILS results in Table 1 as the mean over three runs for each of four LLMs spanning families and price points: Amazon Nova Lite (Amazon Artificial General Intelli-gence, 2024), Claude Haiku 4.5 (Anthropic, 2025a), Claude Sonnet 4.5 (Anthropic, 2025b), and Gemma 4 26B MoE (Google DeepMind, 2026) (self-hosted via vLLM (Kwon et al., 2023)). We compare against standard clustering base-lines and recent LLM-based methods. K-Means is given the true number of clusters 
+
+k. HDBSCAN is tuned via grid search over 
+
+min_cluster_size ∈ {5, 10 , 15 , 20 , 30 , 50 } and 
+
+min_samples ∈ { 1, 5, 10 }, selecting the configu-ration that maximises NMI. BERTopic uses its default UMAP and HDBSCAN settings with auto-matic cluster detection. All three consume the same pre-computed MPNet embeddings as RAILS. We also compare against ClusterLLM (Zhang et al., 2023) and MemCluster (Zhu et al., 2025), report-ing their published numbers on the same datasets. 
+
+Metrics. Following Zhang et al. (2023), we re-port clustering accuracy (ACC) under Hungarian matching between predicted and gold labels, nor-malised mutual information (NMI), and adjusted rand index (ARI). RAILS produces a variable label count per run; matching is computed against the labels that survive the merge step, with unmatched predicted labels counted as errors. 
+
+> 1https://huggingface.co/sentence-transformers/ all-mpnet-base-v2
+
+5.1 Datasets 
+
+We evaluate on six public benchmarks span-ning scientific literature ( arxiv (Muennighoff et al., 2023)), intent classification ( MTOP-I (Li et al., 2021), Massive-I and Massive-D (FitzGer-ald et al., 2023)), and entity/relation extraction (few_nerd (Ding et al., 2021), few_rel (Han et al., 2018)), with 18–102 clusters and 2,974–4,480 sam-ples per dataset. We use the processed splits re-leased by Zhang et al. (2023) to enable direct com-parison with prior LLM-clustering work (Zhu et al., 2025); per-dataset statistics in Appendix D. 
+
+6 Results 
+
+6.1 Public Benchmarks 
+
+Table 1 shows that RAILS improves on most met-rics across all six datasets, beating both prior LLM-based methods (ClusterLLM, MemCluster) and tra-ditional baselines. With Sonnet 4.5, RAILS reaches 59.3% ACC / 74.8% NMI / 54.7% ARI on av-erage, a +8.1-point ACC gain over the previous best (MemCluster). Gains are largest on conver-sational domain and fine-grained semantic tasks: Massive-D improves from 57.6% to 70.6% ACC and FewRel relation classification improves from 43.2% to 56.1% ACC, where stronger LLM reason-ing matters most for disambiguating subtle distinc-tions. 
+
+6.2 LLM and Embedder Choice 
+
+RAILS quality scales smoothly with the LLM back-bone: Sonnet 4.5, Haiku 4.5, Gemma 4 26B MoE (self-hosted), and Nova Lite reach 74 .8% , 69 .2% ,
+
+69 .1% , and 64 .1% average NMI respectively (Ta-ble 1), with the gap widening on FewRel (NMI 
+
+74 .3/64 .1/65 .2/59 .2). Gemma matching Haiku shows that the method is also competitive with self-hosted open-weight models. The clustering algorithm is unchanged across backbones, so oper-ators can pick along the quality–cost frontier that fits their volume and SLA (cost estimates in Ap-pendix C). RAILS is robust along two axes that mat-ter for deployment. Across three encoders – 
+
+all-mpnet-base-v2 , Instructor, and an internal intent-tuned encoder (§7) – dataset-average NMI varies by under one point on every LLM (e.g. 74 .4–
+
+74 .8 on Sonnet, 63 .1–64 .1 on Nova), an order of magnitude below the spread between LLM back-bones. This is because embeddings only surface candidate labels and a top-K miss is recoverable. 4Method ArxivS2S Massive-I MTOP-I Massive-D FewNerd FewRel AVG ACC NMI ARI ACC NMI ARI ACC NMI ARI ACC NMI ARI ACC NMI ARI ACC NMI ARI ACC NMI ARI K-Means 6.5 24.7 0.1 55.2 71.7 39.8 33.8 70.3 25.0 58.8 63.9 39.9 27.2 41.9 5.9 35.4 52.0 22.5 36.2 54.1 22.2 HDBSCAN 3.2 11.5 0.0 28.1 48.8 3.0 36.5 46.7 7.4 32.1 45.3 5.2 25.9 7.8 1.6 15.4 31.4 0.7 23.5 31.9 3.0 BERTopic 4.8 17.7 0.0 50.8 68.5 24.5 40.0 66.9 22.6 32.4 60.0 18.3 35.4 40.1 10.2 30.4 47.2 6.4 32.3 50.1 13.7 ClusterLLM 25.1 50.5 13.7 55.5 74.6 43.2 36.0 73.4 30.0 52.4 65.3 40.8 37.3 53.1 10.7 43.8 59.6 30.4 41.7 62.8 28.1 MemCluster 28.4 57.4 16.3 54.8 73.5 47.9 64.0 77.5 68.9 57.6 67.7 53.8 59.3 63.3 53.1 43.2 63.6 32.7 51.2 67.2 45.4 RAILS (Gemma 4 26B MoE) 33.1 58.4 19.7 54.4 70.8 44.8 71.7 80.2 76.0 62.5 68.3 55.2 65.1 71.5 66.3 41.5 65.2 27.0 54.7 69.1 48.2 RAILS (Nova Lite) 23.8 50.4 11.8 47.8 66.8 38.2 64.9 76.4 66.2 65.5 67.6 56.5 58.4 64.1 55.9 32.1 59.2 20.3 48.8 64.1 41.5 RAILS (Haiku 4.5) 28.3 56.2 15.1 56.2 72.6 45.9 71.2 81.3 78.5 66.4 70.3 56.6 63.8 70.9 66.3 38.6 64.1 26.7 54.1 69.2 48.2 RAILS (Sonnet 4.5) 32.5 62.9 20.1 60.4 77.5 54.3 76.2 85.1 84.1 70.6 76.4 60.8 60.0 72.7 62.5 56.1 74.3 46.2 59.3 74.8 54.7 
+
+Table 1: Clustering performance on six benchmark datasets. Best results in bold , second best underlined. RAILS results are mean over 3 independent runs. 
+
+The pipeline is also stable to input order: across three shuffled-order seeds, NMI standard deviation is typically below 1 point and peaks at ∼3 on the hardest benchmarks (Massive-D, Massive-I), well below the cross-LLM gap. Full ablations in Ap-pendix E. 
+
+7 Production Validation 
+
+RAILS is deployed as the clustering stage of a weekly topic-discovery pipeline for customer-support tickets at a SaaS support platform. We de-fine a brand as the per-customer scope on the plat-form (e.g. a specific airline, gaming studio, or food-delivery service), and process each brand indepen-dently. A brand’s first onboarding runs RAILS against a historical backlog with L(0) =∅; subse-quent weekly runs process only newly-created tick-ets and seed the pool from the brand’s previous-run pool, so recurring topics keep stable identities week-over-week while the LLM remains free to introduce genuinely new themes. 
+
+Setup. We validate RAILS as a drop-in re-placement for the prior UMAP+HDBSCAN clus-tering stage along two complementary axes: clustering quality against an LLM-labelled ref-erence set (§7.1), and operational behavior 
+
+at production volume (§7.2). Both axes use the same four anonymised brands chosen to span unrelated industries and traffic pro-files (Brands A–D). Both systems consume identical pre-processed tickets and the same 
+
+multilingual-e5-large-instruct (Wang et al., 2024) encoder, fine-tuned in-house on customer-support intent pairs; embeddings are pre-computed once upstream and reused by both stacks, so any performance difference is attributable to the clus-tering stage alone. The HDBSCAN baseline uses the fixed hyperparameters that were tuned on a hold-out set. We use Nova Lite as the LLM backbone: it trails 
+
+Reference ARI NMI Noise F1 Brand #Lbl N% R H R H R HA food delivery 251 7.0 .44 .29 .55 .52 .59 .17 B social network 288 3.3 .14 .06 .48 .45 .45 .06 C gaming 316 11.1 .20 .10 .49 .48 .27 .05 D e-commerce 248 3.0 .17 .09 .52 .48 .50 .03 Agg. 1,103 6.0 .28 .05 .62 .44 .43 .06 
+
+Table 2: Clustering quality of RAILS (R) vs. UMAP+HDBSCAN ( H) on the internal reference set, 4k tickets per brand. #Lbl is the number of canoni-cal reference labels and N% is the share of reference 
+
+NOISE tickets. RAILS values are means over three input-order seeds; trial variance is small ( σARI =0 .009 ,
+
+σNMI =0 .002 ). 
+
+#Topics Noise % Wall (min) Brand R H R H R HA food delivery 534 1,297 6.7 8.2 19.0 5.4 B social network 888 1,178 4.0 39.1 20.9 4.0 C gaming 1,155 1,107 6.2 39.5 21.0 3.9 D e-commerce 1,259 1,063 3.8 34.4 21.1 3.9 Mean 959 1,161 5.2 30.3 20.5 4.3 Std. dev. 324 102 1.5 14.9 1.0 0.7 
+
+Table 3: Operational behavior of RAILS ( R) vs. UMAP+HDBSCAN ( H) at production volume ( ≈110k tickets per brand). Topic counts: RAILS labels / HDB-SCAN clusters. Noise%: NOISE -assigned (RAILS) or the −1 bucket (HDBSCAN). 
+
+Sonnet 4.5 by under 11 NMI points on the intent-clustering tasks closest in shape to support tickets (Massive-D, Massive-I, MTOP-I; §6) while clus-tering at ∼55 × lower job cost for our token mix (Appendix C); at weekly volume this trade-off is decisive. 
+
+7.1 Clustering Quality 
+
+Table 2 reports clustering quality against an internal reference set that is constructed by an independent LLM (Claude 4.5 Sonnet) with a deliberately dif-ferent prompt and a different architecture (separate 50k 20 k 40 k 60 k 80 k 100 k 
+
+> 0500 1,000 1,500
+> Tickets processed Label pool size  |L|
+> A food delivery B social network C gaming D e-commerce
+> 0510 15
+> New labels / batch
+> solid: pool size |L|
+> dashed: new / batch
+
+Figure 2: Label pool convergence across four produc-tion brands; the first 100 k tickets per brand are shown for visual comparability (full runs in Table 3). Solid lines (left axis) show cumulative pool size |L| ; dashed lines (right axis) show new labels appended per batch. Per-batch generation decays within the first few thou-sand tickets as retrieval surfaces existing labels. 
+
+labeling and merging stages, no retrieval, no pool). We detail these independence axes in Appendix A to limit LLM-as-judge bias. RAILS improves on every brand and every metric. Per-brand ARI rises by 8–15 percent-age points and NMI by 1–4 points; trial variance over three input-order seeds is small ( σARI =0 .009 ,
+
+σNMI =0 .002 ), indicating the streaming pipeline is order-stable. RAILS also routes noise far more accurately: ag-gregate Noise F1 of 0.43 vs. 0.06 for HDBSCAN’s 
+
+−1 bucket, a 7× gap that holds on every brand ( 3–
+
+18 × per-brand). This is consistent with the LLM applying the prompt’s explicit content-free defini-tion uniformly, whereas HDBSCAN’s −1 bucket piles up low-density tickets, sparse-region embed-dings, and genuinely content-free inputs. 
+
+7.2 Operational Behavior 
+
+Table 3 reports operational behavior on the same four brands at production volume ( ≈110k tickets each, 438 ,759 total), simulating a high-volume in-gestion window. 
+
+Coverage and topic counts. RAILS retains 93 –
+
+96% of tickets in real topics across all four brands, whereas HDBSCAN drops 34 –40% of tickets into the −1 bucket for three of the four brands (B, C, D). Under fixed prompt-level granularity RAILS produces 534 –1,259 labels per brand; HDBSCAN produces 1,063 –1,297 clusters under fixed hyper-parameters. RAILS’ counts track interpretable brand breadth: e-commerce ( 1,259 ) and gaming (1,155 ) serve broad product catalogs and produce roughly twice as many topics as food delivery (534 ), whose request mix is narrower, with social network’s ( 888 ) sitting between. HDBSCAN’s out-put is nearly flat across brands. 
+
+Throughput. RAILS is 4–5× slower than HDB-SCAN in absolute wall time ( 20 .5 vs. 4.3 min per brand) because the LLM call is now on the criti-cal path; in production terms this is comfortably within our weekly SLA. Wall time scales near-linearly with ticket count at ∼89 tickets/s end-to-end, with per-batch LLM latency averaging 1.48 –
+
+1.87 s. Across ∼29 ,250 LLM calls we observed zero failures and zero retries; the slow-start con-troller (§4.5) ramped from 1 to Wmax =15 linearly for every brand, with no provider throttling. 
+
+7.3 Label Pool Dynamics 
+
+Figure 2 shows the label pool growth rate for different brands. The LLM directly reuses a re-trieved label for ∼90% of tickets (range 87 .9–
+
+91 .5% , σ=1 .5), and ∼78% of newly-coined labels are absorbed by the merge step in §4.4 (range 67 .3–
+
+82 .9% ). Per-batch label generation decays within the first few thousand tickets as retrieval saturates, and pool sizes plateau between ∼0.5k and 1.3klabels per brand. The ∼90% in-run reuse rate is also a direct representation of steady-state behavior under weekly operation. 
+
+8 Conclusion 
+
+We presented RAILS, a retrieval-augmented incre-mental LLM clustering method designed for pro-duction deployment. By combining top-K retrieval from a persistent label pool, batched LLM assign-ment with slow-start adaptive concurrency, and embedding-space label merging, RAILS matches or exceeds prior LLM-clustering work on six public benchmarks. We further demonstrated production-scale behavior on a representative slice of customer support tickets spanning four industries, yielding substantially cleaner topic structure than the HDB-SCAN pipeline it replaced. We expect the de-sign to generalize to any setting where (i) robust LLM-based text understanding is preferred, (ii) per-document throughput matters, and (iii) operators need a natural-language control surface over clus-ter semantics. We hope the design choices reported here offer a practical recipe for teams deploying LLM clustering at scale. 6Ethical Considerations 
+
+Support tickets contain user-generated text that may include personal information. All processing in this work was performed on internal infrastruc-ture with the data-handling controls required by the deploying organization. The LLM provider operated under a zero-retention and no-training-on-data agreement. We remove Personally Identifiable Information (PII) from tickets (including name, e-mail and mailing address) before sending the data to the LLM. 
+
+Acknowledgments 
+
+We thank André Nascimento, Sebastian Niemczyk, Ionut Militaru and the rest of the team for discus-sions and support in bringing the system described in this work into production. 
+
+Limitations 
+
+The slow-start controller adapts well-behaved con-currency to provider capacity, but the ceiling on throughput is set by provider rate limits on to-kens and requests per minute. In practice this means cold-start runs on large new brands can still take hours, and a provider outage stalls the entire pipeline. Self-hosted deployments shift the ceiling from quotas to GPU budget but do not remove it. The architecture also treats prompts as the pri-mary control surface for semantics, granularity, and noise handling, which places a hard depen-dency on the LLM’s instruction-following capa-bility. Smaller or weaker models may violate the prompt contract; e.g. we have observed non-English tickets misclassified as NOISE .The label pool is append-only by design: once a label is admitted it persists across all subsequent runs, and we never split, retire, or rename labels in place. This maximises topic stability for down-stream products that expose topics to end users. Use cases that require tracking concept drift, re-organising stale labels, or merging and splitting topics as a brand’s product evolves would need to be layered on top; for example, as a periodic maintenance pass over the pool. The slow-start concurrency controller (§4.5) is supported by observational evidence rather than a controlled ablation. Production tickets contain customer PII and are not re-distributable; full source code is similarly restricted. We compensate with public-benchmark results that any reader can reproduce, with com-plete prompts and hyperparameters. 
+
+References 
+
+Amazon Artificial General Intelligence. 2024. The ama-zon nova family of models: Technical report and model card. Amazon Technical Reports .Anthropic. 2025a. Introducing Claude Haiku 4.5. Ac-cessed: 2026-06-15. Anthropic. 2025b. Introducing Claude Sonnet 4.5. Ac-cessed: 2026-06-15. Ricardo Campello, Davoud Moulavi, and Joerg Sander. 2013. Density-based clustering based on hierarchical density estimates. volume 7819, pages 160–172. Ning Ding, Guangwei Xu, Yulin Chen, Xiaobin Wang, Xu Han, Pengjun Xie, Haitao Zheng, and Zhiyuan Liu. 2021. Few-NERD: A few-shot named entity recognition dataset. In Proceedings of the 59th An-nual Meeting of the Association for Computational Linguistics and the 11th International Joint Confer-ence on Natural Language Processing (Volume 1: Long Papers) , pages 3198–3213, Online. Association for Computational Linguistics. Connor Douglas, Utkucan Balci, and Joseph Aylett-Bullock. 2026. Prism: Llm-guided semantic clus-tering for high-precision topics. In Proceedings of the ACM Web Conference 2026 , WWW ’26, page 8701–8704, New York, NY, USA. Association for Computing Machinery. Jack FitzGerald, Christopher Hench, Charith Peris, Scott Mackie, Kay Rottmann, Ana Sanchez, Aaron Nash, Liam Urbach, Vishesh Kakarala, Richa Singh, Swetha Ranganath, Laurie Crist, Misha Britan, Wouter Leeuwis, Gokhan Tur, and Prem Natara-jan. 2023. MASSIVE: A 1M-example multilin-gual natural language understanding dataset with 51 typologically-diverse languages. In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 4277–4302, Toronto, Canada. Association for Computational Linguistics. Google DeepMind. 2026. Gemma 4: Open models for advanced reasoning and agentic workflows. 
+
+https://blog.google/innovation-and-ai/ technology/developers-tools/gemma-4/ .Accessed: 2026-06-15. Xu Han, Hao Zhu, Pengfei Yu, Ziyun Wang, Yuan Yao, Zhiyuan Liu, and Maosong Sun. 2018. FewRel: A large-scale supervised few-shot relation classification dataset with state-of-the-art evaluation. In Proceed-ings of the 2018 Conference on Empirical Methods in Natural Language Processing , pages 4803–4809, Brussels, Belgium. Association for Computational Linguistics. 
+
+7Mengze Hong, Wailing Ng, Chen Jason Zhang, Yuan-feng Song, and Di Jiang. 2025. Dial-in llm: Human-aligned llm-in-the-loop intent clustering for customer service dialogues. In Proceedings of the 2025 Con-ference on Empirical Methods in Natural Language Processing , page 5896–5911. Association for Com-putational Linguistics. Chen Huang and Guoxiu He. 2025. Text clustering as classification with llms. In Proceedings of the 2025 Annual International ACM SIGIR Conference on Research and Development in Information Re-trieval in the Asia Pacific Region , SIGIR-AP 2025, page 374–384, New York, NY, USA. Association for Computing Machinery. Chaoqi Jia, Weihong Wu, Longkun Guo, Zhigang Lu, Chao Chen, and Kok-Leong Ong. 2026. Optimized algorithms for text clustering with llm-generated con-straints. Preprint , arXiv:2601.11118. Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng, Cody Hao Yu, Joseph Gon-zalez, Hao Zhang, and Ion Stoica. 2023. Efficient memory management for large language model serv-ing with pagedattention. In Proceedings of the 29th Symposium on Operating Systems Principles , SOSP ’23, page 611–626, New York, NY, USA. Association for Computing Machinery. Haoran Li, Abhinav Arora, Shuohui Chen, Anchit Gupta, Sonal Gupta, and Yashar Mehdad. 2021. MTOP: A comprehensive multilingual task-oriented semantic parsing benchmark. In Proceedings of the 16th Conference of the European Chapter of the Asso-ciation for Computational Linguistics: Main Volume ,pages 2950–2962, Online. Association for Computa-tional Linguistics. I-Fan Lin, Faegheh Hasibi, and Suzan Verberne. 2026. LLMs enable bag-of-texts representations for short-text clustering. Under review. Leland McInnes, John Healy, Nathaniel Saul, and Lukas Großberger. 2018. Umap: Uniform manifold ap-proximation and projection. Journal of Open Source Software , 3(29):861. Niklas Muennighoff, Nouamane Tazi, Loic Magne, and Nils Reimers. 2023. MTEB: Massive text embedding benchmark. In Proceedings of the 17th Conference of the European Chapter of the Association for Com-putational Linguistics , pages 2014–2037, Dubrovnik, Croatia. Association for Computational Linguistics. Priyaranjan Pattnayak, Sanchari Chowdhuri, Amit Agar-wal, and Hitesh Laxmichand Patel. 2025. LLM-guided lifecycle-aware clustering of multi-turn cus-tomer support conversations. In Proceedings of the 14th International Joint Conference on Natural Lan-guage Processing and the 4th Conference of the Asia-Pacific Chapter of the Association for Computational Linguistics , pages 3180–3206, Mumbai, India. The Asian Federation of Natural Language Processing and The Association for Computational Linguistics. Liang Wang, Nan Yang, Xiaolong Huang, Linjun Yang, Rangan Majumder, and Furu Wei. 2024. Multilin-gual e5 text embeddings: A technical report. ArXiv ,abs/2402.05672. Zihan Wang, Jingbo Shang, and Ruiqi Zhong. 2023. Goal-driven explainable clustering via language de-scriptions. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Process-ing , pages 10626–10649, Singapore. Association for Computational Linguistics. Yuwei Zhang, Zihan Wang, and Jingbo Shang. 2023. ClusterLLM: Large language models as a guide for text clustering. In Proceedings of the 2023 Confer-ence on Empirical Methods in Natural Language Pro-cessing , pages 13903–13920, Singapore. Association for Computational Linguistics. Yuanjie Zhu, Liangwei Yang, Ke Xu, Weizhi Zhang, Zihe Song, Jindong Wang, and Philip S. Yu. 2025. Llm-memcluster: Empowering large language mod-els with dynamic memory for text clustering. CoRR ,abs/2511.15424. 
+
+A In-house benchmark 
+
+We construct an LLM-annotated reference set fol-lowing the approach of Huang and He (2025), adapted to avoid the expensive classification pass. Instead of a generate–merge–classify pipeline, we track ticket-to-label assignments during generation and label-to-label mappings during merging, then remap assignments transitively. 
+
+Tickets. We sample up to 4,000 email tickets per brand from the same four anonymised brands used in the production evaluation (§7); per-brand reference label statistics are in Table 2. Tickets are preprocessed identically to the production pipeline: text cleaning followed by end-user-only message concatenation. 
+
+Label generation. We use the open-ended refer-ence: Claude 4.5 Sonnet processes tickets in mini-batches of B=50 under a minimum-instruction prompt (verbatim):  
+
+> Below are support tickets. Group them by topic and give each group a short descriptive name. De-cide the right level of granularity yourself based on what you see. If a ticket has no real content to classify, label it NOISE .
+
+For each batch the model proposes candidate topic labels and simultaneously assigns each ticket to one label. 8Iterative label merging. Claude 4.5 Sonnet con-solidates semantically similar labels and returns an old →new mapping. When the label set exceeds 
+
+K=200 , it is split into chunks of at most K labels and each chunk is merged separately. Merging runs as an iterative loop (up to Imax =3 iterations) that terminates on the first satisfied condition: (i) the label set fits in a single call ( N ≤ K), (ii) reduction falls below 5% of the prior set size, (iii) the canoni-cal set repeats a previously seen state (oscillation guard), or (iv) the iteration cap is reached. 
+
+Independence from RAILS. This reference is constructed independently of RAILS along three axes, limiting the risk of LLM-as-judge bias inflat-ing RAILS’s reported scores: 
+
+Prompt. RAILS uses a granularity-anchored triage prompt with cross-domain examples (“Refund for Damaged Item” rather than “Or-der Issues” ; see Appendix F.1). The reference uses the minimum-instruction prompt shown above: no examples, no triage framing, no granularity prior. Neither prompt informs the other. 
+
+Clustering architecture. RAILS is single-pass in-cremental: each mini-batch sees a top-K re-trieval over a growing per-brand pool, fol-lowed by an embedding-space merge. The ref-erence performs monolithic in-batch labelling (each call sees B=50 tickets independently, no retrieval, no pool) followed by iterative cross-batch label merging – a fundamentally different procedure that exercises different failure modes. 
+
+Model class. The reference uses Claude 4.5 Son-net. The deployed RAILS evaluation uses Nova Lite v1 – a weaker model from a differ-ent family that scores 11 NMI points below Sonnet on the public benchmarks (Table 1). 
+
+B Deployment Configuration 
+
+This appendix details the exact production configu-ration of both clustering stacks compared in §7. Hy-perparameters were tuned on an internal validation set and held fixed across all brands and experiments. All experiments run on AWS g5.16xlarge instances (64 vCPUs, 256 GB RAM), except the Gemma 4 26B MoE public benchmark runs, which used a g5.12xlarge instance (4 × A10G GPUs, 48 vCPUs, 192 GB RAM) to serve the model via vLLM.                          
+
+> Parameter Value
+> Shared encoder
+> Base model ml-e5-large-instruct
+> Fine-tuning in-house contrastive Embedding dim. / pooling 1024 / mean Max tokens 512
+> Baseline: UMAP + HDBSCAN
+> UMAP n_components ,n_neighbors 16, 15 UMAP metric / init cosine / spectral HDBSCAN impl. / metric / algorithm sklearn / euclidean / brute
+> HDBSCAN min_cluster_size 5HDBSCAN selection_epsilon 0.1
+> RAILS
+> LLM Nova Lite v1 Temperature / output cap 0 / 700 tokens Batch size B/ top-K15 / 5 Merge threshold τ0.85 Concurrency Wmin , W max 1, 15
+
+Table 4: Production configuration of both clustering stacks. 
+
+Table 4 lists all hyperparameters; the embedder, 
+
+multilingual-e5-large-instruct (Wang et al., 2024), is fine-tuned in-house on ticket-intent pairs with a soft-contrastive objective. Its 1024-d output is shared across stacks so any quality difference is attributable to the clustering stage alone. Embed-dings are computed once by an upstream weekly job and cached, so neither stack pays encoding cost at clustering time. UMAP (McInnes et al., 2018) reduces the embeddings to 16 dimensions before HDBSCAN (Campello et al., 2013) ( sklearn im-plementation) extracts variable-density clusters. 
+
+C Cost 
+
+We estimate end-to-end LLM cost using the produc-tion token shape observed during the runs reported in §7. Each batched call to the LLM consumes on average ∼1,705 input tokens (400 system + 80 user-template + B=15 tickets at ∼55 tokens each + up to 75 retrieved labels at ∼10 tokens each) and produces only ∼250 output tokens (assignment dictionary). At B=15 , a 100k-ticket brand there-fore issues ≈6,667 generation calls, amounting to 
+
+∼11.4 M input and ∼1.67 M output tokens. Because hosted LLM pricing is dominated by output tokens (typically 4–5× the input rate), our design deliberately shifts work onto the input side: the retrieved candidate set and batched ticket pay-load inflate input tokens, but the structured JSON response stays compact with one short label per ticket. The ≈7:1 input-to-output ratio is what makes per-ticket cost competitive even with a frontier-class model. Gemma 4 26B MoE is excluded from Table 5; 9LLM In ($/MTok) Out ($/MTok) Cost / 100k Nova Lite 0.06 0.24 $1.08 Haiku 4.5 1.00 5.00 $19.72 Sonnet 4.5 3.00 15.00 $59.16 
+
+Table 5: Estimated LLM cost for clustering 100k tickets at B=15 , K=5 , assuming the token shape described above. Pricing reflects AWS Bedrock on-demand list prices at submission time; batch-inference or provisioned-throughput pricing would lower these figures further. Embedding and other operation costs are excluded. 
+
+as a self-hosted model (served via vLLM), its cost depends on the GPU instance provisioned rather than a per-token API rate. 
+
+D Benchmark datasets                      
+
+> Dataset Samples Clusters Task
+> arxiv 3,674 93 Paper subject areas
+> MTOP-I 4,386 102 Conversational intents
+> Massive-I 2,974 59 Conversational intents
+> Massive-D 2,974 18 Scenario-level domains
+> few_nerd 3,789 58 Entity types
+> few_rel 4,480 64 Semantic relations
+
+Table 6: Public benchmarks used in §6. Splits from Zhang et al. (2023). 
+
+E Ablation: embedding model, LLM, and input order 
+
+We complement the headline numbers in Table 1 with a full grid over multiple embedding models and LLMs from different families and price points. All cells in Table 7 use the same prompts, batch size, and merge threshold as the main experiments (§5); only the embedding model and LLM swap. Standard deviations are calculated over 3 indepen-dent runs with different random shufflings to mea-sure robustness to input ordering. 
+
+Findings. Three patterns are robust across all six benchmarks: • LLM choice dominates. Within each em-bedding column, swapping the LLM moves average NMI by several points and average ARI by roughly an order of magnitude more than swapping the embedder. The order-ing of LLMs is preserved on every embed-ding, with the largest gaps appearing on fine-grained semantic tasks (FewRel, MTOP-I) where stronger reasoning helps disambiguate subtle distinctions. • Embedding choice is nearly irrelevant. 
+
+Holding the LLM fixed, average NMI varies by at most ∼1.0 point across embedders. This is by design (§4.2): embeddings only surface candidate labels for the LLM, and a top-K
+
+retrieval miss is recoverable because the LLM remains the final arbiter, free to invent a new label when none of the retrieved ones fits. The result makes the method practical to deploy without an embedding-model tuning loop. • Input order is irrelevant in practice. The three runs per cell shuffle ticket order across batches with independent random seeds, so each cell measures both LLM-decoding non-determinism and batch-composition variance. Standard deviations remain small on the eas-ier benchmarks ( σNMI ≤1.0 on ArxivS2S, 
+
+≤1.9 on MTOP-I and FewNerd) and grow only modestly on the harder ones (Massive-I, Massive-D peak at σNMI ≈3.0, still well be-low cross-LLM gaps). The streaming, online label-pool construction is therefore stable un-der reordering despite never seeing the full dataset at once. 
+
+F Prompts 
+
+F.1 Internal Customer Support System prompt       
+
+> You are an expert at categorizing customer sup-port tickets into meaningful topic labels. Given a batch of support tickets, do TWO things: (1) identify the distinct topic categories these tick-ets belong to; (2) assign each ticket to exactly one of those categories. Each label should be a short, descriptive phrase (3–8 words) that captures the core issue or request type.
+> Granularity. Aim for the granularity of a sup-port team’s triage categories: specific enough that an agent immediately knows the domain and ac-tion required, but general enough to group tickets with the same root cause or request type. Ex-amples across industries: “Refund for Damaged Item” (not “Order Issues”), “SSO Login Error” (not “Product Bug”), “Flight Cancellation Refund” (not “Booking Issue”), “Prescription Refill Re-quest” (not “Appointment Related”).
+> Rules. Every ticket MUST be assigned to ex-actly one label. Multiple tickets can share a label. Assign NOISE only for tickets that are truly un-classifiable: automated system messages, com-pletely empty content, or pure gibberish with zero discernible intent. Do NOT label as NOISE
+
+10 Sonnet 4.5 Haiku 4.5 Nova Lite Gemma 4 26B MoE Dataset Embedding ACC NMI ARI ACC NMI ARI ACC NMI ARI ACC NMI ARI ArxivS2S MPNet 32.5±0.6 62.9±0.5 20.1±0.4 28.3±0.5 56.2±0.2 15.1±1.1 23.8±1.9 50.4±0.9 11.8±1.2 33.1±0.6 58.4±0.6 19.7±0.4 Instructor 30.8±0.3 60.4±0.4 17.7±0.4 27.7±1.3 54.7±1.0 14.3±1.5 23.3±1.4 49.2±0.6 11.0±0.9 30.0±0.7 56.1±0.4 17.2±0.4 Intent 31.2±0.8 62.5±1.0 19.3±0.7 26.8±1.9 56.6±1.0 14.4±0.2 22.9±1.6 50.1±0.6 10.7±1.3 31.6±1.2 57.6±0.4 18.7±0.4 MTOP-I MPNet 76.2±0.3 85.1±0.3 84.1±0.2 71.2±1.7 81.3±0.2 78.5±0.6 64.9±3.8 76.4±1.1 66.2±7.1 71.7±1.1 80.2±0.4 76.0±1.7 Instructor 76.2±0.6 85.0±0.2 82.4±1.3 71.9±0.9 81.5±1.0 78.9±1.1 64.8±3.8 76.2±1.2 66.5±6.7 71.7±1.5 80.2±1.2 73.0±4.9 Intent 76.3±1.3 85.0±0.5 83.6±1.1 72.5±0.6 80.7±0.7 78.9±0.5 65.8±2.7 76.1±1.5 66.2±5.4 70.3±3.3 78.6±1.9 65.9±10.1 Massive-I MPNet 60.4±1.3 77.5±0.7 54.3±1.1 56.2±0.8 72.6±1.6 45.9±1.3 47.8±4.2 66.8±1.5 38.2±1.8 54.4±1.8 70.8±1.4 44.8±1.1 Instructor 61.2±2.8 77.3±2.3 54.7±2.4 56.4±1.6 72.6±1.7 45.0±2.2 45.6±3.3 64.5±2.8 34.9±4.3 54.8±0.7 70.0±1.3 40.2±1.1 Intent 60.0±3.4 77.3±1.5 54.8±1.4 57.8±1.1 73.7±1.2 46.8±1.5 47.3±3.5 66.4±0.3 36.6±3.8 55.5±0.9 71.2±0.7 43.3±2.7 Massive-D MPNet 70.6±2.0 76.4±2.9 60.8±3.6 66.4±0.5 70.3±1.8 56.6±1.4 65.5±0.9 67.6±1.8 56.5±1.9 62.5±1.6 68.3±1.1 55.2±1.6 Instructor 71.9±2.8 77.0±3.0 61.7±3.7 62.6±1.4 68.1±2.7 52.7±2.6 65.6±1.3 65.8±1.8 56.1±2.1 62.7±0.8 67.6±0.7 53.6±0.9 Intent 72.2±2.4 77.0±2.7 62.0±3.1 66.6±0.4 70.4±1.2 56.0±0.6 65.7±1.8 67.0±1.8 56.4±2.7 64.2±0.9 69.6±0.8 56.2±0.5 FewNerd MPNet 60.0±1.7 72.7±0.4 62.5±2.4 63.8±1.2 70.9±0.6 66.3±5.6 58.4±1.4 64.1±1.8 55.9±1.0 65.1±2.2 71.5±0.3 66.3±5.3 Instructor 64.3±1.4 73.8±0.5 64.6±3.9 63.4±1.6 70.6±0.3 65.3±7.3 58.6±0.8 64.2±1.3 55.9±4.5 65.2±1.4 71.3±0.3 67.6±2.5 Intent 61.1±1.1 73.4±0.5 63.0±2.7 63.4±0.5 70.1±0.6 64.4±6.2 57.1±2.9 63.5±1.4 52.4±4.1 65.9±0.3 71.6±0.6 69.4±3.2 FewRel MPNet 56.1±0.2 74.3±0.1 46.2±0.8 38.6±1.4 64.1±0.8 26.7±1.7 32.1±0.6 59.2±0.5 20.3±1.0 41.5±1.7 65.2±0.6 27.0±1.8 Instructor 51.9±2.0 72.8±0.6 40.8±1.6 38.0±1.5 63.8±0.5 25.4±1.7 32.5±1.3 58.5±1.2 19.5±1.0 40.2±1.7 64.8±0.7 24.6±1.3 Intent 55.1±1.1 73.8±1.0 44.5±0.9 39.9±1.1 64.2±1.2 26.6±2.2 32.3±1.1 58.4±0.8 19.1±0.7 42.4±1.8 65.7±0.8 25.8±1.1 
+
+Average 
+
+MPNet 59.3 74.8 54.7 54.1 69.2 48.2 48.8 64.1 41.5 54.7 69.1 48.2 Instructor 59.4 74.4 53.7 53.3 68.5 46.9 48.4 63.1 40.6 54.1 68.3 46.0 Intent 59.3 74.8 54.5 54.5 69.3 47.9 48.5 63.6 40.2 55.0 69.1 46.6 
+
+Table 7: Ablation across embedding models and LLMs on six public benchmarks. Mean ± std over three independent runs with shuffled input order; std reflects both LLM decoding non-determinism and batch-composition variance. LLM choice drives variation; embedding model and input order have near-zero effect (§E). 
+
+short messages, non-English text, vague requests, anonymized placeholders, or tickets where you can infer any plausible support intent. When in doubt, assign a topic label. Return ONLY a JSON object with the requested keys. 
+
+User prompt template 
+
+Here are {n_tickets} support tickets. Identify topic categories and assign each ticket. {existing_block} {tickets_text} Return JSON with EXACTLY these two keys, in this order: assignments (label per ticket; pre-fer an existing category) and new_labels (DIS-TINCT list of newly introduced labels referenced by assignments , ≤ Mnew ). 
+
+F.2 Public Benchmarks 
+
+For each public benchmark dataset, we adapted the prompt to match the domain and desired label gran-ularity. Below are the system and user prompts for the best-performing configuration on each dataset. All prompts share a common output format specifi-cation (shown below) appended to the user prompt. 
+
+Common output format (appended to all user prompts) 
+
+Return JSON with EXACTLY these two keys, in this order: 1. assignments —for each of the {n_tickets} tickets, the topic label you chose (prefer an existing category; only create a new one when no existing category fits). 2. new_labels —the DISTINCT list of any newly introduced labels referenced by 
+
+assignments . Do NOT repeat labels. Do NOT include existing categories here. If every ticket fits an existing category, return []. 
+
+HARD LIMITS (critical): 
+
+• new_labels must contain AT MOST 5 en-tries, all distinct. • Every string in new_labels must appear in 
+
+assignments .• Do NOT repeat or paraphrase labels across entries. 
+
+{"assignments": { "Ticket 1": "label_used_for_ticket_1", "Ticket 2": "label_used_for_ticket_2", ... "Ticket {N}": "label_used_for_ticket_{N}" }, "new_labels": ["new_label_1", ...] }
+
+F.2.1 ArxivS2S System prompt 
+
+You are an expert at organizing scientific papers into broad academic subject categories. Your task is to identify the subject area like e.g. “Informa-tion Theory”, “Combinatorics”, “Group Theory”, “Plasma Physics” that each paper belongs to based on its title. 
+
+User prompt 
+
+Here are {n_tickets} scientific paper titles. Iden-tify the academic subject category for each paper. 
+
+Guidelines: 
+
+11 • Use subject categories like “Graph Theory”, “Quantum Physics”, etc. • Papers in the same field belong together even if studying different specific problems • Do NOT fragment by specific research problem—papers on “Cell Multiplication” and “Cell Differentiation” should both be “Cell Biology” • Use standard academic subject taxonomy • If a paper title is too vague to categorize, assign “NOISE” {existing_block} {tickets_text} [Common output format appended here] 
+
+F.2.2 MTOP-I System prompt 
+
+You are an expert at classifying user intents in task-oriented dialogue systems. Your task is to identify the intent for each user utterance, respect-ing meaningful distinctions between different user goals. When in doubt between similar intents, use the broader/more established category. 
+
+User prompt 
+
+Here are {n_tickets} user utterances. Identify the intent category for each utterance. 
+
+Guidelines for grouping: 
+
+• Utterances with the same goal or action be-long together even if phrased differently or if specific actions differ slightly • Use clear intent names (e.g., “GET_WEATHER”, “SET_ALARM”, “PLAY_MUSIC”) • Avoid fragmenting similar intents (e.g., “weather_today” and “weather_forecast”, both are “GET_WEATHER”) • Intents should be actionable and distinct • If an utterance is unclear or ambiguous, as-sign “NOISE” {existing_block} {tickets_text} [Common output format appended here] 
+
+F.2.3 Massive-I System prompt 
+
+You are an expert at classifying user intents in a massive, diverse conversational AI system. Your task is to identify and assign each user utterance to the appropriate intent category. 
+
+User prompt 
+
+Here are {n_tickets} user utterances. Identify the type of intent each utterance expresses. 
+
+Guidelines for grouping: 
+
+• Utterances with the same goal or action be-long together even if phrased differently • Within structured domains (alarms, date-time, playing music, etc.), preserve mean-ingful action distinctions: QUERY ̸ = RE-MOVE ̸ = SET ̸ = CONVERT • Use e.g. “general greet” or “general joke” as valid catch-alls for non-actionable, or very vague utterances within a domain, rather than creating new intent categories • Avoid fragmenting similar intents (e.g., “weather_today” and “weather_forecast”, both are “GET_WEATHER”) • Intents should be actionable and distinct • If an utterance is unclear or ambiguous, as-sign “NOISE” {existing_block} {tickets_text} [Common output format appended here] 
+
+F.2.4 Massive-D System prompt 
+
+You are an expert at classifying user requests into broad application scenarios. Your task is to as-sign each user utterance to the scenario/domain it belongs to. 
+
+Few-Shot Examples: 
+
+1. Input: “forward this message to my team at work” → Category: “email” 2. Input: “post a picture of my lunch on insta-gram” → Category: “social” 3. Input: “who directed the movie avatar” →
+
+Category: “qa” 4. Input: “compose a new message and send it to sarah” → Category: “email” 5. Input: “show me restaurants nearby that have outdoor seating” → Category: “rec-ommendation” 6. Input: “what’s the capital of france” → Cat-egory: “qa” 7. Input: “find me fun activities to do this weekend” → Category: “recommendation” 8. Input: “move these emails to the archive folder” → Category: “email” 9. Input: “that’s silly” → Category: “general” 
+
+User prompt 
+
+Here are {n_tickets} user utterances. Identify the conversation scenario or domain for each utter-ance. 
+
+Guidelines for grouping: 
+
+• Focus on the general scenario domain (e.g., “alarm”, “weather”, “calendar”, “music”) • Utterances in the same scenario domain be-long together regardless of specific intent • Don’t fragment by action within a domain • Use simple, broad scenario names • Group by domain, not by specific action • If an utterance is trying to access one do-main but is poorly phrased, use that domain • If a scenario is truly unclear, assign “NOISE” {existing_block} {tickets_text} [Common output format appended here] 
+
+12 F.2.5 FewNerd System prompt 
+
+You are an expert at Named Entity Recognition using appropriate category breadth. Your task is to classify entity types based on context. 
+
+Few-Shot Examples: 
+
+1. Text: “Paris hosted the Olympics in 1900. The entity type of Paris.” → Type: “loca-tion” 2. Text: “Michael Jordan led the Bulls to six championships. The entity type of Michael Jordan.” → Type: “athlete” 3. Text: “Google announced new features yes-terday. The entity type of Google.” → Type: “company” 4. Text: “The Nile River flows through eleven countries. The entity type of Nile River.” 
+
+→ Type: “water body” 5. Text: “Senator Warren proposed new legis-lation. The entity type of Senator Warren.” 
+
+→ Type: “politician” 6. Text: “Harvard University has 22,000 stu-dents. The entity type of Harvard Univer-sity.” → Type: “education” 7. Text: “Chinese traditions date back millen-nia. The entity type of Chinese.” → Type: “location” 8. Text: “The hemoglobin protein carries oxy-gen. The entity type of hemoglobin.” →
+
+Type: “biological entity” 
+
+User prompt 
+
+Here are {n_tickets} texts. Each ends with “The entity type of X.” Identify the type for entity X based on the context, using broad categories when appropriate but distinguishing specific types when the distinction is meaningful. 
+
+Guidelines: 
+
+• Use specific types when the distinction is meaningful (e.g., “athlete” vs “politician” vs “actor”) • But consolidate when entities serve the same role (all cities → “location”, all com-panies → “company”) • The SAME entity name can have different types in different contexts—read the full sentence to determine the correct interpre-tation • Before creating a new label, check if an existing one fits—use the same label for all entities of the same type • If the context doesn’t provide enough infor-mation, use a broader category • Only assign “NOISE” if truly uninter-pretable {existing_block} {tickets_text} [Common output format appended here] 
+
+F.2.6 FewRel System prompt 
+
+You are an expert at identifying semantic relations between entities. Your task is to classify the type of relation being expressed. The relationship di-rection and specificity matter. Read the context carefully to distinguish between similar relations. 
+
+Few-Shot Examples: 
+
+1. Input: “John and Michael grew up together as brothers in Dublin. The relation between John and Michael.” → Category: “sibling” 2. Input: “The Honda Civic is manufactured by Honda Motors in Japan. The relation between Honda Civic and Honda Motors.” 
+
+→ Category: “manufacturer” 3. Input: “The British Museum holds the Rosetta Stone as a protected artifact. The relation between Rosetta Stone and British Museum.” → Category: “held by” 4. Input: “Dr. Sarah Chen contributed re-search to the 2023 International Cancer Conference. The relation between Dr. Sarah Chen and 2023 International Cancer Conference.” → Category: “contributor to” 
+
+User prompt 
+
+Here are {n_tickets} entity relation descriptions. Identify the relation type for each. 
+
+Guidelines for grouping: 
+
+• Use clear relation names (e.g., “field of work”, “country of origin”, “member of”, “member of political party”) • Relations with the same semantic meaning belong together • Pay attention to directionality and speci-ficity. For example: 
+
+– “Albert Einstein” and “Physics” with “field of work” relation is different from “Albert Einstein” and “Germany” with “country of origin” relation 
+
+– “Marie Curie” and “Chemistry” with “field of work” relation is different from “Marie Curie” and “Poland” with “country of origin” relation • Some relations can be symmetric (e.g., “sib-ling of”) vs directional (e.g., “manufacturer of”). Direction matters for hierarchical re-lations (e.g., “member of” is different from “has member”) • If a relation is unclear, assign “NOISE” {existing_block} {tickets_text} [Common output format appended here] 
+
+13
