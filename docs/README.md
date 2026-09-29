@@ -48,7 +48,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-27</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-28</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 21 篇</strong>
@@ -58,7 +58,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-27 21:54:48 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-29 00:11:08 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-09-27 日报：完成21篇论文筛选，精读</p>
+<p>今天筛读21篇论文（精读8、速读13），两条9分主线锁定RAG鲁棒微调与长时记忆智能体。</p>
+<p>最值得看：TRACE用参数与上下文协同提升检索增强生成鲁棒性，HasMem以硬来源自适应软化记忆服务长期LLM智能体。</p>
+<p>普通读者可先精读这两篇9分论文，再按需扫读速读中的上下文蒸馏与RAG投毒防御方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,9 +83,9 @@
     <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Propose, Verify, Commit: Evidence-Grounded Memory for Long-Horizon Multi-Actor Conversations">Propose, Verify, Commit: Evidence-Grounded Memory for Long-Horizon Multi-Actor Conversations</span></li><li><span class="dpr-home-dashboard-paper-title" title="AgentBetta: Verification-Driven Adaptive Configuration of an AI Nano-Agent through Selective Expansion and Verified Contraction">AgentBetta: Verification-Driven Adaptive Configuration of an AI Nano-Agent through Selective Expansion and Verified Contraction</span></li><li><span class="dpr-home-dashboard-paper-title" title="TTSE: A Two-Track Online Self-Evolution Framework">TTSE: A Two-Track Online Self-Evolution Framework</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Parameters vs. Context: TRACE Fine-Tuning for Robust Retrieval-Augmented Generation">Parameters vs. Context: TRACE Fine-Tuning for Robust Retrieval-Augmented Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="HasMem: Hard-Origin Adaptively Softened Memory for Long-Term LLM Agents">HasMem: Hard-Origin Adaptively Softened Memory for Long-Term LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="LogicTree-RAG: Logic Tree-guided Retrieval-Augmented Generation for Long-form Patent Drafting">LogicTree-RAG: Logic Tree-guided Retrieval-Augmented Generation for Long-form Patent Drafting</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>7</strong></span><span class="dpr-home-dashboard-tag">agent <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -94,9 +96,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SemDHT: Certified Semantic Discovery for Peer-to-Peer Agent Networks over Exact-Key DHTs">SemDHT: Certified Semantic Discovery for Peer-to-Peer Agent Networks over Exact-Key DHTs</span></li><li><span class="dpr-home-dashboard-paper-title" title="Q-TIE: A Lightweight and Generalizable Re-ranking Framework for Temporal Information Retrieval">Q-TIE: A Lightweight and Generalizable Re-ranking Framework for Temporal Information Retrieval</span></li><li><span class="dpr-home-dashboard-paper-title" title="EDGEGEN: Improving Tool-Calling Agents Beyond Happy Paths with Synthetic Edge Case Generation">EDGEGEN: Improving Tool-Calling Agents Beyond Happy Paths with Synthetic Edge Case Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Compress What You See, Not What You Say: Anchored Context Distillation for Latent-Observation Software Engineering Agents">Compress What You See, Not What You Say: Anchored Context Distillation for Latent-Observation Software Engineering Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="TTSE: A Two-Track Online Self-Evolution Framework">TTSE: A Two-Track Online Self-Evolution Framework</span></li><li><span class="dpr-home-dashboard-paper-title" title="RAG-NAROK: Retrieval-Aware Knowledge Corpus Poisoning in RAG with Source-specific Refutation">RAG-NAROK: Retrieval-Aware Knowledge Corpus Poisoning in RAG with Source-specific Refutation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>13</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>9</strong></span><span class="dpr-home-dashboard-tag">agent <strong>4</strong></span></div>
 </section>
 </div>
 
