@@ -1,0 +1,623 @@
+Title: CARGO: Context-Aware Retrieval-Gated Evaluation of Agentic AI in Production
+
+URL Source: https://arxiv.org/pdf/2609.30471v1
+
+Published Time: Mon, 28 Sep 2026 00:09:53 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# CARGO : Context-Aware Retrieval-Gated Evaluation of Agentic AI in Production 
+
+Mukul Chhabra and Shail Patel and Luigi Medrano 
+
+Dell Technologies 
+
+Abstract 
+
+Reference-based LLM-as-a-judge evaluation assumes that a reference answer is the target for the response under evaluation. In deployed agentic systems that operate over dynamic entities—support cases, assets, accounts—this assumption fails: the closest available refer-ence typically instantiates the correct proce-dure on a different entity , so a judge that compares literally penalizes legitimately dif-ferent identifiers, dates, and statuses as errors or hallucinations. We name this failure mode 
+
+reference–instance divergence (RID) and show that it is structural rather than incidental. We propose C ARGO , a framework that (i) treats retrieved references as procedural exemplars and grounds factual judgments in the live in-stance’s observed context, (ii) assigns each claim a three-way status—supported, contra-dicted, or unverifiable—penalizing only con-tradictions with observed facts, and (iii) gates evaluation by retrieval confidence, casting con-tinuous production evaluation as selective pre-diction with an explicit risk–coverage–cost trade-off. To measure the effect without re-lying solely on costly expert labels, we intro-duce C ARGO -B ENCH , a perturbation-based di-agnostic suite whose ground truth holds by construction. CARGO -B ENCH separates le-niency from discrimination : a valid judge must stop penalizing entity transplants while still detecting injected contradictions and proce-dural corruptions. On C ARGO -B ENCH (246 items, two judge models, 7,872 judgments), the standard reference-based judge penalizes 100% of correct entity-transplanted answers as incorrect and hallucinated—it is uninformative (DI ≈ 0)—and supplying the live facts with-out reframing changes nothing. C ARGO elimi-nates these false penalties (0/50 on transplants) while retaining near-complete contradiction re-call (50/50 and 49/50), raising DI to .58 [.48, .68]; a rubric-swap control attributes most of the effect to context-grounded dimension defi-nitions rather than prompt framing. C ARGO 
+
+also exposes a limitation of its own design: the same leniency that protects entity values suppresses detection of procedural corruptions (20% recall), a trade-off DI makes visible; an explicit post-hoc fix targeting exactly this fail-ure does not close the gap ( ∆DI = −.007 
+
+[−.038 , . 023 ]), and an LLM-as-annotator study with written guidelines and adjudication shows the same blind spot (3/10 procedural corrup-tions recovered). We release a preregistered protocol for extending the evaluation to expert agreement, risk–coverage, and cost on produc-tion traffic. 
+
+1 Introduction 
+
+LLM-as-a-judge has become the default instrument for evaluating open-ended model outputs at scale (Zheng et al., 2023; Liu et al., 2023; Gu et al., 2024). In the reference-based variant, a judge is shown a candidate response together with a gold reference and asked to score the candidate’s cor-rectness, completeness, or faithfulness relative to that reference. This paradigm rests on an assump-tion so familiar that it is rarely stated: the reference is the target . For static tasks such as summarization or knowledge QA the assumption is reasonable. It fails for a large and growing class of deployed systems. Agentic assistants in technical support, customer service, IT operations, and finance an-swer questions about specific entities —a particular support case, service tag, order, or account—by re-trieving facts from backend systems and applying a domain procedure to them. Two users may ask the same question about different entities. The correct answers share a procedure and a structure but differ in almost every surface value. A curated golden set can realistically cover the space of questions and procedures ; it cannot cover the space of entities .Consequently, at production time the nearest avail-able reference is almost always an answer to the same question about a different entity. We call this condition reference–instance diver-
+
+1arXiv:2609.30471v1 [cs.CL] 24 Sep 2026 gence (RID). Under RID, a literal reference-based judge systematically confuses two orthogonal prop-erties: whether the response follows the correct procedure, and whether its entity-specific values agree with the reference’s. The second compari-son is meaningless—the values should differ—yet it dominates a naive judge’s verdict, depressing correctness scores and inflating hallucination flags. Section 2 formalizes this and shows why the effect is structural rather than a matter of prompt wording. We further observe that in production, evalu-ation itself is a decision under uncertainty. Not every live interaction has an appropriate reference in the golden set, and a judge applied with an ir-relevant reference produces a confidently wrong score. Evaluating every interaction is also expen-sive. Continuous production evaluation is there-fore a selective prediction problem (El-Yaniv and Wiener, 2010; Geifman and El-Yaniv, 2017): the evaluator should abstain when it lacks a valid refer-ence, and the appropriate objects of study are the risk–coverage curve and the cost curve, not a single accuracy number. We present C ARGO (Context-Aware Retrieval-
+
+Gated evaluati On), which addresses both problems, and C ARGO -B ENCH , a diagnostic suite that makes the improvement measurable with ground truth that holds by construction. Our contributions are: 1. Problem. We identify and formalize reference– instance divergence, decomposing a response into a transferable procedure and instance-specific parameters, and show that literal refer-ence comparison is not identifiable with respect to procedural correctness under RID (§2). 2. Method. CARGO (§3) reinterprets the retrieved reference as a procedural exemplar , grounds factual judgment in observed live context with three-way claim status ( SUP /CON /UNV ), and gates evaluation on retrieval confidence with calibrated and margin-aware variants. It evalu-ates the full agentic trace—routing, replanning, response type, latency—not only the final an-swer. 3. Benchmark. CARGO -B ENCH (§4) uses five controlled perturbation families (entity trans-plant, contradiction injection, unverifiable aug-mentation, procedural corruption, retrieval dis-tractors) to produce labeled evaluation instances by construction. It yields a discrimination index 
+
+that jointly penalizes false penalties and missed errors, so that a judge cannot score well merely by being lenient. 4. Findings. On C ARGO -B ENCH (246 items), lit-eral reference judging is completely uninforma-tive under RID (DI ≈ 0 on both judge mod-els: every correct transplant is called wrong and hallucinated), and merely adding the live facts does not help. CARGO removes the false penalties without losing contradiction re-call ( ∆DI = + .58 [.48, .68]). A rubric-swap control shows the effect is carried mostly by context-grounded dimension definitions, and per-family analysis reveals that the method’s le-niency over-generalizes from entity values to procedure (20% recall on procedural corrup-tions); an explicit per-claim-type authority fix we test post-hoc does not resolve this ( ∆DI 
+
+= −.007 [−.038 , . 023 ]), so we characterize rather than patch it (§6–§7). We further specify a preregistered protocol for expert agreement, retrieval gating, and cost on production traffic (§5). 
+
+2 Reference–Instance Divergence 
+
+2.1 Setting 
+
+A live interaction is a tuple x = ( q, a, c, o ): a user question q, the system’s answer a, an observed 
+
+context c consisting of instance-specific facts avail-able in the trace input (e.g., case number, subject, description, asset identifier), and a trace o of obser-vations (planner decision, agent calls, tool outputs, timings). A golden set G = {(qgi , a gi , m gi )}Ni=1 
+
+holds reference questions, reference answers, and metadata mgi such as the expected intent or agent. 
+
+2.2 Procedure–parameter decomposition 
+
+We model an answer as the application of a proce-dure to instance parameters: 
+
+a = π(θ) ⊕ ϵ, (1) where π is a domain procedure (which checks to perform, which policy to apply, which fields to report, in which structure), θ is the vector of instance-specific values, and ϵ collects everything else (phrasing, formatting). A reference ag =
+
+πg(θg) ⊕ ϵg is written for its own instance θg. The live answer should satisfy π = πg (correct proce-dure) and θ consistent with the live instance, not 
+
+with θg.
+
+2.3 Non-identifiability of literal comparison 
+
+A literal reference-based judge computes some di-vergence D(a, a g) and maps it to a score. Under 2the decomposition, D mixes two terms, 
+
+D(a, a g) ≈ Dπ(π, π g) + Dθ(θ, θ g), (2) and only the first is informative about quality. When RID holds ( θ̸ = θg by design), Dθ is large for every correct answer. The judge therefore can-not distinguish a correct answer for a different in-stance from an incorrect one: correctness is not identifiable from D alone. This is why prompt-level exhortations to “focus on reasoning” are in-sufficient in practice: the judge is given no signal with which to separate the two terms. The fix must supply that signal—the live instance’s observed facts c—and must change what the reference is for .
+
+2.4 Three-way claim status 
+
+Let K(a) be the set of atomic factual claims in a
+
+(Min et al., 2023). Relative to the observed context 
+
+c, each claim k has a status 
+
+σ(k | c) ∈ { SUP , CON , UNV }, (3) supported if entailed by c, contradicted if inconsis-tent with a fact in c, and unverifiable otherwise. Be-cause c is a partial snapshot of the request input— the agent legitimately retrieves many more fields from backend systems—the unverifiable class is large and expected. We define 
+
+ContraRate( a, c ) = |{ k:σ=CON }| |K (a)| , (4) 
+
+UnvRate( a, c ) = |{ k:σ=UNV }| |K (a)| . (5) The central normative choice of C ARGO is that hallucination is scored from ContraRate alone; 
+
+UnvRate is reported as a coverage diagnostic rather than folded into a penalty. This choice trades recall on fabricated-but-unverifiable claims for pre-cision on the claims that can actually be checked; §10 discusses the trade-off and C ARGO -B ENCH P3 measures it. 
+
+3 The C ARGO Framework 
+
+CARGO has four components (Figure 1): a retrieval gate, a procedural-exemplar reinterpretation of the reference, a context-grounded structured judge, and trace-level diagnostics. Algorithm 1 gives the per-interaction procedure. 
+
+3.1 Retrieval gate 
+
+Golden questions are embedded once and cached; live questions are embedded in batches per polling    
+
+> Trace Batch embedding Retrieval gate Abstain CARGO judge (exemplar + ctx-grounded) Trace diagnostics Persisted record
+> margin < τ margin ≥τ
+
+Figure 1: Overview of C ARGO . A live question is embedded and matched against the golden set; if the retrieval margin clears τ , the retrieved reference is rein-terpreted as a procedural exemplar and the answer is judged against it plus the live context; below τ , C ARGO 
+
+abstains. Both paths log to trace diagnostics. 
+
+window to bound API calls and rate-limit pressure. With cosine similarity s⋆ to the nearest golden ques-tion and margin ∆ = s(1) − s(2) , we study three gates: 
+
+Fixed. 
+
+g = I[s⋆ ≥ τ ]. Operational default τ =0.80 , which must be recalibrated per embedding model. 
+
+Margin-aware. 
+
+g = I[s⋆ ≥ τ ∧ ∆ ≥ δ]. Rejects ambiguous matches whose top two candidates are nearly tied, even when both exceed τ .
+
+Calibrated. 
+
+Fit ˆP (reference appropriate | s⋆, ∆, intent ) by isotonic or logistic regression on a held-out calibration split labeled for reference appro-priateness (§5.2), and gate on ˆP ≥ γ. This makes the operating point interpretable as a tar-get reference-validity rate and admits per-intent thresholds. The gate decides whether the evaluator has a usable reference; it says nothing about whether the pro-duction answer is good. Abstentions are retained as coverage gaps for human review and golden-set expansion (§7). 
+
+3.2 Reference as procedural exemplar 
+
+For accepted interactions the judge receives q, a,the observed context c, and the retrieved reference 
+
+agi⋆ with an explicit reinterpretation: the reference was written for a different instance; it specifies 3Algorithm 1 CARGO per-interaction evaluation 
+
+Require: interaction x = ( q, a, c, o ); golden set G
+
+with cached embeddings Eg; gate g; judge J 
+
+> 1:
+
+e ← Embed( q) ▷ batched across a poll window  
+
+> 2:
+
+si ← cos( e, E gi ) ∀i; i⋆ ← arg max i si 
+
+> 3:
+
+∆ ← s(1) − s(2) ▷ top-1/top-2 margin  
+
+> 4:
+
+if g(si⋆ , ∆, m gi⋆ ) = 0 then  
+
+> 5:
+
+return ABSTAIN (si⋆ , ∆)  
+
+> 6:
+
+end if  
+
+> 7:
+
+r ← ResponseType( q, a ); p ←
+
+PlannerEval( o, m gi⋆ ) 
+
+> 8:
+
+ℓ ← Latency( o); ρ ← ReplannerEval( o) 
+
+> 9:
+
+if r = ACTUAL ∧ guards pass then  
+
+> 10:
+
+y ← J(q, a, c, a gi⋆ ) ▷ exemplar + context  
+
+> 11:
+
+if ¬Parses( y) then return ERROR  
+
+> 12:
+
+end if  
+
+> 13:
+
+end if  
+
+> 14:
+
+return record (y, r, p, ρ, ℓ, s i⋆ , ∆, i ⋆, c )
+
+the correct procedure, policy, required steps, and structure; its entity-specific values are not targets. The judge is asked to infer the reference’s implicit instance from its text and to evaluate whether the live answer applies the same procedure correctly adapted to the live instance. Appendix A gives the full template. 
+
+3.3 Context-grounded structured judge 
+
+The judge scores four dimensions on [0 , 1] , each defined against the live context rather than the refer-ence: correctness (correct procedure; no claim con-tradicts c), completeness (covers the steps the ex-emplar’s procedure requires, adapted to c), helpful-ness (resolves q clearly), and hallucination fidelity 
+
+(no claim contradicts c; unverifiable claims are neu-tral). Output is schema-constrained JSON with a per-dimension rationale; unparseable or empty outputs are rejected rather than persisted, so aggre-gates are not biased by silent failures. Dimension definitions are configuration, not code, and are held fixed across all conditions in our experiments. 
+
+3.4 Trace-level diagnostics 
+
+Final-answer quality alone cannot localize a fail-ure in an agentic workflow. CARGO addition-ally records response type (actual answer, clari-fication request, guardrail), planner verdict against the expected agent in mgi⋆ , replanner behavior, per-observation and end-to-end latency, language and length guards, and all retrieval metadata ( s⋆, ∆, i⋆)and the context c used. These fields support the attribution analysis in §7. 
+
+3.5 Continuous operation 
+
+A polling or backfill cycle fetches traces newer than a watermark, deduplicates, ex-tracts (q, a, c, o ) from heterogeneous trace en-velopes, runs Algorithm 1, persists successful records, and advances the watermark, report-ing seen/matched/evaluated/abstained/error counts. Evaluation cost per window of M traces is 
+
+C(τ ) = M C e + M · Cov( τ ) · Cj , (6) with embedding cost Ce ≪ Cj (judge cost), so cost is governed almost entirely by coverage. 
+
+4 CARGO -B ENCH : Ground Truth by Construction 
+
+Expert annotation of production traces is necessary but slow, expensive, and—critically for our claim— cannot by itself distinguish a judge that is better 
+
+from one that is merely more lenient . CARGO -BENCH addresses this with controlled perturba-tions of seed items whose labels hold by construc-tion. 
+
+Seeds. Each seed is a golden item (qg, a g, θ g)
+
+with its entity parameters θg explicitly annotated (fields and values). Seeds span all intents in the deployment. 
+
+Perturbation families. From each seed we gen-erate instances with known target verdicts: 
+
+P1 Transplant 
+
+(correct) Sample θℓ, rewrite aℓ =
+
+πg(θℓ); c ⊂ θℓ. Target: high correct-ness, no hallucination. Measures the 
+
+false-penalty rate under RID. 
+
+P2 Contra-diction 
+
+(hallucinated) From a P1 instance, al-ter one value in aℓ to conflict with a fact present in c. Target: flagged. Measures contradiction recall .
+
+P3 Unveri-fiable 
+
+(neutral) From a P1 instance, add k
+
+plausible fields absent from c. Tar-get: no penalty. A labeled “fabricated” sub-split measures the recall cost of the UNV policy. 
+
+P4 Corrup-tion 
+
+(incorrect) From a P1 instance, delete a required step, swap the policy, or invert a conditional. Target: low correctness/completeness—the check leniency alone cannot pass. 
+
+P5 Distractor 
+
+Paraphrases of qg with a different in-tent/procedure. Target: gate abstains 4or assigns low ˆP . Measures the gate’s reference-validity discrimination. Perturbations are generated by templated rewriting with an LLM and verified by a second model and by rule-based consistency checks (every occurrence of a swapped value is updated; injected contradictions target a field that is in c). An author spot-check of 40 instances (Appendix B) additionally reads each rendered triple for semantic validity beyond the automated checks. Appendix B lists templates. 
+
+Discrimination index. Let FP be the fraction of P1 ∪P3 instances a judge penalizes (correctness <
+
+0.5 or hallucination flagged), and TP the fraction of P2 ∪P4 instances it penalizes. We report 
+
+DI = TP − FP ∈ [−1, 1] , (7) alongside the full confusion matrix. A lenient judge lowers FP but also TP; a valid judge must raise DI. C ARGO -B ENCH therefore converts our central claim into a single falsifiable quantity. 
+
+5 Experimental Setup 
+
+5.1 Deployment and data 
+
+Experiments use a production multi-agent assistant for enterprise technical support in which a plan-ner routes each request to one of several special-ized agents (policy, case, work-order, task, asset). Traces are collected via an observability layer that records inputs, outputs, and per-observation tim-ings. The deployment’s curated golden set com-prises 30 question–answer–intent items; 23 are entity-free policy answers (for which RID does not arise) and the remainder concern specific cases, work orders, and assets. We draw a production sample of M = 400 traces stratified by intent, retrieval similarity decile, and response type, over-sampling low-margin retrievals and planner fail-ures with a 150-item minimum quota for the entity-bearing (RID-eligible) stratum, since H1’s effect concentrates there. M = 400 is powered to detect 
+
+∆ρ ≥ 0.15 between D IRECT and C ARGO (Fisher 
+
+z, dependent correlations, power 0.8, α = 0 .05 )and matches typical budgets in published LLM-judge agreement studies (200–500 items). All data are de-identified before annotation (§10). 
+
+CARGO -B ENCH instantiation. CARGO -BENCH is generated from ten seeds in two batches: an initial six (three derived from the entity-bearing golden items—case status, work-order status, asset age/warranty—lightly templated so entity parameters are explicit, and three synthetic seeds covering case, warranty, and work-order procedures), plus four added seeds spanning the same real intents with different question styles (case priority/assignment, asset entitlement, work-order parts, and a task-status seed) to increase statistical power and intent diversity. With five draws per seed and family (generation seeds 2027 and 3141), this yields 296 instances that pass all consistency checks: 50 P1, 50 P2, 96 P3 (50 true-but-unobserved, 46 fabricated), 50 P4 (26 step deletions, 10 negations, 14 policy swaps), and 50 P5. Observed context contains 1.12 facts on average ( |c| ∈ { 1, 2, 3}); answers average 24 words. P2 contradictions target case numbers (31), service tags (15), and subjects (4). 
+
+5.2 Expert annotation 
+
+Three domain experts annotate each sampled trace with: (a) whether the retrieved reference is an ap-propriate procedural exemplar (binary, used to fit the calibrated gate and for retrieval evaluation); (b) correctness, completeness, helpfulness, and halluci-nation on a 5-point ordinal scale defined against the live context, using the same definitions as the judge; (c) status σ ∈ { SUP , CON , UNV } for each disputed claim; (d) acceptability of the planner’s routing. Two annotators label every item; a third adjudi-cates disagreements. We report Krippendorff’s α
+
+per dimension and release guidelines (Appendix C). A held-out 20% of annotated items is used only for gate calibration and threshold selection; all head-line numbers are computed on the remainder. 
+
+5.3 Conditions 
+
+All judge conditions share the judge model, de-coding parameters (temperature 0.4 unless varied), dimension definitions, and JSON schema; they dif-fer only in the information and framing given to the judge. 
+
+NOREF Question, answer, rubric only. 
+
+DIRECT Standard reference-based judg-ing: compare a to ag.
+
+DIRECT +C TX DIRECT with c appended, but no exemplar reinterpretation or  
+
+> UNV
+
+rule. Isolates “more infor-mation” from “different fram-ing.” 
+
+CARGO Full method: exemplar fram-ing, context grounding, UNV 
+
+rule. 5CARGO −UNV CARGO with binary claim sta-tus (absent ⇒ false). Tests the  
+
+> UNV
+
+rule. 
+
+CARGO −Ex. CARGO without the “dif-ferent instance” framing (C ARGO −Exemplar in tables). 
+
+CARGO −Ctx CARGO with c removed. 
+
+ORACLE CARGO with the human-selected appropriate refer-ence; upper-bounds gains attributable to retrieval. 
+
+RAND REF CARGO with a random same-intent reference; lower-bounds the value of retrieval. Retrieval baselines: BM25 (Robertson and Zaragoza, 2009), dense top-1 with the deployed embedding model, a sentence-transformer alterna-tive (Reimers and Gurevych, 2019), intent-filtered dense, and hybrid. Gating baselines: no gate; ran-dom sampling at matched coverage; fixed, margin-aware, and calibrated gates (§3.1). One additional condition, C ARGO +AUTH (an explicit per-claim-type authority rule), was added post-hoc after ob-serving C ARGO ’s P4 gap and is reported as ex-ploratory, not preregistered (§7). 
+
+5.4 Judge models and bias controls 
+
+We run every condition with the same two judge models used for C ARGO -B ENCH (§6.1)—gpt-oss-120b (three seeds) and gpt-oss-20b (one seed), open-weight and distinct from the production as-sistant’s generator, limiting self-preference (Pan-ickssery et al., 2024)—so bench and production-sample results are directly comparable; a third judge family would further strengthen H5 but is left to future work rather than added post hoc. We report per-seed means and within-item dispersion. Because C ARGO judges single responses, position bias (Wang et al., 2024) does not arise; we con-trol for verbosity bias via agreement stratified by answer-length quartile and a length-controlled re-gression (Dubois et al., 2024). 
+
+5.5 Metrics Agreement: Spearman ρ and Pearson r against adjudicated expert scores per dimension; quadratic-weighted Cohen’s κ after binning; paired boot-strap 95% CIs (10k resamples); Holm correction across dimensions. Hallucination: with expert  
+
+> CON
+
+labels as positives, precision/recall/F1 and two targeted false-positive rates (cross-instance differ-ences; UNV claims). CARGO -B ENCH : per-family penalty rates, DI, and DI stratified by intent and by 
+
+|c|. Retrieval: top-1 accuracy and MRR against expert reference-appropriateness labels; fraction of traces with no appropriate reference in G. Selective evaluation: for gate g and disagreement loss ℓ,
+
+Cov( g) = 1
+
+> M
+
+P 
+
+> j
+
+g(xj ), (8) 
+
+Risk( g) =         
+
+> P
+> jg(xj)ℓ(ˆ yj,y j)
+> P
+> jg(xj)
+
+, (9) risk–coverage curves, AURC (Geifman and El-Yaniv, 2017), and stream-level failure recall (the fraction of all expert-identified failures the gated system evaluates and flags, since abstaining on hard failures trivially lowers risk). Cost: judge calls avoided, tokens, wall-clock, API error rate, and Eq. (6) vs. full evaluation and matched-coverage random sampling. 
+
+5.6 Preregistered hypotheses H1 CARGO exceeds D IRECT in expert agree-ment on correctness and hallucination, with the largest gains on items where θ̸ = θg (i.e., RID present). 
+
+H2 CARGO reduces the cross-instance false-positive hallucination rate relative to D IRECT 
+
+without reducing contradiction recall (DI in-creases; TP does not decrease). 
+
+H3 DIRECT +C TX recovers only part of the gain: exemplar framing and the UNV rule con-tribute beyond adding information. 
+
+H4 The calibrated gate dominates the fixed gate on AURC and stream-level failure recall at matched coverage; random sampling at matched coverage has strictly worse risk. 
+
+H5 Gains hold across judge models; the ordering of conditions is stable. Hypotheses, conditions, metrics, and the cal-ibration/test split for the production-sample study (H1, H2, H4, H5) were fixed be-fore annotation began and are committed in 
+
+experiments/cargo/PREREGISTRATION.md 
+
+(record ID 01b8122f1cf4 , a content hash repro-ducible via make_prereg_id.py ); this record explicitly excludes CARGO -B ENCH (already complete at commit time, using construction-time ground truth) and the post-hoc C ARGO +AUTH 
+
+follow-up (§6.1). 
+
+6 Results 
+
+We report the C ARGO -B ENCH study (§6.1; 246 items, 8,172 successful judgments across the main 6Should not pen. Should pen. Condition P1 P3 P2 P4 DI 95% CI                                                            
+
+> Judge: gpt-oss-120b (mean of 3 seeds)
+> NOREF .44 .64 .96 .66 .24 [.13, .35] DIRECT 1.00 1.00 1.00 1.00 .00 [.00, .00] D+C TX 1.00 1.00 1.00 1.00 .00 [.00, .00] Cargo+Auth .00 .04 1.00 .20 .57 [.47, .67]
+> CARGO .00 .03 1.00 .20 .58 [.48, .68]
+> Judge: gpt-oss-20b (1 seed)
+> NOREF .10 .33 .92 .36 .39 [.27, .50] DIRECT 1.00 1.00 1.00 1.00 .00 [.00, .00] D+C TX 1.00 1.00 1.00 .98 −.01 [ −.03, .00] Cargo+Auth .00 .01 .96 .22 .58 [.48, .68]
+> CARGO .00 .02 .98 .16 .56 [.46, .65]
+
+Table 1: CARGO -B ENCH (246 items, 10 seeds), headline conditions (D+C TX = DI-
+
+> RECT
+
++C TX ); the three component-ablation conditions (C ARGO −Ctx/Exemplar/ UNV ) are in Table 2 (Ap-pendix E). Penalty rate per family (lower is better for P1/P3, higher for P2/P4); DI = TP − FP with item-level bootstrap CIs (10k). D IRECT penalizes every 
+
+instance, including all correct entity transplants, and is therefore uninformative (DI ≈ 0); adding the live context without reframing (D IRECT +C TX ) changes nothing. CARGO removes the false penalties and retains contradiction recall, but detects only 20% of procedural corruptions (P4); an explicit authority-split fix (C ARGO +AUTH , post-hoc) does not improve on this. 
+
+study and rubric-swap control) and an LLM-as-annotator study (Appendix D). The production-sample analyses (H1’s expert agreement, H2 against expert labels, H4’s gate calibration) are the subject of the preregistered protocol in §5.2–§5.6; their metrics and reporting formats are fixed in §5.5 and Appendix E. 
+
+6.1 CARGO -B ENCH (H2, H3, H5) 
+
+Table 1 reports the completed C ARGO -B ENCH 
+
+study: 246 P1–P4 instances (10 seeds: 6 pilot + 4added for statistical power, §5.1) × 8 conditions, judged by gpt-oss-120b (3 seeds, temperature 0.4) and gpt-oss-20b (1 seed); 7,872 successful judg-ments (49 transient rate-limit/connection failures were retried to completion), all parseable. 
+
+RID is total under literal judging. DIRECT as-signs a penalizing verdict to 100% of instances in every family, on both judges and all seeds—all 50 correct entity transplants (P1) and all 96 P3 in-stances. Inspection of rationales confirms the mech-anism predicted in §2: a representative P1 rationale reads “ The answer gives a different case number and status than the golden answer, so it is factu-ally incorrect ” and, for hallucination, “ The answer fabricates an incorrect case number and status, which is a clear hallucination .” Of 150 D IRECT 
+
+P1 judgments (120b, 50 items × 3 seeds), all 150 cite an entity-value mismatch and 149/150 addition-ally call the live value “fabricated”/“hallucinated”; mean correctness is 0.006 and mean hallucination fidelity 0.019. Under C ARGO the same instances receive 0.968 and 1.000. A judge with DI ≈ 0 car-ries no information about answer quality; this is the regime in which the deployment’s live monitoring previously operated. 
+
+Information is not the fix; framing is (H3). DI-
+
+> RECT
+
++C TX receives exactly the live facts C ARGO 
+
+receives, yet is indistinguishable from D IRECT on 120b and only marginally different on 20b (1/50 P4 items flipped): the judge does not spontaneously use context to discount reference mismatches; it must be told what the reference is for .
+
+CARGO removes false penalties without los-ing contradiction recall (H2). CARGO penalizes 0/50 P1 and 3/96 P3 instances (120b) while flag-ging 50/50 (120b) and 49/50 (20b) injected contra-dictions. Paired ∆DI(C ARGO −DIRECT ) is +.58 
+
+[.48,.68] (120b), +.56 [.46,.65] (20b); vs. N OREF ,
+
++.34 [.21,.46] and +.17 [.06,.27]. Seed dispersion is low (mean s.d. .03, 120b). One deviation from preregistered H2: TP was not expected to decrease relative to D IRECT , but D IRECT ’s TP = 1 .00 is an artifact of penalizing everything, and C ARGO ’s lower TP (.60) traces to P4, not P2—H2 holds for contradiction recall and fails for procedural recall; we report both rather than re-scope the hypothesis. 
+
+Procedural corruptions are largely missed. 
+
+CARGO penalizes 10/50 (120b) and 8/50 (20b) P4 instances. By corruption type (120b): 10/26 delete-steps are caught, 0/10 negations, 0/14 policy-swaps. N OREF , with no reference at all, catches more (.66 overall) at the cost of FP = .57 . Every CARGO variant shows the same P4 profile, so the effect is not attributable to the exemplar preamble or the UNV rule individually (below). Reading the 121/150 C ARGO P4 judgments (120b) that were 
+
+not penalized, all 121 justify the verdict by ab-sence of contradiction with the live facts, and 97 additionally assert the answer “follows the correct reasoning pattern/approach.” The judge has gener-alized “absent from context ⇒ unverifiable” from entity values , where it is intended, to procedural claims , where the reference—not the context—is the authority (mean C ARGO correctness on P4 is 70.78). This is the leniency–sensitivity trade-off DI was designed to expose. 
+
+Testing the obvious fix (post-hoc, not preregis-tered). An explicit per-claim-type authority rule, CARGO +AUTH , does not improve on C ARGO :paired ∆DI = −.007 [−.038 , . 023 ] (120b), +.027 
+
+[−.033 , . 088 ] (20b), both straddling zero. Stating the split explicitly does not make the judge apply it; we leave a structurally different check to future work. 
+
+Ablations and rubric swap (Tables 2–3, Ap-pendix E). Removing live context costs DI ( ∆ = +.06 [.02,.11], via lower P2 recall); removing the exemplar preamble or UNV (vs. binary) has no mea-surable effect on either judge. Swapping rubrics (120b, seed 0, 150-item pilot) localizes where the effect lives: D IRECT with C ARGO ’s dimension def-initions alone already reaches DI = .49 , so the def-initions carry most of the false-penalty reduction, while the exemplar preamble adds leniency that removes residual false penalties but costs P4 recall (.33 →.10)—complementary components pulling the operating point in opposite directions on proce-dure. 
+
+6.2 Selective evaluation (H4) and robustness (H5) 
+
+H4 is evaluated on per-item expert loss labels from the production sample under the protocol of §5; Appendix E fixes the risk–coverage and gate-comparison reporting format. For H5, condition ordering is nearly identical for gpt-oss-120b and gpt-oss-20b (Table 1): D I-
+
+> RECT
+
+/D IRECT +C TX at DI ≈ 0, N OREF at .24/.39, CARGO variants between .52 and .59 with the full method and C ARGO +AUTH tied-best. C ARGO ’s DI differs by only .02 across judges; the weaker judge is less harsh on N OREF (FP .25 vs. .57). Seed dispersion (120b) is largest for N OREF (.10), i.e. a reference—even mis-framed—stabilizes the judge. 
+
+7 Analysis 
+
+Where does DIRECT fail, and where does CARGO fail? Symmetrically, for one reason each (§6.1): DIRECT treats every entity-value differ-ence as an error (DI ≈ 0); C ARGO treats every procedure-level difference as unverifiable too (20% P4 recall)—category errors, not graded biases like verbosity or position (Wang et al., 2024; Dubois et al., 2024). Nor is either leniency in general: CARGO gets P2 = 1 .00 , FP = .02 (vs. N OREF ’s .57), and the authority split does not fix it. Ap-pendix F gives qualitative examples. 
+
+Is the P4 blind spot specific to single-pass judging? In an LLM-as-annotator study (Ap-pendix D), two independently prompted annotators plus an adjudicator applied our written guidelines— which include a worked example of exactly this failure—to 40 C ARGO -B ENCH items. They recov-ered every P1–P3 verdict but only 3/10 procedural corruptions. Better instructions, a second pass, and adjudication do not close the gap, which suggests it requires a structurally different check (e.g., explicit per-step verification against the reference). 
+
+8 Related Work 
+
+We relate to four areas (expanded in Appendix H). LLM-as-a-judge reliability work studies biases or-thogonal to RID—position, self-preference, ver-bosity, task-dependent alignment (Zheng et al., 2023; Liu et al., 2023; Fu et al., 2023; Kocmi and Federmann, 2023; Kim et al., 2024; Gu et al., 2024; Wang et al., 2024; Panickssery et al., 2024; Dubois et al., 2024; Bavaresco et al., 2024; Thakur et al., 2024)—while treating the reference as ground truth; we study a reference correct for a different in-stance. Factuality/claim-decomposition work (Min et al., 2023; Honovich et al., 2022; Manakul et al., 2023) motivates our UNV class. RAG/agent evalu-ation (Es et al., 2024; Liu et al., 2024; Yao et al., 2025) differs in that retrieval selects the evaluator’s 
+
+reference, so its error corrupts measurement, not generation. Selective prediction (Chow, 1970; El-Yaniv and Wiener, 2010; Geifman and El-Yaniv, 2017; Kamath et al., 2020; Kadavath et al., 2022; Kuhn et al., 2023) is applied here to the evaluator .
+
+9 Conclusion 
+
+RID makes literal LLM-as-a-judge uninformative (DI = 0); C ARGO restores discrimination (DI .00 →.58) with near-complete contradiction recall, not without limitations (§10). 
+
+10 Limitations 
+
+Scope of evaluation. Our results use construction-time ground truth (C ARGO -B ENCH ) and LLM an-notators (Appendix D); expert agreement and gate calibration on production traffic (H1, H4) are left to the preregistered protocol of §5. Procedural leniency. CARGO detects only 20% of procedu-ral corruptions on C ARGO -B ENCH because the 8judge extends the “unverifiable” status from en-tity values to procedural claims; an explicit per-claim-type authority instruction (§7) did not fix this (∆DI = −.007 [−.038 , . 023 ]), suggesting the gap is not merely underspecification. Until it is closed, CARGO should be read as a reliable detector of 
+
+contradictions with observed facts and a reliable non-detector of spurious entity mismatches , not a complete correctness judge; deployments should pair it with a procedure-focused check or N OREF -style scoring on procedural dimensions. Unver-ifiable is not verified. Treating UNV claims as neutral raises precision on checkable claims but forgoes recall on fabrications that happen to be un-verifiable from the trace input: C ARGO penalized 3/46 fabricated-unverifiable P3 instances, and the binary-status ablation did not change this materi-ally. Closing the gap requires authoritative backend evidence, which is a deployment change we do not evaluate. Bench scale and synthetic perturba-tions. CARGO -B ENCH results rest on ten seeds (six derived from production golden items and syn-thetic case/warranty/work-order procedures, four added for power) and templated rewrites; effects this large are unlikely to reverse with more seeds, but the P4 rate is sensitive to how corruptions are authored—it moved from 10% to 20% between our 150- and 246-item releases—and all CIs should be read at n=246 (or n=150 for the rubric-swap control). Rubric confound, partially controlled. 
+
+CARGO and D IRECT differ in both preamble and dimension definitions; the rubric-swap control (Ta-ble 3) separates them on one judge, one seed, and the smaller item set only. Similarity is not valid-ity. The gate scores question similarity, not pro-cedural equivalence; two similar questions may require different policies. The calibrated gate miti-gates but does not eliminate this, and the O RACLE 
+
+gap bounds the residual. Single deployment do-main. Our production data come from one enter-prise technical-support assistant; C ARGO -B ENCH 
+
+transfers by recipe but our numbers do not. Judge dependence. Results may shift with judge model, prompt wording, and decoding; we test two judge families (three seeds on one) but cannot exhaust this space. Label uncertainty. Completeness and helpfulness admit expert disagreement; the proto-col reports α and adjudicates, but the human ceiling bounds attainable agreement. Benchmark real-ism. CARGO -B ENCH perturbations are generated and verified automatically with human spot-checks; they are designed to be diagnostic, not distribution-ally representative, and we do not claim otherwise. 
+
+Production selection effects. Gated subsets are not representative of all traffic; we therefore report stream-level failure recall alongside selective risk. 
+
+Ethics Statement 
+
+Production traces contain customer and asset infor-mation. Under our protocol, all production data used for annotation and analysis are de-identified by removing or hashing identifiers, replacing free-text descriptions with paraphrases, and excluding any trace with residual personal data after review; annotators are employees bound by confidentiality agreements and compensated as part of their regu-lar duties. We release C ARGO -B ENCH generation code and templates and the annotation guidelines; we do not release raw production traces. Released examples are synthetic or fully de-identified. Au-tomated evaluators can be misused to over-trust system outputs; we position C ARGO as a monitor-ing aid that surfaces abstentions and contradictions for human review, not as a replacement for it. 
+
+References        
+
+> Anna Bavaresco, Raffaella Bernardi, Leonardo Berto-lazzi, Desmond Elliott, Raquel Fernández, Albert Gatt, Esam Ghaleb, Mario Giulianelli, Michael Hanna, Alexander Koller, André F. T. Martins, Philipp Mondorf, Vera Neplenbroek, Sandro Pezzelle, Barbara Plank, David Schlangen, Alessandro Sug-lia, Aditya K. Surikuchi, Ece Takmaz, and Alberto Testoni. 2024. LLMs instead of human judges? a large scale empirical study across 20 NLP evaluation tasks. arXiv preprint arXiv:2406.18403 .C. K. Chow. 1970. On optimum recognition error and reject tradeoff. IEEE Transactions on Information Theory , 16(1):41–46. Yann Dubois, Balázs Galambosi, Percy Liang, and Tat-sunori B. Hashimoto. 2024. Length-controlled Al-pacaEval: A simple way to debias automatic evalua-tors. arXiv preprint arXiv:2404.04475 .Ran El-Yaniv and Yair Wiener. 2010. On the founda-tions of noise-free selective classification. Journal of Machine Learning Research , 11:1605–1641. Shahul Es, Jithin James, Luis Espinosa Anke, and Steven Schockaert. 2024. RAGAs: Automated evalu-ation of retrieval augmented generation. In Proceed-ings of the 18th Conference of the European Chap-ter of the Association for Computational Linguistics: System Demonstrations , pages 150–158, St. Julians, Malta. Association for Computational Linguistics.
+
+9Jinlan Fu, See-Kiong Ng, Zhengbao Jiang, and Pengfei Liu. 2023. GPTScore: Evaluate as you desire. arXiv preprint arXiv:2302.04166 .Yonatan Geifman and Ran El-Yaniv. 2017. Selective classification for deep neural networks. In Advances in Neural Information Processing Systems 30 .Jiawei Gu, Xuhui Jiang, Zhichao Shi, Hexiang Tan, Xuehao Zhai, Chengjin Xu, Wei Li, Yinghan Shen, Shengjie Ma, Honghao Liu, Saizhuo Wang, Kun Zhang, Yuanzhuo Wang, Wen Gao, Lionel Ni, and Jian Guo. 2024. A survey on LLM-as-a-judge. arXiv preprint arXiv:2411.15594 .Or Honovich, Roee Aharoni, Jonathan Herzig, Hagai Taitelbaum, Doron Kukliansy, Vered Cohen, Thomas Scialom, Idan Szpektor, Avinatan Hassidim, and Yossi Matias. 2022. TRUE: Re-evaluating factual consistency evaluation. In Proceedings of the 2022 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies , pages 3905–3920. Associa-tion for Computational Linguistics. Saurav Kadavath, Tom Conerly, Amanda Askell, Tom Henighan, Dawn Drain, Ethan Perez, Nicholas Schiefer, Zac Hatfield-Dodds, Nova DasSarma, Eli Tran-Johnson, Scott Johnston, Sheer El-Showk, Andy Jones, Nelson Elhage, Tristan Hume, Anna Chen, Yuntao Bai, Sam Bowman, Stanislav Fort, and 17 others. 2022. Language models (mostly) know what they know. arXiv preprint arXiv:2207.05221 .Amita Kamath, Robin Jia, and Percy Liang. 2020. Se-lective question answering under domain shift. In 
+
+Proceedings of the 58th Annual Meeting of the Asso-ciation for Computational Linguistics , pages 5684– 5696. Association for Computational Linguistics. Seungone Kim, Jamin Shin, Yejin Cho, Joel Jang, Shayne Longpre, Hwaran Lee, Sangdoo Yun, Seongjin Shin, Sungdong Kim, James Thorne, and Minjoon Seo. 2024. Prometheus: Inducing fine-grained evaluation capability in language models. In 
+
+The Twelfth International Conference on Learning Representations .Tom Kocmi and Christian Federmann. 2023. Large language models are state-of-the-art evaluators of translation quality. In Proceedings of the 24th Annual Conference of the European Association for Machine Translation , pages 193–203. Lorenz Kuhn, Yarin Gal, and Sebastian Farquhar. 2023. Semantic uncertainty: Linguistic invariances for un-certainty estimation in natural language generation. In The Eleventh International Conference on Learn-ing Representations .Xiao Liu, Hao Yu, Hanchen Zhang, Yifan Xu, Xuanyu Lei, Hanyu Lai, Yu Gu, Hangliang Ding, Kaiwen Men, Kejuan Yang, Shudan Zhang, Xiang Deng, Ao-han Zeng, Zhengxiao Du, Chenhui Zhang, Sheng Shen, Tianjun Zhang, Yu Su, Huan Sun, and 3 others. 2024. AgentBench: Evaluating LLMs as agents. In 
+
+The Twelfth International Conference on Learning Representations .Yang Liu, Dan Iter, Yichong Xu, Shuohang Wang, Ruochen Xu, and Chenguang Zhu. 2023. G-Eval: NLG evaluation using GPT-4 with better human alignment. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Process-ing , pages 2511–2522, Singapore. Association for Computational Linguistics. Potsawee Manakul, Adian Liusie, and Mark J. F. Gales. 2023. SelfCheckGPT: Zero-resource black-box hal-lucination detection for generative large language models. In Proceedings of the 2023 Conference on Empirical Methods in Natural Language Processing ,Singapore. Association for Computational Linguis-tics. Sewon Min, Kalpesh Krishna, Xinxi Lyu, Mike Lewis, Wen-tau Yih, Pang Wei Koh, Mohit Iyyer, Luke Zettlemoyer, and Hannaneh Hajishirzi. 2023. FActScore: Fine-grained atomic evaluation of factual precision in long form text generation. In Proceed-ings of the 2023 Conference on Empirical Methods in Natural Language Processing , pages 12076–12100, Singapore. Association for Computational Linguis-tics. Arjun Panickssery, Samuel R. Bowman, and Shi Feng. 2024. LLM evaluators recognize and favor their own generations. In Advances in Neural Information Processing Systems 37 .Nils Reimers and Iryna Gurevych. 2019. Sentence-BERT: Sentence embeddings using siamese BERT-networks. In Proceedings of the 2019 Conference on Empirical Methods in Natural Language Process-ing and the 9th International Joint Conference on Natural Language Processing , pages 3982–3992. As-sociation for Computational Linguistics. Stephen Robertson and Hugo Zaragoza. 2009. The probabilistic relevance framework: BM25 and be-yond. Foundations and Trends in Information Re-trieval , 3(4):333–389. Aman Singh Thakur, Kartik Choudhary, Venkat Srinik Ramayapally, Sankaran Vaidyanathan, and Dieuwke Hupkes. 2024. Judging the judges: Evaluating align-ment and vulnerabilities in LLMs-as-judges. arXiv preprint arXiv:2406.12624 .Peiyi Wang, Lei Li, Liang Chen, Zefan Cai, Dawei Zhu, Binghuai Lin, Yunbo Cao, Lingpeng Kong, Qi Liu, Tianyu Liu, and Zhifang Sui. 2024. Large lan-guage models are not fair evaluators. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 9440–9450, Bangkok, Thailand. Association for Computational Linguistics. Shunyu Yao, Noah Shinn, Pedram Razavi, and Karthik Narasimhan. 2025. τ -bench: A benchmark for tool-agent-user interaction in real-world domains. In 
+
+The Thirteenth International Conference on Learning Representations .
+
+10 Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric P. Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica. 2023. Judging LLM-as-a-judge with MT-bench and chatbot arena. In Advances in Neural Information Processing Sys-tems 36 (Datasets and Benchmarks Track) .
+
+A Judge Prompts 
+
+All conditions share one template: a pream-ble, an optional live-context block, the question, the answer, an optional ref-erence, the four dimension definitions (from config/llm_metrics_config.yaml 
+
+for DIRECT /D IRECT +C TX ,
+
+config/live_llm_metrics_config.yaml for all CARGO variants), and a fixed JSON schema. Con-ditions differ only in which of the blocks below are included ( experiments/cargo/conditions.py ). 
+
+DIRECT preamble. “You are evaluating the quality of an answer against an expected reference answer.” No live-context block; the reference is labeled Golden Answer .
+
+DIRECT +C TX addition. Adds the live-context block with only: “The LIVE CONTEXT below lists facts observed for the ACTUAL instance the live answer addresses. Factual correctness and halluci-nation are judged against these facts, not against the reference’s values.” Preamble and reference label are unchanged from D IRECT .
+
+CARGO additions (preamble replaced, context block extended). Preamble: “You are evaluating the quality of an answer produced for a LIVE in-stance.” followed by the exemplar-framing block: 
+
+> IMPORTANT — the REFERENCE ANSWER be-low was written for a DIFFERENT instance (a different case / asset / record) than the one the live answer addresses. Treat the reference as the correct REASONING PATTERN, POLICY, RE-QUIRED STEPS, and STRUCTURE — NOT as literal expected text. [...] NEVER mark the live an-swer wrong, incomplete, or hallucinated because its identifiers, dates, status, subject, description, service tag, or other instance-specific values DIF-FER from the reference’s. They SHOULD differ.
+
+The context block additionally gets the UNV rule:   
+
+> The LIVE CONTEXT is a PARTIAL snapshot, not the full record. [...] A value that is ABSENT from the live context is UNVERIFIABLE — it is NOT evidence of hallucination or error. Penalize ONLY values that DIRECTLY CONTRADICT a fact present in the live context, wrong reasoning, or missing required steps.
+
+The reference is labeled Reference Answer (reasoning pattern, written for a different in-stance) . C ARGO −Exemplar drops the first block; CARGO −Ctx drops the context block (and both rules) entirely; C ARGO −UNV replaces the UNV rule with: “Treat the LIVE CONTEXT as the complete set of known facts. Any value in the live answer that is not supported by the live context should be treated as unsupported [...].” 
+
+CARGO +AUTH addition (post-hoc, §6.1). Ap-pends, after the UNV rule: 
+
+> Different claim types have different authorities. [...] ENTITY VALUES [...]: check ONLY against the LIVE CONTEXT. [...] PROCEDURAL CON-TENT (which steps are taken, what policy or eligi-bility conclusion is reached, [...]): check against the REFERENCE’s procedure, adapted to the live instance. [...] If the answer’s procedure, policy conclusion, or recommended action CONTRA-DICTS what the reference’s approach implies for this live instance, that IS a correctness error, even though it does not contradict anything in the live context. Do NOT excuse a procedural contradic-tion just because the live context is silent on it.
+
+B CARGO -B ENCH Generation 
+
+Generator. Seeds specify question and answer 
+
+templates over named parameters, the subset of parameters that appear in a live trace input (observed_fields ), optional procedural steps ,and optional policy_alternatives . Transplants (P1) resample every parameter with a type-aware generator (digits for case/work-order numbers, al-phanumerics for service tags, dates, closed sta-tus/priority vocabularies) and render the templates; 
+
+c is a non-empty random subset of the observed fields. P2 rewrites exactly one observed value in the P1 answer to a distinct value of the same type. P3 appends k=2 fields absent from c, drawn ei-ther from the transplant’s hidden parameters (true-but-unobserved split) or sampled fresh (fabricated split). P4 applies one of delete step , negate (regex over modal/eligibility phrases), or swap policy 
+
+(seed-provided alternative). P5 renders a different-intent seed’s question with the current seed’s enti-ties. 
+
+Consistency checks. Every instance must sat-isfy: no golden parameter value survives in a trans-planted answer unless it was re-sampled as a new value for some field; every observed fact equals the transplant value; P2’s stated value is present and the true value absent, and the contradicted field is observed; P3’s added fields are unobserved; 11 P4 changed the text. Instances failing any check are dropped ( –drop-invalid ); both generation batches (original 180 and expansion 116, §5.1) have zero violations. 
+
+Discrimination-index sanity check. Before any model runs, we verified with two synthetic judges that DI behaves as intended: a uniformly harsh judge (penalizes everything) and a uniformly le-nient judge (penalizes nothing) both obtain DI = 0 
+
+on the full 296-instance release (TP =FP = 1 and TP =FP = 0 respectively), so neither strategy can score well. 
+
+Author spot-check. We drew a stratified ran-dom sample of 8 instances per family (seed 42; 40 of 296 total) from the full release and read each question/answer/context/target triple against family-specific criteria: P1 — entity values self-consistent, no golden value leaks, context matches the transplant; P2 — exactly one clearly identi-fiable contradiction with an observed fact; P3 — added fields genuinely absent from context and plausible; P4 — the corruption is an unambigu-ous, recognizable procedural error distinct from an entity-value change; P5 — the rendered question reflects a genuinely different intent/procedure. All 40/40 instances had correct target labels (no mis-labeled correctness/hallucination/should-penalize field). The check did surface one template-authoring defect: the g_workorder2 seed’s answer template referenced its work-order-number place-holder twice consecutively (“work order X has X
+
+part . . . ”), producing a redundant but not factually incorrect repetition in 21 of its 30 instances (21/296 
+
+= 7.1% of the full release, one seed of ten). This does not change any target label—the repeated to-ken is not an additional claim—so we did not regen-erate or re-judge the affected instances; we fixed the template for future releases and added a regres-sion test ( tests/test_cargo_experiments.py )that renders every seed file and flags any answer with an immediately-repeated identifier-like token. This was an author check, not an independent or blind review, and should not be read as equivalent to the crowdsourced validation we intend for future releases. 
+
+C Annotation Guidelines 
+
+The guidelines below (draft v0.1; full text and worked examples in 
+
+experiments/cargo/guidelines.py ) are the single specification for the expert annotators of the production-sample protocol (§5.2) and for the LLM annotators of Appendix D. 
+
+Step 1 — reference appropriateness (binary). 
+
+Annotators ignore every instance-specific value and ask whether the reference answers the same kind 
+
+of question with the same kind of procedure. Dif-ferent case numbers, subjects, statuses, or dates are expected and are not evidence of inappropriateness; a different required procedure is. If inappropriate, scoring stops for that item (this is the ground truth against which the retrieval gate’s reference validity is measured, §5.5). 
+
+Step 2 — quality dimensions (5-point ordinal, only if Step 1 passes). Correctness, complete-ness, and helpfulness are defined identically in spirit to §3.3 but scored 1–5 for human tractabil-ity. Hallucination fidelity (5 = best) is scored from contradictions with the observed context only; a value simply absent from the observed context is unverifiable, not evidence against the score. 
+
+Worked examples. The guidelines include three examples drawn from CARGO -B ENCH (Ap-pendix B) to calibrate annotators, including one deliberately adversarial case: an asset-warranty an-swer that inverts the reference’s eligibility conclu-sion (“ eligible ” → “not eligible ”) without contra-dicting any observed fact. Annotators are instructed that this must score correctness ≤ 2 because it contradicts the reference’s procedure/policy , even though hallucination fidelity (checked only against observed facts) may remain high — i.e., the guide-lines explicitly warn annotators about the failure mode §7 finds in C ARGO itself. 
+
+Step 3 — claim status. For any claim that low-ers the hallucination score, annotators record the contradicting claim and the observed fact it contra-dicts. 
+
+Adjudication. Two annotators label every item independently. An item is sent to a third adjudica-tor if reference-appropriateness labels differ, any ordinal score differs by ≥ 2, or contradiction flags differ. The adjudicator sees both (blinded) annota-tions and produces the final label, which need not match either. 
+
+D LLM-as-Annotator Study 
+
+Headline. Given our written guidelines (Ap-pendix C), including a worked example of exactly 12 the P4 failure, two LLM annotators plus an adjudi-cator recover every P1–P3 verdict on 40 C ARGO -BENCH items but only 3/10 procedural corrup-tions . The P4 blind spot of C ARGO (§6.1) therefore persists under guideline-driven, two-pass, adjudi-cated annotation, and is not solely an artifact of single-pass judging. 
+
+Design. Two gpt-oss-120b annotators apply the guidelines to each item without seeing the auto-mated judges’ outputs: annotator_A (tempera-ture 0.2) follows them methodically; annotator_B 
+
+(temperature 0.7) independently and skeptically re-derives each judgment. Disagreements, by the adjudication rule of Appendix C, go to an adjudi-cator (temperature 0.1). Because all three share a model family with our judges, self-preference ef-fects (Panickssery et al., 2024) cannot be excluded. 
+
+Sample. 40 C ARGO -B ENCH items (10 per fam-ily, P1–P4), stratified, seed 0. All 40 parsed; 1/40 required adjudication. 
+
+Recovery against construction-time ground truth. Reference-appropriateness and hallucination-flag accuracy were both 1.00 (40/40). Correctness accuracy (binarized at ≥ 3)was 1.00 on P1–P3 but .30 on P4 , despite (a) explicit guidelines, (b) an adversarial worked example of this failure, (c) two independent passes, and (d) adjudication. This points to a structurally different check (e.g., per-step verification against the reference) rather than better instructions. 
+
+Inter-annotator agreement. Quadratic weighted κ: correctness 1.00, completeness .99, helpfulness .95, hallucination 1.00; reference-appropriateness agreement 1.00. Near-ceiling agreement is expected from two prompted variants of one model and is not an estimate of human–human agreement. 
+
+Comparison with the automated judges. Ad-judicated correctness correlates with C ARGO ’s at Spearman ρ = .74 and with D IRECT ’s at ρ =
+
+.16 (n = 40 ), consistent with the main C ARGO -BENCH result. On the 10 P4 items the annotators’ flag rate (.30) exceeds C ARGO ’s (.10), catching two negate corruptions (seed g_asset ) that the judge missed; both miss the same delete_step 
+
+and swap_policy cases. 
+
+Reproduction. python -m experiments.cargo.simulate_annotators 
+
+generates the annotations; python -m experiments.cargo.report_annotation 
+
+produces the numbers above. 
+
+E Full Results 
+
+E.1 CARGO -B ENCH : component ablations (complete) 
+
+Table 2 gives the three component-ablation condi-tions omitted from Table 1 for space; discussion is in §6.1.                                              
+
+> Should not pen. Should pen. Condition P1 P3 P2 P4 DI 95% CI
+> Judge: gpt-oss-120b (mean of 3 seeds)
+> CARGO −Ctx .00 .06 .92 .20 .52 [.42, .62] CARGO −Ex. .00 .02 1.00 .20 .59 [.49, .68] CARGO −UNV .00 .02 1.00 .20 .59 [.49, .68]
+> Judge: gpt-oss-20b (1 seed)
+> CARGO −Ctx .00 .07 .90 .24 .52 [.42, .63] CARGO −Ex. .00 .02 .92 .14 .52 [.42, .62] CARGO −UNV .00 .01 .94 .14 .53 [.43, .63]
+
+Table 2: C ARGO -B ENCH component ablations (246 items, 10 seeds), continuing Table 1. C ARGO −Ex. = CARGO −Exemplar (drops the “different instance” fram-ing). 
+
+E.2 Rubric-swap control (complete) 
+
+Table 3 isolates the dimension-definition rubric from the exemplar preamble; discussion is in §6.1.                               
+
+> Prompt Rubric P1 P3 P2 P4 DI DIRECT golden-ref. 1.00 1.00 1.00 1.00 .00 DIRECT ctx-grounded .03 .17 .90 .33 .49 CARGO golden-ref. .23 .40 1.00 .47 .39 CARGO ctx-grounded .00 .02 1.00 .10 .54
+
+Table 3: Rubric-swap control (gpt-oss-120b, seed 0, 150 items). The context-grounded dimension defini-tions account for most of the false-penalty reduction; the CARGO preamble adds leniency that removes residual false penalties but also suppresses detection of procedu-ral corruptions. 
+
+E.3 Production-sample protocol: reporting formats 
+
+The preregistered protocol (§5) fixes in advance how the production-sample analyses will be re-ported, so that results cannot be selectively pre-sented: • H1/H3 agreement. Spearman ρ (95% bootstrap CI) with adjudicated expert scores on correctness, completeness, helpfulness, and hallucination for NOREF , D IRECT , D IRECT +C TX , all C ARGO ab-lations, C ARGO , R AND REF , and O RACLE , with human–human Krippendorff’s α as a ceiling. 13 • H1 RID split. Correctness ρ for D IRECT and CARGO and their paired ∆, separately for traces where the reference’s instance differs from the live instance (case/asset/work-order) and where it does not (entity-free policy); H1 predicts the gain concentrates in the former. • H2 hallucination. Precision, recall, and F1 against expert CON labels, plus false-positive rates on legitimate cross-instance differences and on UNV claims, for D IRECT , D IRECT +C TX ,CARGO −UNV , and C ARGO .• H4 gating. Risk–coverage and failure-recall– coverage curves for fixed, margin-aware, and calibrated gates and matched-coverage random sampling; AURC, stream-level failure recall, ref-erence validity (fraction of evaluated items whose reference experts judged appropriate), and rela-tive judge cost (Eq. (6)) at a matched coverage level. 
+
+F Qualitative Examples 
+
+All examples are synthetic C ARGO -B ENCH in-stances (no production data); item IDs refer to 
+
+experiments/cargo/runs/ .
+
+(i) Legitimate cross-instance difference (g_case-P1-0 ). Q: “What is the status of case 171056262?” Live context: {caseNumber: 171056262}. A: “Case 171056262 is currently Pending Customer.” Reference: “Case 215474133 is currently Closed.” D IRECT scores correctness 0.0: “The answer gives a different case number and status than the golden answer, which states case 215474133 is Closed.” CARGO scores correctness 1.0 on the identical item: “The answer provides the case status without contradicting any fact in the live context.” The status value (“Pending Customer”) is not observed in the live context either way; CARGO correctly treats it as unverifiable rather than comparing it to the reference’s unrelated status. 
+
+(ii) Injected contradiction, both flag (g_case-P2-0 ). Live context: {caseNum-ber: 491541446}. A: “Case 536762755 is currently Escalated.” DIRECT : “The answer fabricates a case number and status that are not supported by the reference, constituting a clear hallucination” (correct verdict, wrong reason—it would say this even if the case number matched the live instance but not the reference). C ARGO :
+
+“The answer states a case number (536762755) that directly contradicts the known case number (491541446) in the live context” (correct verdict, correct reason: a genuine contradiction with the observed fact). 
+
+(iii) Fabricated-unverifiable field, ablation has limited effect ( s002-P3f-0 ). Q: “Is service tag 9Y0S3VQ still under warranty?” Live con-text: {serviceTag: 9Y0S3VQ}. A: “Service tag 9Y0S3VQ is under warranty until 2025-07-19. The system is eligible for on-site repair. You should open a hardware case to dispatch a part. Warranty ends: 2026-08-20. Created: 2026-05-28.” The fab-ricated fields ( warrantyEnd , createdDate ) hap-pen to collide with a date already stated earlier in the answer, producing a genuine internal inconsis-tency (two different warranty end dates) indepen-dent of the live context. C ARGO (correctness 0.60): 
+
+“[...] provides two conflicting end dates, which shows inconsistent reasoning even though no live facts are contradicted” ; C ARGO −UNV (correctness 0.22): “[...] gives two conflicting warranty end dates and cannot be verified against the live facts, so the information is unreliable.” Both conditions penalize this item, in degree rather than in kind— consistent with the aggregate finding (§6.1) that the  
+
+> UNV
+
+ablation does not materially change fabricated-field detection. We note this collision as a C ARGO -BENCH generator artifact (a fabricated field can coincidentally duplicate a value already present in the templated answer) rather than a clean test of the intended unverifiable-vs-unsupported contrast; fu-ture C ARGO -B ENCH releases should exclude field names already present in the seed’s answer tem-plate from the P3 fabrication pool. 
+
+G Implementation Details 
+
+CARGO -B ENCH judging runs. Judge models: 
+
+gpt-oss-120b and gpt-oss-20b via the deploy-ment’s OpenAI-compatible gateway; temperature 0.4, top-p 1.0, no max-token cap (reasoning mod-els return empty content when capped), prompt passed as the system message, JSON parsed le-niently (code fences and surrounding prose toler-ated). Sampling seeds {0, 1, 2} passed as the API 
+
+seed parameter. 7,872 successful judgments across the 246-item main study (8 conditions × 2 judges, 3 seeds on 120b) plus 300 for the rubric-swap control (Table 3); six concurrent workers; 49 tran-sient failures (rate-limit/connection) on the original 150-item pilot were re-run to completion at two workers, and the 96-item expansion batch (3,072 14 judgments) completed with zero errors; zero un-parseable responses throughout. Penalization rule for DI: correctness < 0.5 or hallucination fidelity 
+
+< 0.5 on the per-item mean over seeds. Bootstrap CIs: 10,000 item-level resamples; paired compar-isons resample the same items for both conditions. 
+
+Gate (deployed retrieval mechanics). The pro-duction similarity matcher embeds the golden set once and caches the vectors; live questions are embedded in batches per polling window (de-fault batch limit 32) to stay under the embed-ding endpoint’s rate limit, with exponential back-off (base delay 1.0s, max 30.0s, up to 5 retries) on transient failures. The embedding model de-faults to nomic-embed-text-v1 via the deploy-ment’s GenAI gateway, with an optional local 
+
+all-MiniLM-L6-v2 fallback; cosine similarity is computed densely against the full golden ma-trix ( src/monitoring/similarity_matcher.py ,
+
+genai_embeddings.py ). τ = 0 .80 is the current operational default and is a placeholder pending calibration on the production sample, not a value derived from data. 
+
+H Extended Related Work 
+
+This expands the compressed discussion in §8. 
+
+LLM-as-a-judge. Strong LLMs approximate hu-man preferences on open-ended tasks (Zheng et al., 2023; Liu et al., 2023; Fu et al., 2023; Kocmi and Federmann, 2023), and open evaluators can match them given references and rubrics (Kim et al., 2024). Surveys catalog reliability threats (Gu et al., 2024): position bias (Wang et al., 2024), self-preference (Panickssery et al., 2024), verbosity (Dubois et al., 2024), task-dependent alignment (Bavaresco et al., 2024; Thakur et al., 2024). This literature treats the reference as ground truth and studies how faithfully a judge compares a candi-date to it; the biases identified (a judge favoring the first-shown or longer or self-generated answer) are properties of the comparison mechanism . RID is different in kind: the comparison target itself is inapplicable at the value level, so no amount of debiasing the comparison mechanism addresses it. We see the two lines of work as complementary—a debiased judge that still compares literal reference values is still vulnerable to RID. 
+
+Factuality and claim decomposition. 
+
+FActScore decomposes generations into atomic claims and scores support against a knowledge source (Min et al., 2023); TRUE benchmarks factual-consistency metrics (Honovich et al., 2022); SelfCheckGPT detects hallucination via sampling consistency without external evidence (Manakul et al., 2023). We adopt atomic claim decomposition as the unit of analysis for the three-way status σ ∈ { SUP , CON , UNV } (§2), but our evidence source is a partial, request-scoped observed context rather than an external corpus or repeated sampling, and our contribution is the explicit UNV class: a claim can be correctly deemed non-evidence for hallucination precisely because the evidence needed to check it was never provided, which differs from FActScore’s assumption that a sufficiently large knowledge source can adjudicate every claim. 
+
+RAG and agent evaluation. RAGAS decom-poses retrieval and generation quality into sepa-rate metrics for a retrieval-augmented pipeline (Es et al., 2024); agent benchmarks such as Agent-Bench and τ -bench measure end-to-end task com-pletion in controlled, resettable environments (Liu et al., 2024; Yao et al., 2025). Both evaluate a system whose retrieval component feeds the gen-erator . In C ARGO , retrieval is not part of the pro-duction system at all: it selects the evaluator’s 
+
+reference from a golden set, so a retrieval error corrupts the measurement of an otherwise-correct answer rather than the answer itself. This motivates treating retrieval confidence as a gating signal for evaluation (§3.1) rather than as a component to op-timize for downstream task success, and it is why our retrieval baselines (BM25, dense, hybrid) are evaluated against expert reference-appropriateness labels rather than against final-task accuracy. 
+
+Selective prediction. Abstention with a reject option dates to Chow (1970); risk–coverage anal-ysis and the area under the risk–coverage curve formalize the accuracy–coverage trade-off for clas-sifiers (El-Yaniv and Wiener, 2010; Geifman and El-Yaniv, 2017). Kamath et al. (2020) show that a model’s own confidence is a poor abstention signal under domain shift for question answering, motivat-ing a learned calibrator instead. LLM-specific con-fidence estimation includes self-evaluation prompts (Kadavath et al., 2022) and semantic entropy over sampled generations (Kuhn et al., 2023). All of this work abstains the answering model. We instead apply selective prediction to the evaluator : the pro-duction assistant always answers, but C ARGO may decline to score that answer when no sufficiently 15 similar golden reference exists, which is a different decision (is this evaluation trustworthy?) from the one those methods address (is this answer trustwor-thy?) and admits different signals (retrieval margin 
+
+∆, intent-conditional calibration) than answer-side confidence. 16

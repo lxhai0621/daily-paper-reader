@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-29</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-30</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 27 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>14</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-29 23:41:19 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-30 23:05:14 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,10 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日共生成 27 篇推荐（精读 14 篇，速读 13 篇）</p>
-<p>精读：《EngramRAG: Dynamic Usage-Weighted Topology and Synaptic Consolidation for Multi-Hop Agentic Memory》（9.0/10）, 《LAM: Efficient Lossy Agent Memory Framework With A Retrieval-Score Error Bound》（9.0/10）</p>
-<p>速读：《Qwen-Planner-Agent: A Closed-Loop AI-for-AI Framework for Real-World Mobile Planner Agents》（8.0/10）, 《COUNTERMEM: World-Model Verified Counter-Factual Memory for Language Agents》（8.0/10）, 《Symbolic Guidance for LLM Agents in Distributed Multiagent Coordination》（8.0/10）</p>
-<p>这些结果覆盖了当下较热的方向，建议先看精读区论文的关键问题与方法。</p>
+<p>2026-09-30 日报共筛出21篇，精读8篇、速读13篇，重点落在LLM多跳推理与Agent记忆管理。</p>
+<p>最值得看的是两篇9.0分精读：HyperReCo用超图神经网络为LLM多跳推理检索并连接证据，MemAgent让LLM Agent学会管理异构记忆提供方。</p>
+<p>普通读者可先读这两篇，再顺带看CARGO、ALLOT和“保留有用热提示”等速读，理解Agent在生产评估、知识更新与上下文引导上的配套思路。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -81,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">14 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="EngramRAG: Dynamic Usage-Weighted Topology and Synaptic Consolidation for Multi-Hop Agentic Memory">EngramRAG: Dynamic Usage-Weighted Topology and Synaptic Consolidation for Multi-Hop Agentic Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="LAM: Efficient Lossy Agent Memory Framework With A Retrieval-Score Error Bound">LAM: Efficient Lossy Agent Memory Framework With A Retrieval-Score Error Bound</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning from Others, Acting for You: Cross-User Memory Sharing for LLM Agents">Learning from Others, Acting for You: Cross-User Memory Sharing for LLM Agents</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="HyperReCo: Retrieving and Connecting Evidence with Hypergraph Neural Networks for LLM Multi-hop Reasoning">HyperReCo: Retrieving and Connecting Evidence with Hypergraph Neural Networks for LLM Multi-hop Reasoning</span></li><li><span class="dpr-home-dashboard-paper-title" title="MemAgent: Learning to Manage Heterogeneous Memory Providers for LLM Agents">MemAgent: Learning to Manage Heterogeneous Memory Providers for LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Just-In-Time Agent Memory with Runtime Agentic Research">Just-In-Time Agent Memory with Runtime Agentic Research</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>11</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>7</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -97,9 +96,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Qwen-Planner-Agent: A Closed-Loop AI-for-AI Framework for Real-World Mobile Planner Agents">Qwen-Planner-Agent: A Closed-Loop AI-for-AI Framework for Real-World Mobile Planner Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="COUNTERMEM: World-Model Verified Counter-Factual Memory for Language Agents">COUNTERMEM: World-Model Verified Counter-Factual Memory for Language Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Symbolic Guidance for LLM Agents in Distributed Multiagent Coordination">Symbolic Guidance for LLM Agents in Distributed Multiagent Coordination</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="CARGO: Context-Aware Retrieval-Gated Evaluation of Agentic AI in Production">CARGO: Context-Aware Retrieval-Gated Evaluation of Agentic AI in Production</span></li><li><span class="dpr-home-dashboard-paper-title" title="Enabling Timely Guidance before Skill Retrieval: Retaining Helpful Warm Tips in Agent Context">Enabling Timely Guidance before Skill Retrieval: Retaining Helpful Warm Tips in Agent Context</span></li><li><span class="dpr-home-dashboard-paper-title" title="ALLOT: Budgeted Hybrid-Memory Routing for Knowledge Updates in LLMs">ALLOT: Budgeted Hybrid-Memory Routing for Knowledge Updates in LLMs</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>7</strong></span><span class="dpr-home-dashboard-tag">agent <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>11</strong></span><span class="dpr-home-dashboard-tag">agent <strong>2</strong></span></div>
 </section>
 </div>
 
