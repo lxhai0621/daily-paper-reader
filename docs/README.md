@@ -48,7 +48,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-30</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-01</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 21 篇</strong>
@@ -58,7 +58,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-30 23:05:14 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-01 23:21:10 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-09-30 日报共筛出21篇，精读8篇、速读13篇，重点落在LLM多跳推理与Agent记忆管理。</p>
-<p>最值得看的是两篇9.0分精读：HyperReCo用超图神经网络为LLM多跳推理检索并连接证据，MemAgent让LLM Agent学会管理异构记忆提供方。</p>
-<p>普通读者可先读这两篇，再顺带看CARGO、ALLOT和“保留有用热提示”等速读，理解Agent在生产评估、知识更新与上下文引导上的配套思路。</p>
+<p>今天扫完 21 篇论文，精读 8 篇、速读 13 篇，主线集中在状态化智能体与自演化记忆。</p>
+<p>最值得看的是两篇 9.0 分：《Dude, Where&#x27;s My State?》讨论有状态智能体的执行信息需求，《GenMem》提出面向自演化框架的生成式符号记忆。</p>
+<p>普通读者建议先读这两篇 9 分，再按兴趣补 FORGE、ConRAG、ASCT 等 8 分速读。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -83,9 +83,9 @@
     <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="HyperReCo: Retrieving and Connecting Evidence with Hypergraph Neural Networks for LLM Multi-hop Reasoning">HyperReCo: Retrieving and Connecting Evidence with Hypergraph Neural Networks for LLM Multi-hop Reasoning</span></li><li><span class="dpr-home-dashboard-paper-title" title="MemAgent: Learning to Manage Heterogeneous Memory Providers for LLM Agents">MemAgent: Learning to Manage Heterogeneous Memory Providers for LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Just-In-Time Agent Memory with Runtime Agentic Research">Just-In-Time Agent Memory with Runtime Agentic Research</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Dude, Where&#x27;s My State? Execution Information Requirements for Stateful Agents">Dude, Where&#x27;s My State? Execution Information Requirements for Stateful Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="GenMem: Generative Symbolic Memory for Self-Evolving Harness">GenMem: Generative Symbolic Memory for Self-Evolving Harness</span></li><li><span class="dpr-home-dashboard-paper-title" title="ARSM: Auto-Regressive State Machine for Agentic Reasoning Compression">ARSM: Auto-Regressive State Machine for Agentic Reasoning Compression</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>7</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>2</strong></span><span class="dpr-home-dashboard-tag">ancient-text <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -96,9 +96,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="CARGO: Context-Aware Retrieval-Gated Evaluation of Agentic AI in Production">CARGO: Context-Aware Retrieval-Gated Evaluation of Agentic AI in Production</span></li><li><span class="dpr-home-dashboard-paper-title" title="Enabling Timely Guidance before Skill Retrieval: Retaining Helpful Warm Tips in Agent Context">Enabling Timely Guidance before Skill Retrieval: Retaining Helpful Warm Tips in Agent Context</span></li><li><span class="dpr-home-dashboard-paper-title" title="ALLOT: Budgeted Hybrid-Memory Routing for Knowledge Updates in LLMs">ALLOT: Budgeted Hybrid-Memory Routing for Knowledge Updates in LLMs</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="FORGE: Form-Optimal Routing of Grounded Evidence for Frozen LLM Agents">FORGE: Form-Optimal Routing of Grounded Evidence for Frozen LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="ConRAG: Lightweight inference of multi-hop relations">ConRAG: Lightweight inference of multi-hop relations</span></li><li><span class="dpr-home-dashboard-paper-title" title="ASCT: Attentive Search over Counterfactual Trees for Credit Assignment in Agentic Reinforcement Learning">ASCT: Attentive Search over Counterfactual Trees for Credit Assignment in Agentic Reinforcement Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>11</strong></span><span class="dpr-home-dashboard-tag">agent <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>7</strong></span><span class="dpr-home-dashboard-tag">agent <strong>6</strong></span></div>
 </section>
 </div>
 
