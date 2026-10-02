@@ -48,7 +48,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-01</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-02</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 21 篇</strong>
@@ -58,7 +58,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-01 23:21:10 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-02 23:22:02 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天扫完 21 篇论文，精读 8 篇、速读 13 篇，主线集中在状态化智能体与自演化记忆。</p>
-<p>最值得看的是两篇 9.0 分：《Dude, Where&#x27;s My State?》讨论有状态智能体的执行信息需求，《GenMem》提出面向自演化框架的生成式符号记忆。</p>
-<p>普通读者建议先读这两篇 9 分，再按兴趣补 FORGE、ConRAG、ASCT 等 8 分速读。</p>
+<p>2026-10-02 日报精选 21 篇文献，精读 8 篇、速读 13 篇，聚焦长期记忆问答与智能体记忆协作。最值得关注的是精读双 9 分之作《Learning to Retrieve Missing Evidence for Long-Term Memory QA》和《EpiCon》，分别指向&quot;补全缺失证据&quot;和&quot;多智能体共同进化记忆&quot;两个方向。普通读者可优先从这两篇入手，理解智能体如何像人一样记住、找回并共享经验。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -83,9 +81,9 @@
     <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Dude, Where&#x27;s My State? Execution Information Requirements for Stateful Agents">Dude, Where&#x27;s My State? Execution Information Requirements for Stateful Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="GenMem: Generative Symbolic Memory for Self-Evolving Harness">GenMem: Generative Symbolic Memory for Self-Evolving Harness</span></li><li><span class="dpr-home-dashboard-paper-title" title="ARSM: Auto-Regressive State Machine for Agentic Reasoning Compression">ARSM: Auto-Regressive State Machine for Agentic Reasoning Compression</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Learning to Retrieve Missing Evidence for Long-Term Memory QA">Learning to Retrieve Missing Evidence for Long-Term Memory QA</span></li><li><span class="dpr-home-dashboard-paper-title" title="EpiCon: Collective Agent Learning through Co-Evolving Multimodal Memory">EpiCon: Collective Agent Learning through Co-Evolving Multimodal Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning What to Remember: Long-horizon Counterfactual Memory Optimization">Learning What to Remember: Long-horizon Counterfactual Memory Optimization</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>2</strong></span><span class="dpr-home-dashboard-tag">ancient-text <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>3</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -96,9 +94,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="FORGE: Form-Optimal Routing of Grounded Evidence for Frozen LLM Agents">FORGE: Form-Optimal Routing of Grounded Evidence for Frozen LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="ConRAG: Lightweight inference of multi-hop relations">ConRAG: Lightweight inference of multi-hop relations</span></li><li><span class="dpr-home-dashboard-paper-title" title="ASCT: Attentive Search over Counterfactual Trees for Credit Assignment in Agentic Reinforcement Learning">ASCT: Attentive Search over Counterfactual Trees for Credit Assignment in Agentic Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PILAR: A Page-Grounded Unified Evidence Representation via an Entity-Linked Assertion Graph for Open-Domain QA Agents over Multimodal Document Corpora">PILAR: A Page-Grounded Unified Evidence Representation via an Entity-Linked Assertion Graph for Open-Domain QA Agents over Multimodal Document Corpora</span></li><li><span class="dpr-home-dashboard-paper-title" title="Raven: The Harness of Harnesses for Composable Agentic Intelligence">Raven: The Harness of Harnesses for Composable Agentic Intelligence</span></li><li><span class="dpr-home-dashboard-paper-title" title="UpliftMem: Learning Set-Level Uplift for Agent Memory Retrieval">UpliftMem: Learning Set-Level Uplift for Agent Memory Retrieval</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>7</strong></span><span class="dpr-home-dashboard-tag">agent <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>9</strong></span><span class="dpr-home-dashboard-tag">agent <strong>4</strong></span></div>
 </section>
 </div>
 
