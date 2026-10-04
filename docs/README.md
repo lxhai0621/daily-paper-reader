@@ -48,7 +48,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-03</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-04</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 21 篇</strong>
@@ -58,7 +58,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-03 22:23:47 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-04 22:05:24 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-03 日报：共扫 21 篇，精读 8 篇、速读 13 篇，主线集中在 Agentic RL 与 RAG 的检索和上下文优化。</p>
-<p>最值得看的是两篇 9.0 精读——BRIDGE 用双层“检索信用”做 Agent 强化学习，另一篇用生成上下文知识融合补 RAG 语义鸿沟；速读中 Org-Agent、CADOC、Follow the Entities 分别指向组织级 Agent、长程缓存上下文和实体化搜索。</p>
-<p>普通读者可先读这两篇 9.0 建立主线，再按兴趣从三篇 8.0 速读中挑一篇看应用场景。</p>
+<p>今日精读8篇、速读13篇共21篇论文，重点聚焦语言智能体的记忆架构与上下文压缩。最值得看的是《MemCodex》与《Persistent Context Graphs》两篇9分工作，均指向让智能体自我编程、持久化组织长期记忆。普通读者可先读这两篇精读，再按需浏览多智能体导航与知识图谱问答等速读方向。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -83,9 +81,9 @@
     <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="BRIDGE: Bilevel Retrieval-Credit-Aware Agentic Reinforcement Learning">BRIDGE: Bilevel Retrieval-Credit-Aware Agentic Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Bridging Semantic Gaps in RAG through Generated Context Knowledge Fusion">Bridging Semantic Gaps in RAG through Generated Context Knowledge Fusion</span></li><li><span class="dpr-home-dashboard-paper-title" title="Learning to Retrieve Missing Evidence for Long-Term Memory QA">Learning to Retrieve Missing Evidence for Long-Term Memory QA</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MemCodex: Self-Programming Hierarchical Memory for Language Agents">MemCodex: Self-Programming Hierarchical Memory for Language Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Persistent Context Graphs for Efficient Memory Compaction in LLM Agents">Persistent Context Graphs for Efficient Memory Compaction in LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="What Should an Agent Remember? Disentangling Retention from Retrieval in Bounded-Memory Evaluation">What Should an Agent Remember? Disentangling Retention from Retrieval in Bounded-Memory Evaluation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>5</strong></span><span class="dpr-home-dashboard-tag">agent <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>6</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -96,9 +94,9 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Org-Agent: Beyond Personal Assistants Towards Organizational Agents">Org-Agent: Beyond Personal Assistants Towards Organizational Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="CADOC: Cache-Aware Dynamic Object Context for Long-Horizon Agents">CADOC: Cache-Aware Dynamic Object Context for Long-Horizon Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Follow the Entities: A Corpus Map for Agentic Search">Follow the Entities: A Corpus Map for Agentic Search</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ANTMAN: Adaptive Need Tracking for Multi-Agent Navigation in Large Information Spaces">ANTMAN: Adaptive Need Tracking for Multi-Agent Navigation in Large Information Spaces</span></li><li><span class="dpr-home-dashboard-paper-title" title="BRIDGE: Bilevel Retrieval-Credit-Aware Agentic Reinforcement Learning">BRIDGE: Bilevel Retrieval-Credit-Aware Agentic Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Explore-on-Graph: Hybrid Embedding-LLM Reasoning for Knowledge Graph Question Answering under Incompleteness">Explore-on-Graph: Hybrid Embedding-LLM Reasoning for Knowledge Graph Question Answering under Incompleteness</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>11</strong></span><span class="dpr-home-dashboard-tag">agent <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>9</strong></span><span class="dpr-home-dashboard-tag">agent <strong>4</strong></span></div>
 </section>
 </div>
 
