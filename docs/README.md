@@ -51,14 +51,14 @@
       <span class="dpr-home-dashboard-kicker">2026-10-06</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 19 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 32 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>13</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>19</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-06 00:48:21 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-06 23:08:13 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-06 日报：共筛出 19 篇（精读 6、速读 13），聚焦智能体记忆与强化学习前沿。</p>
-<p>最值得看的是精读榜首 APDMem（9.0/10）提出的&quot;智能体自主渐进披露&quot;式查询自适应长期记忆，以及 BRIDGE（8.0/10）用双层检索信用分配来优化智能体强化学习。</p>
-<p>普通读者可先从 APDMem 的&quot;按需取用记忆&quot;思路入手，再顺着速读里的多智能体缓存纠错（KVCMAS）与多模型检索集成（MERGE）了解落地配套。</p>
+<p>10月6日日报从32篇中精读13篇、速读19篇，APDMem与Periscope以9.0分领跑。</p>
+<p>最值得看的是查询自适应长期记忆（APDMem）和冻结语言模型突破上下文窗口（Periscope）两个方向。</p>
+<p>普通读者可优先精读这两篇9分文章，再按兴趣浏览速读中的类型化决策、本体语义</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="APDMem: Agent-Controlled Progressive Disclosure for Query-Adaptive Long-Term Memory">APDMem: Agent-Controlled Progressive Disclosure for Query-Adaptive Long-Term Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="BRIDGE: Bilevel Retrieval-Credit-Aware Agentic Reinforcement Learning">BRIDGE: Bilevel Retrieval-Credit-Aware Agentic Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Rep2Skill: Representation-Guided Skill Self-Evolution for LLM Agents">Rep2Skill: Representation-Guided Skill Self-Evolution for LLM Agents</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="APDMem: Agent-Controlled Progressive Disclosure for Query-Adaptive Long-Term Memory">APDMem: Agent-Controlled Progressive Disclosure for Query-Adaptive Long-Term Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="Periscope: Extending Frozen Language Models Beyond Their Context Window">Periscope: Extending Frozen Language Models Beyond Their Context Window</span></li><li><span class="dpr-home-dashboard-paper-title" title="Understanding and Mitigating Hallucination Escape in Tool-Using LLM Agents">Understanding and Mitigating Hallucination Escape in Tool-Using LLM Agents</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>9</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>4</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">13 篇</strong>
+    <strong class="dpr-home-dashboard-count">19 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ANTMAN: Adaptive Need Tracking for Multi-Agent Navigation in Large Information Spaces">ANTMAN: Adaptive Need Tracking for Multi-Agent Navigation in Large Information Spaces</span></li><li><span class="dpr-home-dashboard-paper-title" title="KVCMAS: Efficient KV cache Correction for Shared Context in Multi-Agent Systems">KVCMAS: Efficient KV cache Correction for Shared Context in Multi-Agent Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="MERGE: Multi-LLM Ensemble for Retrieval via Generative Enrichment">MERGE: Multi-LLM Ensemble for Retrieval via Generative Enrichment</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Dyad: Extending Large Language Models with Native Typed Decision-Making">Dyad: Extending Large Language Models with Native Typed Decision-Making</span></li><li><span class="dpr-home-dashboard-paper-title" title="LLM-Assisted Discovery of Typed Semantic Links for Ontology Network Construction">LLM-Assisted Discovery of Typed Semantic Links for Ontology Network Construction</span></li><li><span class="dpr-home-dashboard-paper-title" title="State Trace Rationale As Auxiliary Task in Reinforcement Learning">State Trace Rationale As Auxiliary Task in Reinforcement Learning</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>9</strong></span><span class="dpr-home-dashboard-tag">agent <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>15</strong></span><span class="dpr-home-dashboard-tag">agent <strong>4</strong></span></div>
 </section>
 </div>
 
