@@ -1,0 +1,2055 @@
+Semantics, Workflows, and Infrastructure: Understanding Agent
+Serving at Production Scale
+Yihao Zheng
+The Chinese University of
+Hong Kong, Shenzhen
+Jingzhe Jiang
+The Chinese University of
+Hong Kong, Shenzhen
+Dejiang Zhu
+Ant Group
+Zhiyuan Tan
+The Chinese University of
+Hong Kong, Shenzhen
+Yang Tian
+Ant Group
+Tao Wang∗
+Ant Group
+Minchen Yu∗
+The Chinese University of
+Hong Kong, Shenzhen
+Abstract
+Large language model (LLM) agents execute applications through a
+workflow of inference requests with tool calls and user interactions.
+Serving these applications at production scale requires understand-
+ing how application behavior shapes inference demand and for
+guiding efficient execution. Recent characterization studies provide
+request-level workload measurements and agent execution analysis.
+However, an end-to-end view connecting task initiation, workflow
+execution, and inference infrastructure remains unexplored. In this
+paper, we analyze a two-week trace of 11.7 million requests from a
+large-scale production platform for general-purpose agents, backed
+by inference infrastructure comprising over 10k GPUs. We charac-
+terize the platform at three connected levels: task-level initiation
+semantics, workflow-level execution patterns, and infrastructure-
+level serving demands. Our measurements reveal workload patterns
+such as highly skewed request volumes across sessions, rare exe-
+cution overlap among logical sibling requests, and context reuse
+across task boundaries. Building on these observations, we ana-
+lyze deployment implications and identify open problems to guide
+future research on agent serving systems.
+1
+Introduction
+Large language model (LLM) agents are increasingly used to auto-
+mate real-world activities, including programming, data analysis,
+and office work [1, 2]. As illustrated in Fig. 1, an agent framework
+maintains long-lived sessions, each preserving a shared context
+across one or more tasks. A task is a unit of work defined by a
+user-specified goal, such as generating code or testing an imple-
+mentation. Tasks within the same session can draw on context
+accumulated from earlier interactions. Executing a task may gen-
+erate multiple LLM inference requests interleaved with tool calls.
+The workflow structure captures the relationships among these
+requests within and across tasks.
+Agentic applications are becoming a major workload for LLM
+inference infrastructure [3, 4]. Production workload characteriza-
+tion and public datasets provide an empirical basis for designing
+and evaluating serving systems [5, 6]. Recent studies characterize
+execution patterns, token consumption, and cache behavior in cod-
+ing agents such as GitHub Copilot [7], Claude Code, and Codex [8].
+However, how task initiation and workflow execution shape infer-
+ence demand remains insufficiently characterized. Addressing this
+∗Corresponding authors.
+Session
+Task 1
+Goal: Create main.py
+Task 2
+Goal: test main.py
+R1
+R2
+R3
+R4
+R5
+...
+Within task
+Across tasks
+Figure 1: Three-level schematic of sessions, tasks, and re-
+quests. A session is a long-running conversation with his-
+torical context. Each task pursues a specific goal and may
+involve multiple LLM requests and tool calls.
+gap requires an end-to-end view connecting task- and workflow-
+level semantics with serving infrastructure. Such a view can clarify
+how request load, execution patterns, and context reuse vary with
+task and workflow behavior, informing serving optimizations such
+as request scheduling and state management.
+In this paper, we present a comprehensive characterization of
+agentic workloads in a large-scale production platform. Our study
+uses a two-week trace containing 11.7M model requests and 948.4k
+sessions. The workloads span coding, testing, data analysis, office
+work, and automated operations. The platform deploys multiple
+open-source LLMs as inference backends for agent services on a
+cluster of over 10k GPUs. The collected trace data provide infor-
+mation across multiple system layers, covering agent execution,
+inference requests, and resource utilization of serving infrastruc-
+ture.
+We organize our characterization at three connected levels: the
+task level, the workflow level, and the infrastructure level. At the
+task level, we compare user-triggered and agent-triggered tasks
+and analyze recurring activity, examining how task initiation pat-
+terns relate to workload volume and its variation over time. At the
+workflow level, we reconstruct workflow relationships within and
+across tasks as directed acyclic graphs (DAGs), and examine how
+their structure relates to request load and execution patterns. At
+the infrastructure level, we quantify how resource demands and
+context residency are distributed across sessions. We then examine
+context reuse within and across tasks to study their implications
+for request placement and state management. Table 1 compares
+the scope of our analysis with prior agent-workload studies. We
+highlight the following observations at each level.
+Task-level initiation semantics. We characterize user-triggered
+and agent-triggered tasks by comparing request counts, context
+1
+arXiv:2609.34432v1  [cs.DC]  28 Sep 2026
+
+
+Zheng et al.
+lengths, and activity spans. To connect individual task initiations to
+aggregate workload, we analyze request concentration across ses-
+sions with different trigger compositions and examine daily activity
+and recurrence intervals within groups of repeated automated work.
+Our analysis yields four observations: (i) Agent-triggered tasks ac-
+count for 35.8% of tasks but carry lighter per-task workloads than
+user-triggered tasks. (ii) Request volume is highly concentrated: the
+top 5% of sessions by request count account for 56.1% of requests,
+with sessions containing only user-triggered tasks contributing
+most requests in this group. (iii) User-triggered workloads combine
+workday rhythms with greater variation in task size and arrival
+timing, whereas agent-triggered activity is more evenly distributed
+throughout the day. (iv) Recurring automated activity concentrates
+in frequently activated task groups: groups with median recurrence
+intervals of at most 30 minutes contain 88.3% of recurring tasks.
+Workflow-level execution patterns. For agent workflows, we
+measure graph size, depth, and width, and combine structural anal-
+ysis with request service intervals and inter-request gaps to distin-
+guish workflow organization from observed execution. We further
+examine waiting and successor cache reuse along tool-associated
+request transitions. This analysis yields five observations: (i) Most
+workflow DAGs are small and narrow, yet a minority of sessions
+with request-graph width greater than one accounts for most re-
+quests. (ii) Tasks with serial request structures account for 77.6% of
+requests, despite comprising less than half of all tasks. (iii) In 12.0%
+of serial tasks, one inter-request gap exceeds half the task span;
+these tasks have longer spans on average. (iv) Logical branching
+rarely corresponds to overlapping request execution: only 0.225% of
+logical sibling request pairs have overlapping service intervals. (v)
+Waiting-time and successor cache-reuse distributions differ across
+tool categories.
+Infrastructure-level serving demands. We examine serving de-
+mand beyond request counts by measuring new-prefill tokens, de-
+code tokens, and logical context residency, which captures both
+context size and retention duration. We relate observed cache reuse
+to task transitions, context changes, and idle intervals to examine
+where serving affinity persists or changes. These analyses yield
+three observations: (i) The same small fraction of sessions accounts
+for most token work and logical context residency; within this
+group, the decode phase accounts for most cumulative request ser-
+vice time. (ii) Task boundaries need not align with serving affinity:
+context reuse can span tasks, while context changes can occur
+within a task. We therefore introduce episodes as serving-affinity
+units that group requests continuing a historical context within a
+retention horizon. (iii) An offline retention model shows that longer
+waiting-time tails need not warrant longer cache lifetimes, and
+that retention priorities across waiting types can change with the
+retention budget.
+Implications and open questions. Building on these findings, we
+discuss three directions for agent serving. (i) Cross-layer abstraction.
+Task initiation patterns and workflow dependencies could guide
+capacity allocation and request scheduling. This raises the question
+of what abstractions are needed to exchange task, workflow, and
+resource information between agent runtimes and serving engines.
+(ii) Episode-based scheduling. Episodes offer an alternative to bind-
+ing an entire session to one serving instance. An open question is
+how remaining-work estimates can guide request scheduling and
+Table 1: Comparison of agent-workload Characterizations.
+Copilot [7]
+TraceLab [8]
+Ours
+Workload
+Coding
+Coding
+General
+Duration
+1 week
+∼8 months
+2 weeks
+Requests
+760.5M
+357.2k
+11.69M
+Sessions
+13.5M
+4.3k
+948.4k
+GPUs
+–
+–
+𝑂(10k)
+Task-level initiation semantics (§4)
+Triggers
+✓
+×
+✓
+Recurrence
+×
+×
+✓
+Workflow-level execution patterns (§5)
+Transitions & tools
+✓
+✓
+✓
+Workflow DAGs
+×
+×
+✓
+Infrastructure-level serving demands (§6)
+Reuse & retention
+✓
+✓
+✓
+Serving granularity
+×
+×
+✓
+reassignment, weighing load-balancing benefits against the cost of
+transferring or recomputing cached context. (iii) Adaptive KV cache
+management. Our offline model shows that adaptively configuring
+cache lifetimes across workloads can reduce recomputation com-
+pared with a uniform lifetime setup. This motivates online policies
+that adjust cache lifetimes based on expected return times, context
+reuse, and available memory. By sharing these findings and open
+questions from our production experience, we hope to facilitate
+future research on agent serving systems.
+2
+Background
+2.1
+Agent Workflow Execution
+Agent frameworks organize LLM inference requests and tool calls
+into workflows [9–11]. We describe agent execution using three
+units: sessions, tasks, and LLM inference requests, as illustrated in
+Fig. 1. A session maintains shared context across one or more tasks
+and can persist between task executions. This context includes in-
+teraction history, such as user messages, model outputs, and tool
+results, that subsequent tasks can draw on. A task is a unit of work
+defined by a specific goal, such as generating code or testing an
+implementation. Tasks can begin through user interaction or auto-
+mated activation; either category can proceed through autonomous
+model–tool interactions. An LLM inference request is a single model
+invocation that processes an input context and generates output.
+Executing a task may involve multiple requests, interleaved with
+tool calls and further user interaction.
+Workflow structure captures the relationships among requests
+within and across tasks. Requests may extend an earlier context
+through serial execution or branch into separate continuations.
+These relationships evolve as model outputs, tool results, and user
+feedback guide subsequent actions. Workflow structure describes
+how work is organized, but does not alone determine when requests
+execute: tool execution and external waiting can separate successive
+requests.
+2
+
+
+Understanding Agent Serving at Production Scale
+GLM 5.2
+DS V4 Pro
+Kimi K2.7
+GLM 5.1
+MiniMax M3
+DS V4 Flash
+Others
+0
+20
+40
+60
+Requests (%)
+(a) Model request shares
+6461
+55.3
+1789
+15.3
+1060
+9.1
+1046
+8.9
+565
+4.8
+484
+4.1
+286
+2.5
+GLM 5.2
+DS V4 Pro
+Kimi K2.7
+GLM 5.1
+MiniMax M3
+DS V4 Flash
+Others
+0
+50
+100
+Footprint (%)
+(b) GPU footprint
+56.7
+57.3
+4.9
+65.2
+3.9
+2.5
+71.2
+Min-max
+P50
+05
+08
+11
+14
+17
+August 2026 (CST)
+0
+1k
+2k
+Count / min
+(c) Request and session activity
+Requests
+Active sessions
+0
+0.5
+1
+05
+08
+11
+14
+17
+August 2026 (CST)
+0
+0.5
+1
+Utilization
+(d) GPU utilization and power
+Utilization
+Power / peak
+Figure 2: Platform workload overview. (a) Request shares and counts (k); (b) GPU footprint ranges and medians relative to the
+largest individual model peak. Others combines three models. (c) Requests and active sessions per minute. (d) GPU utilization
+and power relative to its two-week peak, on vertically separated scales. Shading marks weekends.
+2.2
+Workload Characterization
+Production workload characterization provides an empirical basis
+for understanding inference demand and designing and evaluat-
+ing serving systems. BurstGPT characterizes request arrivals and
+demand distributions [6], while ServeGen examines client hetero-
+geneity to generate representative serving workloads [5]. These
+studies support workload modeling through measurements of re-
+quest duration and input/output token lengths. Agent workload
+studies further discuss agent execution patterns. The Copilot study
+characterizes workflow patterns, resource concentration, and cache
+behavior [7]. TraceLab examines autonomous execution, context
+growth, and tool calls in Claude Code and Codex [8]. Both studies
+analyze transitions between requests and its implications for Con-
+text management. CacheWise uses measurements of coding-agent
+workloads to guide KVCache management [12].
+Our study complements these efforts with an end-to-end view
+connecting task-level initiation semantics, workflow-level execu-
+tion patterns, and infrastructure-level serving demand. We examine
+how task initiation and recurring relate to workloads, how request
+load and execution time vary across workflow structures, and how
+context continuity and waiting inform request placement and state
+management. Table 1 compares the scope of these studies with
+ours.
+3
+Workload Overview
+Platform and model demand. As a large-scale agent service
+provider, our production platform serves frontier open-source LLMs
+such as GLM 5.2 and DeepSeek V4 Pro and comprises over 1,000
+model instances and over 10,000 GPUs. We analyze a two-week sam-
+ple of production workloads containing 11.69 million requests, 1.42
+million tasks, and 948.4k sessions. The reported statistics in Table 1
+refer to this sampled trace 1. GPU metrics come from cluster-wide
+measurements: footprint and power are normalized for presenta-
+tion. Request demand is concentrated in four model groups, which
+account for 88.58% of requests (Figure 2(a)), but request shares
+1For confidentiality reasons, we do not disclose exact cluster sizes and total workload
+volumes.
+0
+100
+10k
+1M
+Tokens
+0
+50
+100
+Input
+Output
+0
+100
+10k
+1M
+Start-to-start gap (s)
+0
+50
+100
+User message
+Auto tool loop
+(a) Token length
+(b) Start interval
+Figure 3: Request profiles. (a) Input/output lengths (tokens).
+Input P50/P90: 70k / 229k; Output P50/P90: 188 / 1.23k. (b)
+Start intervals (s). User message P50/P90: 16.95 / 309; Auto
+tool loop P50/P90: 8.29 / 51.45. Both panels show ECDFs (%).
+alone do not describe GPU footprints directly. Kimi K2.7 Code and
+GLM 5.1 receive similar request shares (9.06% and 8.94%), yet their
+median GPU footprints differ by over 13-fold: 4.9% versus 65.2%
+(Figure 2(b)). Footprint ranges and medians are normalized to the
+largest individual model peak.
+Activity over time. Workload activity exhibits daily and weekly
+rhythms, with larger fluctuations than GPU power and utilization.
+Request arrivals and session activity are higher during weekday
+daytime and lower at night and on weekends (Figure 2(c)). Session
+activity counts distinct sessions with at least one request or task
+start in a minute. During weekday nights, request arrivals fall to
+17.6% of their daytime level, while GPU power remains at 80.0% and
+utilization decreases from 74.8% to 61.4% (Figure 2(d)). Section 4
+examines how temporal activity differs by task triggering semantics.
+Request characteristics. Request profiles show long input con-
+texts, short outputs, and substantial cached input. Median input and
+output lengths are 70,026 and 188 tokens, respectively (Figure 3(a));
+both distributions have long tails. Request progression differs be-
+tween user messages and auto tool loops: the median start-to-start
+intervals are 16.95 and 8.29 seconds, respectively (Figure 3(b)). The
+median cached-input fraction is 98.1%, while 6.34% of requests have
+3
+
+
+Zheng et al.
+User
+Agent
+0
+50
+100
+Tasks (%)
+64.2%
+35.8%
+(a) Task shares
+1
+10
+100
+Requests / task
+0
+.5
+1
+P50 / P90
+2 / 12
+2 / 5
+(b) Requests / task
+1
+10
+100
+Depth
+0
+.5
+1
+User
+Agent
+(c) Intra-task depth
+1
+10
+Width
+0
+.5
+1
+User
+Agent
+(d) Intra-task width
+0
+10
+1k
+1M
+Tokens
+0
+.5
+1
+Input
+Output
+(e) Input / output
+0.1
+100
+100k
+Activity span (s)
+0
+.5
+1
+P50 / P99
+21.1 / 1.5k
+7.6 / 307
+(f) Activity span
+Figure 4: Task prevalence, request profiles, and activity spans differ by trigger. (a) Trigger shares; (b) Requests per task; (c,d)
+Depth and width of intra-task request DAGs by trigger; (e) Input/output lengths; (f) Task activity spans. Solid/dashed lines in (e)
+show input/output. ECDFs weight tasks (b–d,f) and requests (e) equally. Circles/squares mark P50/P90 in (b–d); circles/diamonds
+mark P50/P95 in (e) and P50/P99 in (f).
+1
+76
+10k
+Requests / Session
+0
+.5
+1
+P50: 2
+P95: 76
+(a) Session size
+0
+50
+100
+Largest Sessions (%)
+0
+.5
+1
+Request share
+Top 5%:
+56.1%
+(b) Request share
+User-only
+Mixed
+Agent-only
+Figure 5: Session size and request concentration. (a) Requests
+per session, with P50/P95. (b) Cumulative share of all requests
+over sessions ranked from largest to smallest, split by trigger
+composition. Panel (a) shows a session-weighted ECDF.
+no cached input. Sections 5 and 6 examine request execution and
+reuse through workflow dependencies and context continuity.
+4
+Task-level Initiation Semantics
+Task-level initiation semantics describe how work begins. User-
+triggered tasks originate from user interaction, whereas agent-
+triggered tasks originate from automated activation [13]. This dis-
+tinction concerns task initiation, not autonomous continuation
+within a task. We examine the prevalence and workload profiles
+of these categories, how their requests accumulate across sessions,
+and task initiation timing.
+Trigger prevalence and workload profiles. User-triggered tasks
+are more prevalent, but automated activation also contributes sub-
+stantially: the two categories account for 64.17% and 35.83% of
+tasks (Figure 4(a)). Both have a P50 of two requests per task, yet
+user-triggered tasks include more single-request cases and a longer
+upper tail: P90/P99 reach 12/39 requests, compared with 5/16 for
+agent-triggered tasks (Figure 4(b)). The shared median therefore
+hides a wider range of request counts in user-triggered work. User-
+triggered tasks also have a longer upper tail in request dependency-
+chain depth (Figure 4(c)).
+Requests in user-triggered tasks carry more context and generate
+more output. Median input lengths are 52.0k versus 27.4k tokens,
+and median output lengths are 206 versus 136 tokens (Figure 4(e)).
+Task activity persists longer as well: medians are 21.1 versus 7.6
+seconds, and P99 reaches 24.5 versus 5.1 minutes (Figure 4(f)).
+5
+8-9
+12
+15-16
+18
+0
+6
+12
+18
+23
+Hour
+0.0
+0.5
+1.0
+(a) User-triggered starts
+August date
+5
+8-9
+12
+15-16
+18
+0
+6
+12
+18
+23
+Hour
+0.0
+0.5
+1.0
+(b) Agent-triggered starts
+August date
+Figure 6: Within-trigger task-start shares (%) with boxed
+weekends: (a) user-triggered tasks; (b) agent-triggered tasks.
+Task counts miss differences in the context length, and activity
+duration associated with each initiation.
+Observation 1. Agent-triggered tasks account for 35.8% of tasks
+but carry lighter per-task workloads than user-triggered tasks.
+Work volume and concentration. Sessions accumulate requests
+across tasks. User-only sessions contain only user-triggered tasks,
+agent-only sessions contain only agent-triggered tasks, and mixed
+sessions contain both. Typical sessions are small, but their size dis-
+tribution has a long tail: requests per session have a median of two,
+with P95/P99 reaching 76/250 (Figure 5(a)). Request volume is also
+concentrated: the top 5% and top 10% of sessions contribute 56.1%
+and 67.9% of all requests, respectively (Figure 5(b)). Small sessions
+are common, but they do not represent where most requests are
+generated.
+User-only sessions dominate this high-volume tail. Their request
+share rises from 61.0% overall to 77.5% within the top 10% and 80.1%
+within the top 5%. User-only sessions therefore contribute more
+strongly to the high-volume tail than their overall request share
+would suggest.
+Observation 2. The top 5% of sessions by request count account
+for 56.1% of requests, with user-only sessions contributing most
+requests in this group.
+4
+
+
+Understanding Agent Serving at Production Scale
+0
+1k
+1M
+Start gap (s)
+0
+.5
+1
+P50 / P99
+82.4 / 29k
+(a) User start gaps
+0
+1k
+1M
+Group median gap (s)
+0
+.5
+1
+P50/P99
+1.8k/17k
+330/9.0k
+Group
+Task
+(b) Recurring gaps
+Figure 7: (a) User start gaps; (b) Recurring-group median gaps,
+group or task weighted. Circles/diamonds mark P50/P99.
+Both panels show ECDFs.
+Activity rhythms and workload variability. Daily task-start
+profiles describe aggregate activity over time. User-triggered activ-
+ity exhibits recurring workday rhythms, whereas agent-triggered
+activity is more evenly distributed over the day (Figure 6(a,b)).
+For user-triggered work, consecutive task starts within a session
+describe the spacing of user initiations. These intervals combine
+closely spaced starts with a long tail: the P50 gap is 82.4 seconds and
+the P99 is 8.07 hours (Figure 7(a)). Workday rhythms thus coexist
+with substantial variation in the intervals between user-triggered
+tasks.
+User-triggered tasks also vary in how many requests they gener-
+ate and how long their activity persists (Figure 4(b,f)). Their request
+input lengths cover a wider range: P25/P75 are 32.2k/76.5k tokens,
+compared with 23.3k/38.0k for agent-triggered tasks (Figure 4(e)).
+These differences affect both the number of inference requests and
+the context each request carries, adding variation beyond daily
+arrivals.
+Observation 3. User-triggered workloads follow workday
+rhythms and show greater variation in task size and arrival
+temporal pattern than agent-triggered workloads, whose activity
+is more evenly distributed throughout the day.
+For agent-triggered work, recurring task groups describe repeated
+instances of the same automated work in a Group. Groups with
+median gaps of at most 30 minutes contain 88.3% of recurring
+tasks. Weighting groups by their task counts shifts the median of
+gaps from 30 to 5.5 minutes compared with equal group weight-
+ing (Figure 7(b)). Short-interval groups therefore contribute more
+heavily to recurring activity.
+Observation 4. Recurring automated activity concentrates in
+task groups with median recurrence intervals of at most 30
+minutes, which contain 88.3% of recurring tasks.
+5
+Workflow-level Execution Patterns
+Workflow structure connects task initiation to the orchestration
+and timing of requests. We examine graph scale and composition,
+relate structure to trigger categories, then study load, execution
+timing, and request transitions.
+5.1
+Structural Organization and Volume
+Workflow structure and composition. We examine workflow
+orchestration at three levels: request DAGs within sessions, task
+Across Tasks: Branching
+T1: Branching
+0.00 → 320.36
+T2: Serial
+331.15 → 421.29
+T3: Singleton
+321.38 → 328.75
+3.66
+25.72
+35.41
+10.79
+27.83
+Read ×2
+TaskCreate ×1
+TaskUpdate ×1
+R1
+R6
+R20
+R21
+R22
+R24
+R26
+R27
+Figure 8: Workflow DAG example showing inter- and intra-
+task structures. Times are in seconds; green/gray values show
+request durations/end-to-start gaps. Pink labels show se-
+lected added-context tools (Read ×2: R6–R7).
+DAGs within sessions, and request DAGs within tasks. The three
+levels workflow pattern describe how requests and tasks are orga-
+nized across a session;
+Request edges represent transitions between requests and their
+logical relationship within session- and task-level workflow DAGs.
+Task edges represent context continuation, workflow invocations,
+or sub-agent invocations across task boundaries. These graphs de-
+scribe workflow organization; request timestamps describe timing
+of execution.
+Each task has an intra-task structure and an inter-task role. Sin-
+gleton, serial, and branching describe these two aspects. Within a
+task, singleton means one request, branching contains a request
+with multiple successors, and serial typically forms a request chain.
+Among tasks, singleton denotes an isolated task; branching includes
+a task with multiple successors and its direct successors; serial de-
+notes tasks in a task chain.
+Figure 8 illustrates how these structures combine. Within T1, the
+request graph forks at R6; T2 contains a serial request chain, and T3
+contains one request. Across tasks, T1 connects to both T2 and T3.
+All three therefore have branching inter-task roles, while their intra-
+task structures are branching, serial, and singleton, respectively. A
+task’s inter-task role does not specify its internal request structure.
+Size, depth, and width describe request and task graphs within
+sessions and request graphs within tasks. For a graph 𝐺= (𝑉, 𝐸),
+size 𝑁= |𝑉| counts nodes. Roots have layer ℓ(𝑣) = 0; other node
+layers follow the recurrence below. Depth 𝐷counts nodes on the
+longest dependency chain; width 𝑊counts nodes in the largest
+layer, including disconnected components.
+ℓ(𝑣) = 1 + max𝑢:(𝑢,𝑣)∈𝐸ℓ(𝑢),
+𝐷= 1 + max𝑣ℓ(𝑣),
+𝑊= max𝑘|{𝑣: ℓ(𝑣) = 𝑘}|.
+Singleton and serial dominate the structural combinations.
+Tasks with singleton or serial structures at both levels account for
+89.46% of user-triggered tasks and 99.82% of agent-triggered tasks
+(Figure 9(a)). Within sessions, request and task DAGs have median
+depths of 2 and 1, respectively, and both have median width one
+(Figure 9(b,c)). Request graphs have unit width in 82.10% of sessions
+(Figure 9(b)); unit width also dominates within-task request graphs
+in both trigger categories (Figure 4(d)). Typical workflows have few
+dependency layers and narrow widths. Larger graphs remain in
+5
+
+
+Zheng et al.
+Sgl.
+Ser.
+Br.
+Intra-task
+Sgl.
+Ser.
+Br.
+25.4
+22.3
+23.4
+67.0
+1.9
+0.1
+14.9
+5.4
+25.8
+5.2
+0.4
+<0.1
+3.9
+<0.1
+4.2
+0.1
+0.2
+<0.1
+(a) Mix (%)
+User
+/ Agent
+1
+10k
+Depth / width
+0
+.5
+1
+P50 / P90
+D  2 / 31
+W  1 / 2
+(b) Session requests
+1
+10k
+Depth / width
+0
+.5
+1
+P50 / P90
+D  1 / 2
+W  1 / 2
+(c) Session tasks
+0
+50
+100
+Share (%)
+Sessions
+83.2
+16.8
+Requests
+31.8
+68.2
+W = 1
+W > 1
+(d) Width shares
+1
+10k
+Requests / session
+0
+50
+100
+P50 / P99
+W=1: 2/58
+W>1: 17/449
+(e) Request count
+0 1
+100
+15k
+Execution (s)
+0
+0.1
+1
+10
+60
+All Tasks (%)
+Req.
+Exec.
+0
+40
+80
+Share (%)
+15.3
+18.4
+77.6
+70.4
+7.0
+11.2
+1
+10
+100
+Requests / task
+0
+.5
+1
+0 1
+10
+1k
+Execution (s)
+0
+.5
+1
+0
+10
+1k
+1M
+Tokens
+0
+.5
+1
+Input
+Output
+0
+50
+100
+Cached input (%)
+0
+.5
+1
+P50 (%)
+Sgl.: 79.34
+Ser.: 98.01
+Br.: 96.14
+Singleton
+Serial
+Branching
+(f) Task total exec.
+(g) Load shares
+(h) Requests / task
+(i) Request exec.
+(j) Input / output
+(k) Cached input
+Figure 9: Workflow structure and request profiles. (a) Task shares by inter-task role (rows) and intra-task structure (columns),
+normalized within each trigger (user upper, agent lower). (b) Depth/width of request DAGs within sessions; (c) Depth/width of
+inter-task DAGs within sessions. (d) Session and request shares for 𝑊= 1 and 𝑊> 1; (e) request-count ECDFs for the same
+width groups, shown by solid and dashed lines, respectively. Workload by intra-task structure: (f) Share of all tasks with a
+given structure and cumulative execution above the threshold; (g) Shares of requests and cumulative execution duration; (h)
+Requests per task; (i) Request execution duration by intra-task structure; (j,k) Request input/output lengths and cached-input
+fraction by intra-task structure. ECDFs weight sessions (b,c,e), tasks (h), and requests (i–k) equally. Markers show P50/P90 (b,c),
+P50/P99 (e,h,i), and P50/P95 (j,k); dotted lines in (f) show P50/P99.
+Table 2: Request shares by intra-task structure in sessions
+with 𝑊> 2.
+Intra-task structure
+Singleton
+Serial
+Branching
+Request share (%)
+13.71
+72.73
+13.56
+the tail: session request and task DAGs have P99 depths of 208 and
+eight, and P99 widths of five and 17, respectively (Figure 9(b,c)).
+Within tasks, P99 request depth reaches 38 for user-triggered tasks
+and 16 for agent-triggered tasks (Figure 4(c)).
+Request concentration across sessions. Request volume concen-
+trates in sessions with wider request graphs. Sessions with width
+𝑊> 1 account for 16.78% of sessions but carry 68.19% of requests
+(Figure 9(d)). Their median request count is 17, compared with 2 for
+𝑊= 1 (Figure 9(e)), so the size difference extends to typical sessions
+in each group. Session frequency alone therefore understates the
+contribution of wider graphs to request load. Graph width describes
+structure; execution overlap depends on request timing.
+Session width describes request organization across the ses-
+sion, whereas intra-task structure describes requests within tasks.
+Among tasks in sessions with 𝑊> 2, serial and singleton tasks
+together contribute 86.44% of requests (Table 2). Serial tasks still
+dominate request load in wider sessions.
+Observation 5. Workflow DAGs are typically small and narrow,
+yet a minority of sessions with request-graph width greater than
+one accounts for most requests.
+Workload by intra-task structure. Serial tasks carry most re-
+quest load (Figure 9(f,g)). They account for 45.82% of tasks but
+contribute 77.62% of requests and 70.38% of cumulative execution
+duration, measured as the sum of request execution duration within
+a task. Execution duration has a long tail within every structure
+(Figure 9(f)): P50/P99 are 4.0/138 seconds for singleton, 17.6/588
+for serial, and 157/2,525 for branching. Branching tasks are less
+frequent but typically execute longer, while serial tasks combine
+substantial durations with a much larger population.
+Singleton and branching tasks contribute less load overall. Sin-
+gleton tasks are common, but each contains only one request, with
+shorter inputs and outputs (Figure 9(j)). Their high frequency there-
+fore does not translate into a dominant share of request work.
+Branching tasks typically contain more requests than serial
+tasks: requests per task have P50/P99 of 10/63 for branching and
+4/39 for serial (Figure 9(h)). Requests in both structures also have
+higher median cached-input fractions than those in singleton tasks
+(Figure 9(k)) due to a continual request arrival patterns. Input
+length alone therefore does not indicate how much prefill work
+remains [14, 15].
+Branching tasks carry less aggregate load than serial tasks, but
+their contribution remains non-negligible: 1.63% of tasks carry
+7.04% of requests and 11.21% of cumulative execution duration
+(Figure 9(g)). Their duration share exceeds their request share, indi-
+cating longer mean request service times than the overall average.
+Section 5.2 examines serial continuation and branching execution.
+6
+
+
+Understanding Agent Serving at Production Scale
+1
+100
+1M
+Task gap (s)
+0
+.5
+1
+User
+Agent
+(a) Inter-task gaps
+0
+50
+100
+Intervals / span (%)
+0
+.5
+1 16+ P50: 41.82%
+Requests / task
+3
+4–7
+8–15
+16+
+(b) Total interval share
+3
+4–7 8–15 16+
+Requests / task
+0
+5
+10
+15
+Mean time (s)
+Execution
+Interval
+(c) Middle cycle
+0
+50
+100
+Longest / span (%)
+0
+.5
+1
+12.01%
+41.18%
+Task weight
+Span weight
+(d) Longest: weights
+0
+50
+100
+Longest / span (%)
+0
+.5
+1
+16+: 5.71%
+Requests / task
+3
+4–7
+8–15
+16+
+(e) Longest: count
+Figure 10: Workflow execution. (a) Inter-task gaps along serial chains, by successor trigger. Within serial tasks: (b) Cumulative
+request interval duration / task span; (c) Per-task middle-cycle execution/interval means (medians/IQRs); (d,e) Longest interval
+/ task span, weighted by task or span in (d) and grouped by requests/task in (e). Panels (a,b) show ECDFs; (d,e) show CCDFs.
+Observation 6. Tasks with serial request structures account for
+77.6% of requests despite comprising less than half of all tasks.
+5.2
+Workflow Execution Dynamics
+Serial chains reveal how request execution and intervening inter-
+vals contribute to workflow duration. Branching graphs raise a
+complementary question: whether sibling requests overlap in exe-
+cution.
+Serial continuation. Across tasks, continuation gaps run from
+the predecessor’s last request end to the successor’s first request
+start. Both trigger categories have median gaps near one second,
+but P99 reaches 25.72 minutes for user-triggered successors and
+21.65 seconds for agent-triggered successors (Figure 10(a)). These
+gaps describe when subsequent work resumes.
+Within tasks, inter-request intervals contribute to task span and
+occupy a larger share in longer serial chains (Figure 10(b,c)). Here,
+span runs from the first request start to the last request end; each
+interval runs from one request’s end to the next request’s start. We
+compare per-task mean times for middle cycles. From three-request
+chains to chains with at least 16 requests, the medians of these task
+means increase from 1.96 to 5.11 seconds for request intervals and
+from 4.26 to 6.51 seconds for request execution. Request execution
+retains a median span share above 50% in every group.
+Inter-request time can also concentrate in a single long interval.
+A single interval exceeds half the span in 12.01% of serial tasks,
+which account for 41.18% of cumulative total serial task spans
+(Figure 10(d,e)). These tasks therefore have longer average spans,
+with more time spent in one interval than in all request executions
+combined. This pattern also occurs in 8.8% of tasks with 8–15 re-
+quests and 5.7% with at least sixteen, so it extends beyond short
+chains. Request execution alone gives an incomplete view of these
+tasks’ duration. Section 5.3 examines the tool activities accompany-
+ing these long intervals (Figure 13).
+Observation 7. In 12.0% of serial tasks, one inter-request gap
+exceeds half the task span; these tasks have longer spans on
+average.
+Branching execution. Branching tasks carry a non-negligible
+share of workload and have longer request executions on average
+0
+10
+1k
+Time (s)
+0
+.5
+1
+P50 / P99 (s)
+Gap 44.7/1372.3
+Exec. 5.6/263.4
+(a) Launch / execution
+0.1
+10
+1k
+Service overlap (s)
+0
+.5
+1
+Positive pairs only
+P50: 97.8 s
+P90: 402.5 s
+(b) Positive overlap
+Figure 11: For logical sibling request pairs: (a) Launch gap
+(dashed) and earlier request duration (solid); (b) Overlap du-
+ration among overlapping pairs. Both panels show ECDFs.
+Table 3: Overlap rates of logical sibling request pairs by
+launch gap.
+Launch gap (s)
+[0, 2]
+(2, 5]
+(5, 10]
+> 10
+Overall
+Overlap rate (%)
+1.351
+0.100
+0.000
+0.255
+0.225
+than serial tasks (Figures 9(g) and 9(i)). We examine overlap among
+logical sibling requests.
+Logical sibling requests share a predecessor and have distinct
+semantic contexts, but only 0.225% of pairs overlap (Table 3). Most
+pairs (83.90%) launch more than ten seconds apart (Figure 11(a)).
+Launch spacing must be interpreted relative to request duration: a
+pair overlaps only if the later request starts before the earlier one
+ends. Even among pairs launched within 2 seconds, only 1.351%
+overlap (Table 3). Low overlap is therefore not confined to widely
+separated launches; short launch gaps can still exceed the earlier
+request’s duration.
+The few positive overlaps can last for minutes (Figure 11(b)). The
+low rate describes overlap frequency, not duration.
+Observation 8. Only 0.225% of logical sibling request pairs have
+overlapping service intervals.
+5.3
+Request Transition and Tool Calls
+Request transitions connect model execution through elapsed time
+and continuing context. We summarize their overall characteris-
+tics before examining tool-associated waiting and successor cache
+reuse.
+7
+
+
+Zheng et al.
+-1k
+0
+100k
+Gap (s)
+0
+.5
+1
+P50/P99
+1.54/301
+1.09/101
+1.47/277
+User
+Agent
+All
+(c) Direct-edge gaps
+0.1
+10
+100k
+Gap (s)
+0
+.5
+1
+P50/P99
+1.49/183
+1.39/876
+47.5/1.52k
+(d) Single-tool gaps
+0
+100
+100k
+Return (chars)
+0
+.5
+1
+P50
+6.82k
+7.69k
+(e) Tool returns
+0
+50
+100
+Cached input (%)
+0
+.5
+1
+(50%, 22.8%)
+P50 (%)
+99.01
+98.85
+(f) Successor cache
+Command
+Sub-agent
+Edit / write
+Search / read
+Ask user
+(a) Direct-edge gaps
+(b) Single-tool gaps
+(c) Tool returns
+(d) Successor cache
+Figure 12: Tool-associated request transitions. ECDFs of (a) direct-edge end-to-start gaps by trigger, (b) single-tool transition
+gaps, (c) total tool-return characters in intervals exceeding half their serial task’s span, grouped by category presence, and (d)
+first-successor cached-input fractions after single-tool transitions. Panels (b–d) use the five leading categories in Figure 13.
+Command
+Sub-
+agent
+Edit/
+write
+Search/
+read
+Ask-
+user
+Other
+0
+30
+60
+Intervals (%)
+59.2
+13.3
+12.7
+11.5
+11.0
+7.4
+(b) Dominant-interval tools
+Dominant-interval tools
+Figure 13: Tool presence in intervals exceeding half their
+serial task’s span. Categories can overlap; Other pools plan-
+ning, MCP, and knowledge search.
+Requests Transitions Characterizing. Inter-request gaps de-
+scribe when workflow execution continues from one request to
+the next. For a direct request edge 𝑢→𝑣within a task, the gap is
+𝑔𝑢𝑣= 𝑠𝑣−𝑒𝑢, where 𝑠𝑣is the successor’s start time and 𝑒𝑢is the
+predecessor’s end time. Each edge contributes one observation to
+the gap distribution. Typical gaps are around one second, while
+user-triggered tasks have a longer upper tail (Figure 12(a)). These
+gaps capture the intervals between request executions, which can
+include tool calls and other waiting, rather than tool runtime alone.
+Tool-associated waiting. We first examine which tool activi-
+ties accompany the long serial intervals identified in Section 5.2.
+Command and search/read account for 81.25% of tool calls overall
+(Figure 14(a)), and command appears in 59.15% of intervals exceed-
+ing half their task’s span (Figure 13). These shares describe tool-call
+frequency and tool presence during long waits between requests,
+not time spent executing each tool.
+To examine waiting times by tool type, we next consider single-
+tool transitions within tasks (Figure 12(b)). Ask-user has P50/P99
+gaps of 47.48/1,515.02 seconds, while sub-agent has 1.39/876.08
+seconds. Search/read and edit/write have shorter tails. Sub-agent
+continuations usually resume quickly, but some have long waits;
+ask-user continuations have longer typical waits.
+Information and reuse on continuation. For the long serial
+intervals identified above, tool-return totals describe the feedback
+available for continuation. Intervals containing search/read or sub-
+agent have higher median return totals than those containing com-
+mand or ask-user (Figure 12(c)). Each total sums all tool-return
+characters in the interval.
+For single-tool transitions, the first successor request’s cached-
+input fraction describes how much input is served from existing
+(a)
+(b) Trigger origin
+(c) Intra structure
+Global
+User
+Agent
+Singleton Serial Branching
+Command
+52.2
+48.7
+81.5
+46.7
+48.9
+56.3
+Search/read
+29.1
+32.4
+8.4
+18.2
+32.2
+29.1
+Edit/write
+7.6
+6.8
+2.5
+9.5
+8.8
+6.2
+Planning
+3.4
+3.7
+1.8
+3.3
+3.1
+2.6
+Skill
+0.8
+0.7
+2.5
+10.3
+0.7
+0.3
+Web
+0.6
+1.1
+<0.1
+0.3
+1.0
+<0.1
+MCP
+3.6
+3.3
+2.0
+6.5
+2.7
+3.2
+Sub-agent
+1.7
+1.9
+0.7
+2.8
+1.6
+1.7
+Ask-user
+0.4
+0.4
+<0.1
+1.3
+0.3
+0.2
+Knowledge
+search
+0.3
+0.3
+<0.1
+0.5
+0.2
+0.2
+Other
+0.4
+0.6
+0.4
+0.6
+0.6
+0.2
+Tool-call share (%)
+0
+50
+100
+Figure 14: Tool-call composition: (a) global; (b) by trigger ori-
+gin; (c) by intra-task structure. Columns are independently
+normalized; global calls and task-attributed calls form sepa-
+rate populations.
+cached state. Ask-user and sub-agent successors both have me-
+dian cached-input fractions near 99% (Figure 12(d)), but 22.82% and
+10.68%, respectively, have less than half their input served from
+cache. A larger fraction of ask-user successors therefore process
+most of their input without cache reuse, despite the similar medians.
+Actual reuse reflects both context continuity and the cached state
+available when execution resumes [15, 16].
+These waiting and reuse differences motivate examining state
+retention. Retaining reusable context can avoid repeated input pro-
+cessing on return, but occupies memory throughout the wait [17,
+18]. Section 6 examines this tradeoff through context continuity
+and state management.
+Observation 9. Waiting-time and successor cache-reuse
+distributions differ across tool categories.
+6
+Infrastructure-level Serving Demands
+Request volume alone does not capture the serving demands of
+these workflows. We examine how state and token work concen-
+trate across sessions, how context continuity defines cache affinity,
+and why heterogeneous waits motivate dynamic state retention.
+8
+
+
+Understanding Agent Serving at Production Scale
+6.1
+Concentrated Serving Demand
+State and token demand. Token work and context residency con-
+centrate in a small fraction of sessions. We measure input processing
+by new-prefill tokens, the input tokens not served from cache, and
+output generation by decode tokens, the generated output tokens.
+Context residency measures logical context size accumulated over
+time:
+𝐿𝑠=
+∫𝑡end
+𝑠
+𝑡start
+𝑠
+𝐾𝑠(𝑡) 𝑑𝑡,
+where 𝐾𝑠(𝑡) is the session’s logical context size in tokens. The
+integral runs from session start to the last request’s end and gives
+a logical proxy for cumulative state demand in token-seconds. KV-
+cache memory occupancy depends on cached state and its model-
+specific storage cost [19].
+Each demand is highly concentrated (Figure 15(a)). To identify
+sessions with high demand across all three measures, we intersect
+the top 20% of sessions ranked independently by each measure.
+These selected sessions comprise 14.3% of all sessions but account
+for 98.5% of context residency, 92.3% of new-prefill tokens, and 86.0%
+of decode tokens. The three demands therefore concentrate in a
+common group, which we examine in the subsequent cache-affinity
+analysis and retention model (§7.3).
+Service-time composition. The selected sessions also dominate
+cumulative request engine duration, and the decode phase accounts
+for 76.1% of their duration (Figure 15(b)). We sum request start-
+to-end intervals, counting overlaps separately, and use TTFT and
+the remaining request duration for the prefill and decode phases,
+respectively. Both phase durations include waiting and scheduling
+overheads.
+Observation 10. A common small group of sessions accounts
+for most token work and logical context residency, with decode
+accounting for most cumulative request service time within this
+group.
+6.2
+Cache Affinity Episode Within Sessions
+After characterizing demand across sessions, we examine context
+continuity among requests within sessions and its relation to task
+boundaries.
+Boundaries for state management. Tasks organize semantic
+progress, while serving affinity concerns the historical context that
+successive requests can reuse. Characterizing this affinity requires
+considering both changes to that context and the time over which
+it is retained [14, 18]. We examine context events and idle inter-
+vals as complementary signals for identifying state-management
+boundaries within sessions.
+Episodes and observed cache affinity. To make these context
+and retention boundaries explicit, we introduce an episode as a
+serving-affinity unit: a group of requests that continue one con-
+text history within a retention horizon. It captures continuity of
+potentially reusable state across requests and their intervening
+waits, allowing its boundaries to differ from task boundaries. An
+episode starts with the first observed request in a context history
+or with a context-changing event: a model switch, subagent launch,
+compaction, or system-prompt rewrite. Requests that continue this
+0
+50
+100
+Top-ranked
+Sessions included (%)
+0
+50
+100
+Demand covered (%)
+99.3%
+96.1%
+93.1%
+Selected
+Other
+Sessions
+0
+.5
+1
+GPU-Time
+87.42%
+20.92
+66.50
+12.58%
+(a)
+(b)
+Context residency
+New prefill
+Decode
+Prefill
+Decode
+Figure 15: State and token demand. (a) Independent session
+rankings by demand, with top-20% coverage marked. (b)
+Shares of total cumulative request engine duration by session
+group and prefill/decode phase.
+history remain in the episode while the idle interval from the pre-
+ceding request’s end to the next request’s start does not exceed the
+retention horizon; after a longer interval, the next request starts a
+new episode. Parent and subagent histories are tracked separately,
+so a subagent launch starts the subagent’s episode without itself
+ending the parent’s. Context events mark changes in the history
+being continued; the chosen retention horizon determines which
+idle intervals split episodes. Figure 16(g) illustrates this grouping
+with a 300-second horizon. This threshold is a grouping parameter,
+not a measured eviction time or an optimal TTL.
+Within sessions, we measure token reuse as 𝑅= Í
+𝑟𝐶𝑟/Í
+𝑟𝐼𝑟,
+where 𝐼𝑟and 𝐶𝑟count input and cached-input tokens. Ordinary
+continuations reach 93% measured reuse with the same model and
+serving instance and short idle intervals. The input-token-weighted
+distributions concentrate near full reuse for ordinary continuations,
+while model switches and session starts place substantial mass near
+zero (Figure 16(a–c)). Subagent launches, compaction, and prompt
+rewrites have broader distributions but retain high-reuse upper
+tails, with P95 above 97% (Figure 16(d–f)). These distributions show
+that reusable state can persist across potential affinity boundaries.
+As with post-tool reuse (Figure 12(d)), event type alone does not
+determine actual cache reuse. Reuse also weakens with longer idle
+intervals, measured from the preceding request’s end to the next
+request’s start, although high-reuse continuations remain after long
+waits (Figure 17).
+Task and episode boundaries differ. Cross-task continuations
+within an episode retain 80.59% actual token reuse, compared
+with 44.67% for same-task continuations across episodes (Table 4).
+Figure 16(g) illustrates both cases: E2 spans T1/T2, while context
+changes split episodes within a task. Task progress and cache
+continuity thus follow different boundaries.
+Reusable context and management granularity. The reuse
+upper bound replaces cached-input counts in 𝑅with potentially
+reusable prefix tokens computed from the preceding and current
+contexts, assuming that the reusable state remains fully available.
+High upper bounds across episode boundaries show that context
+changes need not eliminate reusable prefixes. The gap between
+these bounds and actual reuse distinguishes content-level reuse
+9
+
+
+Zheng et al.
+0
+0
+50
+50
+100
+100
+(a) Ordinary continuation
+Cached input (%)
+P50 99.66
+P95 99.98
+0
+50
+100
+(b) Model switch
+Cached input (%)
+P50 1.18
+P95 99.86
+0
+0
+50
+50
+100
+100
+(c) Session start
+Cached input (%)
+P50 12.95
+P95 91.25
+0
+50
+100
+(d) Subagent launch
+Cached input (%)
+P50 78.24
+P95 97.56
+0
+0
+50
+50
+100
+100
+(e) Compaction
+Cached input (%)
+P50 76.48
+P95 99.82
+0
+50
+100
+(f) Prompt rewrite
+Cached input (%)
+P50 53.25
+P95 98.05
+T3
+Subagent
+E1 · 95%
+E2 · 93%
+E3 · 97%
+E4 · 95%
+E5 · 88%
+T1
+T2
+⋯ 1
+⋯ 4
+⋮ 12
+R1
+R3
+R8
+R9
+R10
+R11
+R12
+R13
+R14
+R15
+R16
+R17
+R18
+R19
+R20
+R21
+R34
+Initial request · 50%
+Compaction · 55%
+Model change · 25%
+Idle 378 s · 58%
+Subagent · 43%
+Cache continuity
+Episode start
+Task
+Episode boundary
+(g) Tasks and episodes
+Figure 16: Context continuity motivates affinity boundaries that need not align with tasks. (a–f) Input-token-weighted ECDFs
+of per-request cached-input percentage by context event; circles/diamonds mark P50/P95. (g) Task outlines and episode
+backgrounds share request nodes; green/gray percentages give continuation/start reuse. Task outlines and fragment links are
+schematic; the parent–subagent edge is observed. E4 uses a 300-second idle boundary; ellipses count omitted requests.
+0
+.5
+1
+91
+0–
+5
+88
+5–
+30
+86
+30–
+60
+13
+80
+60–
+120
+29
+62
+120–
+300
+47
+43
+300–
+600
+63
+31
+600–
+1800
+66
+27
+>1800
+Idle interval (s)
+Input-token share
+≥90%
+65–<90%
+<65%
+Figure 17: Cache reuse by idle interval for same-model, same-
+instance continuations. Bars show input-token shares by
+reuse band; labels mark low- and high-reuse percentages.
+Table 4: Adjacent-request pair shares and token reuse by task
+and episode boundaries.
+Task
+Episode
+Pair share
+Token reuse (%)
+(%)
+Actual
+Upper bound
+Same
+Same
+80.91
+90.08
+96.81
+Same
+Different
+1.66
+44.67
+71.98
+Different
+Same
+14.86
+80.59
+91.85
+Different
+Different
+2.58
+41.20
+86.95
+potential from cached-state availability under placement and evic-
+tion [16]. Episodes group requests by context and retention continu-
+ity, providing a concrete basis for examining serving affinity. These
+observations motivate other resource-management granularities
+and policies that account for reusable state beyond task boundaries.
+Observation 11. Context reuse can span tasks while context
+can change within a task, motivating episodes as serving-affinity
+units that group requests by context and retention continuity.
+6.3
+Dynamic State Retention
+Context continuity identifies potentially reusable state; a time-to-
+live (TTL) bounds its retention during a wait. Among single-tool
+transitions, gaps exceed 300 seconds for 0.7% of command transi-
+tions and about 7% each for sub-agent and ask-user (Figure 12(b)).
+A common retention horizon covers different fractions of observed
+returns across waiting types.
+Retaining reusable context can avoid recomputation on return,
+but occupies memory throughout the wait. TTL choices therefore
+depend on reusable context, return timing, and available memory.
+InferCept, Continuum, and SAGA guide retention using recovery
+costs, return estimates, or memory pressure [17, 18, 20]. CacheWise
+likewise uses workload characteristics to guide KV-cache manage-
+ment for coding agents [12]. Section 7.3 quantifies this tradeoff
+under explicit retention budgets and discusses the information
+needed online.
+Observation 12. TTL decisions should adapt to waiting type,
+reusable context, and available resources: extending retention
+trades memory occupied during a wait against recomputation on
+return.
+7
+Implications and Open Questions
+We discuss cross-layer abstraction, episode-based scheduling, and
+adaptive KV cache management, relating each direction to its ben-
+efits, costs, and information needs at runtime. An offline model
+quantifies the opportunity for allocating retention across waiting
+types.
+7.1
+Cross-Layer Abstraction
+Task-level initiation semantics and workflow-level execution pat-
+terns provide information that could guide capacity allocation and
+10
+
+
+Understanding Agent Serving at Production Scale
+request scheduling (Sections 4–5). Structured abstractions already
+allow applications to expose some of this information: Parrot uses
+Semantic Variables to represent relationships among requests and
+make them available to the serving system [21]. These mechanisms
+raise a further question: which dynamic signals provide useful in-
+formation beyond the requests already queued or running, and
+when must they become available to affect a decision?
+The value of a signal depends on the decision it supports. Ex-
+pected task activations could inform capacity planning before re-
+quests arrive, while execution readiness and progress could inform
+scheduling as a workflow unfolds [22]. The observed differences
+across triggering categories and workflow patterns motivate exam-
+ining these signals, but their additional value depends on what the
+infrastructure can already infer from request histories and current
+load. A useful signal must arrive before the relevant decision and
+remain informative as execution changes.
+A cross-layer abstraction could represent these signals as hints
+that applications, orchestrators, and serving systems interpret con-
+sistently [14]. Execution constraints need to be distinguished from
+estimates of future work, and updates need to reflect changes in the
+workflow [23, 24]. The research question is which hints improve re-
+source and scheduling decisions under these conditions, including
+when estimates are inaccurate or updates arrive late.
+Open question 1. How can dynamic information from task
+initiation and workflow execution be selected and exposed to
+improve inference resource management and scheduling beyond
+request-level observations?
+7.2
+Episode-Based Scheduling
+Context continuity can span tasks or change within a task (Sec-
+tion 6.2), making task boundaries alone insufficient to describe
+serving affinity. Episodes make these changes explicit and provide
+opportunities to reconsider placement. For episode-based sched-
+uling, the question is how context continuity should guide the
+grouping of requests for placement and the timing of reassignment.
+A context boundary does not by itself determine whether place-
+ment should change. Shared prefixes may remain cached across a
+boundary, while resource pressure may justify reassignment dur-
+ing a continuing episode. The appropriate affinity unit therefore
+depends on both the state that can be reused and the work that
+remains. A policy needs to weigh the expected reduction in queue-
+ing and execution time against the cost of transferring state or
+rebuilding context elsewhere [16, 25, 26].
+These quantities evolve during execution. Current load and cache
+availability describe immediate conditions, while request progres-
+sion and tool activity may help estimate future work. Overestimat-
+ing that work can trigger a move whose cost is never recovered;
+underestimating it can prolong imbalance. The challenge is to deter-
+mine when available evidence justifies changing affinity and when
+preserving the current assignment is preferable. Retention affects
+this decision through the state that remains available, but does not
+prescribe where subsequent requests should execute [27].
+Open question 2. How should episode-based scheduling adapt
+placement granularity and reassignment timing to context
+continuity and uncertain remaining work?
+0.5
+1.0
+1.5
+2.0
+Retention budget (1012 token⋅s)
+80
+90
+100
+Recomputation
+(% of uniform)
+(a)
+Uniform TTL
+Type-dependent
+TTL
+A: 6.4%
+B: 1.0%
+C:
+13.9%
+0.5
+1.0
+1.5
+2.0
+Retention budget (1012 token⋅s)
+Read/write
+Command
+Sub-agent
+Ask-user
+(b)
+0%
+A
+B C
+0.01
+0.1
+1
+10
+100
+Waits exceeding
+TTL (%)
+Figure 18: Offline retention allocation. (a) Remaining recom-
+putation normalized to uniform TTL at each budget (100%);
+annotations show relative savings. (b) Within-type shares of
+waits exceeding allocated TTLs; hatching denotes zero. A–C
+mark budgets from uniform 5-, 15-, and 25-minute TTLs.
+7.3
+Adaptive KV Cache Management
+Waiting-time differences and persistent context reuse (Sections 6.2–
+6.3) motivate adapting retention to expected reuse and memory
+pressure.
+An offline allocation model. Using the selected 14.3% of ses-
+sions, we model returning waits across 𝐾= 4 types: read/write
+(search/read and edit/write), command, sub-agent, and ask-user. For
+type𝑐with TTL𝜏𝑐, retention cost𝐶𝑐(𝜏𝑐) sums each source request’s
+input-context size times its retained duration, from completion un-
+til the next request starts or the TTL expires. Recomputation cost
+𝑈𝑐(𝜏𝑐) sums source-input tokens for returns after expiry. These
+measure cumulative logical retention in token-seconds and mod-
+eled recomputation in tokens, respectively. Following the shared-
+resource view of cache allocation [28], we minimize recomputation
+under a retention budget 𝐵:
+𝑉(𝐵) =
+min
+𝜏1,...,𝜏𝐾≥0
+𝐾
+∑︁
+𝑐=1
+𝑈𝑐(𝜏𝑐),
+subject to
+𝐾
+∑︁
+𝑐=1
+𝐶𝑐(𝜏𝑐) ≤𝐵.
+The model selects one fixed TTL per type; the baseline uses the
+best feasible uniform TTL, with recomputation 𝑈uniform(𝐵).
+Savings at matched retention cost. Uniform 5-, 15-, and 25-
+minute TTLs define three reference budgets; type-dependent TTLs
+are allocated separately. The reduction in remaining recomputa-
+tion, (𝑈uniform −𝑉)/𝑈uniform, is 6.4%, 1.0%, and 13.9%, respectively
+(Figure 18(a)). The middle setting is close to uniform, so gains are
+not uniformly large or monotonic in budget.
+Longer waiting tails need not receive longer TTLs: ask-user re-
+ceives a shorter TTL than sub-agent at the 5-minute reference bud-
+get, but a longer TTL at the 25-minute budget. Allocation depends
+on recomputation avoided per added retention cost, accounting for
+context size and return timing, rather than equalizing the fractions
+of waits beyond TTL (Figure 18(b)).
+11
+
+
+Zheng et al.
+Online memory allocation. Online retention faces an instanta-
+neous memory limit, whereas the model constrains cumulative
+retention cost. Waiting contexts compete with active requests
+for memory, so retaining one context can avoid recomputation
+but delay other work [17, 19]. Retention decisions need estimates
+of whether a context will return, when it will return, and how
+much reusable state it carries [18, 24, 29]. Waiting type, execution
+progress, context changes, and completion signals can update
+these estimates [15]. The challenge is to revise retention as reuse
+estimates and resource pressure change, including for contexts that
+never return.
+Open question 3. How should adaptive KV cache management
+allocate memory between waiting contexts and active execution
+as reuse estimates and resource demand change?
+8
+Other Related Work
+Beyond workload characterization, prior work studies efficient
+agent execution and inference serving. Agent methods and frame-
+works support reasoning, tool use, and collaboration [9–11, 23, 30–
+33]. Benchmarks and experimentation frameworks evaluate execu-
+tion costs and serving performance [34, 35]. LLM serving systems
+optimize computation, batching, and resource use [19, 36–43]. Exe-
+cution and scheduling systems exploit program structure, request
+dependencies, and context locality [14, 16, 20–22, 25, 44]. KV-cache
+systems support context reuse through retention, transfer, and stor-
+age [12, 15, 17, 18, 24, 26, 27, 29]. Our end-to-end trace analysis com-
+plements these efforts with production evidence to inform serving
+optimizations such as request scheduling and state management.
+9
+Conclusion
+We characterize agentic workloads on a large-scale production plat-
+form with over 10k GPUs, using a two-week trace of 11.7 million
+sampled requests across 948.4k sessions. Through an analysis of
+task-level initiation semantics, workflow-level execution patterns,
+and infrastructure-level serving demands, we examine how task
+and workflow behavior relates to request load, execution timing,
+and context reuse. Our observations motivate further research on
+cross-layer abstractions, episode-based scheduling, and adaptive
+KV-cache management for agent serving. We plan to release sani-
+tized traces from our characterization data to the public soon.
+References
+[1] John Yang, Carlos E. Jimenez, Alexander Wettig, Kilian Lieret, Shunyu Yao,
+Karthik Narasimhan, and Ofir Press. SWE-agent: Agent-Computer Interfaces
+Enable Automated Software Engineering. In Advances in Neural Information
+Processing Systems, volume 37, 2024.
+[2] Alexandre Drouin, Maxime Gasse, Massimo Caccia, Issam H. Laradji, Manuel Del
+Verme, Tom Marty, David Vazquez, Nicolas Chapados, and Alexandre Lacoste.
+WorkArena: How Capable are Web Agents at Solving Common Knowledge Work
+Tasks? In International Conference on Machine Learning (ICML), volume 235 of
+Proceedings of Machine Learning Research, pages 11642–11662, 2024.
+[3] Anthropic. Anthropic Economic Index Report: Cadences. https://www.anthropic.
+com/research/economic-index-june-2026-report, 2026. June 26, 2026.
+[4] OpenRouter. DeepSeek V4 Is Earning Agentic Token Share. https://openrouter.
+ai/blog/insights/deepseek-v4-adoption/, 2026. June 30, 2026.
+[5] Yuxing Xiang, Xue Li, Kun Qian, Yan Zhang, Wenyuan Yu, Ennan Zhai, Xin
+Jin, and Jingren Zhou. ServeGen: Workload Characterization and Generation
+of Large Language Model Serving in Production. In USENIX Symposium on
+Networked Systems Design and Implementation (NSDI), pages 1845–1859, 2026.
+[6] Yuxin Wang, Yuhan Chen, Zeyu Li, Xueze Kang, Yuchu Fang, Yeju Zhou, Yang
+Zheng, Zhenheng Tang, Xin He, Rui Guo, Xin Wang, Qiang Wang, Amelie Chi
+Zhou, and Xiaowen Chu. BurstGPT: A Real-World Workload Dataset to Optimize
+LLM Serving Systems. In ACM SIGKDD Conference on Knowledge Discovery and
+Data Mining (KDD), volume 2, pages 5831–5841, 2025.
+[7] Banruo Liu, Haoran Qiu, Íñigo Goiri, Rodrigo Fonseca, Ricardo Bianchini, and
+Esha Choukse. Agentic Coding in the Wild: Characterizing GitHub Copilot at
+Production Scale. arXiv:2608.00101v1, 2026. Preprint.
+[8] Kan Zhu, Mathew Jacob, Chenxi Ma, Yi Pan, Stephanie Wang, Arvind Krishna-
+murthy, and Baris Kasikci. TraceLab: Characterizing Coding Agent Workloads
+for LLM Serving. arXiv:2606.30560v2, 2026. Preprint.
+[9] Qingyun Wu, Gagan Bansal, Jieyu Zhang, et al. AutoGen: Enabling Next-Gen
+LLM Applications via Multi-Agent Conversation. In Conference on Language
+Modeling (COLM), 2024.
+[10] Mingchen Zhuge, Wenyi Wang, Louis Kirsch, Francesco Faccio, Dmitrii
+Khizbullin, and Jürgen Schmidhuber. GPTSwarm: Language Agents as Optimiz-
+able Graphs. In International Conference on Machine Learning (ICML), volume
+235 of Proceedings of Machine Learning Research, pages 62743–62767, 2024.
+[11] Jiayi Zhang, Jinyu Xiang, Zhaoyang Yu, Fengwei Teng, Xiong-Hui Chen, Jiaqi
+Chen, Mingchen Zhuge, Xin Cheng, Sirui Hong, Jinlin Wang, Bingnan Zheng,
+Bang Liu, Yuyu Luo, and Chenglin Wu. AFlow: Automating Agentic Workflow
+Generation. In International Conference on Learning Representations (ICLR), 2025.
+[12] Shubham Tiwari, Tapan Chugh, Nash Rickert, Simon Peter, Ratul Mahajan, and
+Haiying Shen. CacheWise: Understanding Workloads and Optimizing KVCache
+Management for Efficiently Serving LLM Coding Agents. arXiv:2606.16824v1,
+2026. Preprint.
+[13] Microsoft. Event Trigger Overview. Microsoft Copilot Studio documentation,
+2026. Updated September 9, 2026. Accessed September 15, 2026.
+[14] Lianmin Zheng, Liangsheng Yin, Zhiqiang Xie, Chuyue Sun, Jeff Huang,
+Cody Hao Yu, Shiyi Cao, Christos Kozyrakis, Ion Stoica, Joseph E. Gonzalez,
+Clark Barrett, and Ying Sheng. SGLang: Efficient Execution of Structured Lan-
+guage Model Programs. In Advances in Neural Information Processing Systems,
+volume 37, 2024.
+[15] Bin Gao, Zhuomin He, Puru Sharma, Qingxuan Kang, Djordje Jevdjic, Junbo
+Deng, Xingkun Yang, Zhou Yu, and Pengfei Zuo. Cost-Efficient Large Language
+Model Serving for Multi-turn Conversations with CachedAttention. In USENIX
+Annual Technical Conference (ATC), 2024.
+[16] Vikranth Srivatsa, Zijian He, Reyna Abhyankar, Dongming Li, and Yiying Zhang.
+Preble: Efficient Distributed Prompt Scheduling for LLM Serving. In International
+Conference on Learning Representations (ICLR), 2025.
+[17] Reyna Abhyankar, Zijian He, Vikranth Srivatsa, Hao Zhang, and Yiying Zhang.
+InferCept: Efficient Intercept Support for Augmented Large Language Model
+Inference. In International Conference on Machine Learning (ICML), volume 235
+of Proceedings of Machine Learning Research, pages 81–95, 2024.
+[18] Hanchen Li, Runyuan He, Qiuyang Mang, Qizheng Zhang, Huanzhi Mao, Xi-
+aokun Chen, Hangrui Zhou, Alvin Cheung, Joseph Gonzalez, and Ion Stoica.
+Continuum: Efficient and Robust Multi-Turn LLM Agent Scheduling with KV
+Cache Time-to-Live. arXiv:2511.02230v6, 2026. Preprint, revised May 2026.
+[19] Woosuk Kwon, Zhuohan Li, Siyuan Zhuang, Ying Sheng, Lianmin Zheng,
+Cody Hao Yu, Joseph Gonzalez, Hao Zhang, and Ion Stoica. Efficient Mem-
+ory Management for Large Language Model Serving with PagedAttention. In
+ACM Symposium on Operating Systems Principles (SOSP), 2023.
+[20] Dongxin Guo, Jikun Wu, and Siu Ming Yiu. SAGA: Workflow-Atomic Scheduling
+for AI Agent Inference on GPU Clusters. arXiv:2605.00528v1, 2026. Accepted to
+HPDC 2026.
+[21] Chaofan Lin, Zhenhua Han, Chengruidong Zhang, Yuqing Yang, Fan Yang, Chen
+Chen, and Lili Qiu. Parrot: Efficient Serving of LLM-based Applications with
+Semantic Variable. In USENIX Symposium on Operating Systems Design and
+Implementation (OSDI), pages 929–945, 2024.
+[22] Michael Luo, Xiaoxiang Shi, Colin Cai, Tianjun Zhang, Justin Wong, Yichuan
+Wang, Chi Wang, Yanping Huang, Zhifeng Chen, Joseph E. Gonzalez, and Ion
+Stoica. Agentix: An Efficient Serving Engine for LLM Agents as General Programs.
+In USENIX Symposium on Networked Systems Design and Implementation (NSDI),
+pages 2443–2459, 2026.
+[23] Sehoon Kim, Suhong Moon, Ryan Tabrizi, Nicholas Lee, Michael W. Mahoney,
+Kurt Keutzer, and Amir Gholami. An LLM Compiler for Parallel Function Call-
+ing. In International Conference on Machine Learning (ICML), volume 235 of
+Proceedings of Machine Learning Research, pages 24370–24391, 2024.
+[24] Haoyu Zheng, Fangcheng Fu, Jia Wu, Binhang Yuan, Yongqiang Zhang, Hao
+Wang, Yuanyuan Zhu, Xiao Yan, and Jiawei Jiang.
+Efficient Serving for
+Dynamic Agent Workflows with Prediction-based KV-Cache Management.
+arXiv:2605.06472v1, 2026. Preprint.
+[25] Biao Sun, Ziming Huang, Hanyu Zhao, Wencong Xiao, Xinyi Zhang, Yong Li,
+and Wei Lin. Llumnix: Dynamic Scheduling for Large Language Model Serving.
+In USENIX Symposium on Operating Systems Design and Implementation (OSDI),
+pages 173–191, 2024.
+[26] Yuhan Liu, Hanchen Li, Yihua Cheng, Siddhant Ray, Yuyang Huang, Qizheng
+Zhang, Kuntai Du, Jiayi Yao, Shan Lu, Ganesh Ananthanarayanan, Michael
+Maire, Henry Hoffmann, Ari Holtzman, and Junchen Jiang. CacheGen: KV
+12
+
+
+Understanding Agent Serving at Production Scale
+Cache Compression and Streaming for Fast Large Language Model Serving. In
+ACM SIGCOMM Conference, 2024.
+[27] Ruoyu Qin, Zheming Li, Weiran He, Jialei Cui, Feng Ren, Mingxing Zhang,
+Yongwei Wu, Weimin Zheng, and Xinran Xu. Mooncake: Trading More Storage
+for Less Computation—A KVCache-centric Architecture for Serving LLM Chatbot.
+In USENIX Conference on File and Storage Technologies (FAST), pages 155–170,
+2025.
+[28] Mostafa Dehghan, Laurent Massoulié, Don Towsley, Daniel S. Menasché, and
+Y. C. Tay. A Utility Optimization Approach to Network Cache Design. In IEEE
+International Conference on Computer Communications (INFOCOM), 2016.
+[29] Lingfan Yu, Jinkun Lin, and Jinyang Li. Stateful Large Language Model Serving
+with Pensieve. In European Conference on Computer Systems (EuroSys), 2025.
+[30] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan,
+and Yuan Cao. ReAct: Synergizing Reasoning and Acting in Language Models.
+In International Conference on Learning Representations (ICLR), 2023.
+[31] Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli,
+Eric Hambro, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. Tool-
+former: Language Models Can Teach Themselves to Use Tools. In Advances in
+Neural Information Processing Systems, volume 36, 2023.
+[32] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and
+Shunyu Yao. Reflexion: Language Agents with Verbal Reinforcement Learning.
+In Advances in Neural Information Processing Systems, volume 36, 2023.
+[33] Sirui Hong, Mingchen Zhuge, Jonathan Chen, Xiawu Zheng, Yuheng Cheng,
+Jinlin Wang, Ceyao Zhang, Zili Wang, Steven Yau, Zijuan Lin, Liyang Zhou,
+Chenyu Ran, Lingfeng Xiao, Chenglin Wu, and Jürgen Schmidhuber. MetaGPT:
+Meta Programming for A Multi-Agent Collaborative Framework. In International
+Conference on Learning Representations (ICLR), 2024.
+[34] Chaokun Chang, Yukun Zhou, Kaihua Fu, Dakai An, Tianyu Feng, Hanfeng
+Lu, Sheng Yao, Pu Guo, Yinghao Yu, Yizhou Shan, Bo Li, Binhang Yuan, and
+Wei Wang. From LLM Inference to Agentic Workloads: Characterization and
+Implications for Serving Systems. arXiv:2608.15127v1, 2026. Preprint.
+[35] Leonid Kondrashov, Hongrui Liu, JooYoung Park, Boxi Zhou, Zonghao Liu,
+Chengzhi Lu, Riccardo Mancini, Esha Choukse, Haris Javaid, German Sviridov,
+Tao Peng, Chen Zhao, Anastasia Avdeeva, Aleksei Gusev, Marios Kogias, Luo Mai,
+and Dmitrii Ustiugov. Rethinking AI Cloud Infrastructure for Agentic Serving
+Systems with the Aries Experimentation Framework. arXiv:2607.29069v1, 2026.
+Preprint.
+[36] Tri Dao, Daniel Y. Fu, Stefano Ermon, Atri Rudra, and Christopher Ré. FlashAtten-
+tion: Fast and Memory-Efficient Exact Attention with IO-Awareness. In Advances
+in Neural Information Processing Systems, volume 35, pages 16344–16359, 2022.
+[37] Yaniv Leviathan, Matan Kalman, and Yossi Matias. Fast Inference from Transform-
+ers via Speculative Decoding. In International Conference on Machine Learning
+(ICML), volume 202 of Proceedings of Machine Learning Research, pages 19274–
+19286, 2023.
+[38] Gyeong-In Yu, Joo Seong Jeong, Geon-Woo Kim, Soojeong Kim, and Byung-Gon
+Chun. Orca: A Distributed Serving System for Transformer-Based Generative
+Models. In USENIX Symposium on Operating Systems Design and Implementation
+(OSDI), pages 521–538, 2022.
+[39] Amey Agrawal, Nitin Kedia, Ashish Panwar, Jayashree Mohan, Nipun Kwa-
+tra, Bhargav Gulavani, Alexey Tumanov, and Ramachandran Ramjee. Taming
+Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve. In USENIX
+Symposium on Operating Systems Design and Implementation (OSDI), pages 117–
+134, 2024.
+[40] Yinmin Zhong, Shengyu Liu, Junda Chen, Jianbo Hu, Yibo Zhu, Xuanzhe Liu,
+Xin Jin, and Hao Zhang. DistServe: Disaggregating Prefill and Decoding for
+Goodput-optimized Large Language Model Serving. In USENIX Symposium on
+Operating Systems Design and Implementation (OSDI), pages 193–210, 2024.
+[41] Pratyush Patel, Esha Choukse, Chaojie Zhang, Aashaka Shah, Íñigo Goiri, Saeed
+Maleki, and Ricardo Bianchini. Splitwise: Efficient Generative LLM Inference
+Using Phase Splitting. In ACM/IEEE International Symposium on Computer
+Architecture (ISCA), 2024.
+[42] Minchen Yu, Rui Yang, Chaobo Jia, Zhaoyuan Su, Sheng Yao, Tingfeng Lan,
+Yuchen Yang, Zirui Wang, Yue Cheng, Wei Wang, Ao Wang, and Ruichuan Chen.
+FaaScale: Unlocking Fast LLM Scaling for Serverless Inference. In Proceedings of
+Machine Learning and Systems, volume 8, pages 353–366, 2026.
+[43] Zhexiang Zhang, Ye Wang, Yumiao Zhao, Jiayu Xiao, Qianjing Yang, Xiangyu
+Wang, Jingzhe Jiang, Qizhen Weng, Ruichuan Chen, Shaohuai Shi, Yin Chen,
+and Minchen Yu. Janus: Disaggregating attention and experts for scalable moe
+inference. arXiv:2512.13525v4, 2026. Preprint.
+[44] Jiahao Wang, Kaizhan Lin, Kaixi Zhang, Jinbo Han, Xingda Wei, Sijie Shen,
+Chenguang Fang, Wenyuan Yu, Rong Chen, and Haibo Chen. SMetric: Rethink
+LLM Scheduling for Serving Agents with Balanced Session-centric Scheduling.
+arXiv:2607.08565v1, 2026. Preprint.
+13

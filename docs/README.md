@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-04</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-06</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 19 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-04 22:05:24 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-06 00:48:21 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读8篇、速读13篇共21篇论文，重点聚焦语言智能体的记忆架构与上下文压缩。最值得看的是《MemCodex》与《Persistent Context Graphs》两篇9分工作，均指向让智能体自我编程、持久化组织长期记忆。普通读者可先读这两篇精读，再按需浏览多智能体导航与知识图谱问答等速读方向。</p>
+<p>2026-10-06 日报：共筛出 19 篇（精读 6、速读 13），聚焦智能体记忆与强化学习前沿。</p>
+<p>最值得看的是精读榜首 APDMem（9.0/10）提出的&quot;智能体自主渐进披露&quot;式查询自适应长期记忆，以及 BRIDGE（8.0/10）用双层检索信用分配来优化智能体强化学习。</p>
+<p>普通读者可先从 APDMem 的&quot;按需取用记忆&quot;思路入手，再顺着速读里的多智能体缓存纠错（KVCMAS）与多模型检索集成（MERGE）了解落地配套。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="MemCodex: Self-Programming Hierarchical Memory for Language Agents">MemCodex: Self-Programming Hierarchical Memory for Language Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Persistent Context Graphs for Efficient Memory Compaction in LLM Agents">Persistent Context Graphs for Efficient Memory Compaction in LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="What Should an Agent Remember? Disentangling Retention from Retrieval in Bounded-Memory Evaluation">What Should an Agent Remember? Disentangling Retention from Retrieval in Bounded-Memory Evaluation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="APDMem: Agent-Controlled Progressive Disclosure for Query-Adaptive Long-Term Memory">APDMem: Agent-Controlled Progressive Disclosure for Query-Adaptive Long-Term Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="BRIDGE: Bilevel Retrieval-Credit-Aware Agentic Reinforcement Learning">BRIDGE: Bilevel Retrieval-Credit-Aware Agentic Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Rep2Skill: Representation-Guided Skill Self-Evolution for LLM Agents">Rep2Skill: Representation-Guided Skill Self-Evolution for LLM Agents</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>6</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -94,7 +96,7 @@
     <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ANTMAN: Adaptive Need Tracking for Multi-Agent Navigation in Large Information Spaces">ANTMAN: Adaptive Need Tracking for Multi-Agent Navigation in Large Information Spaces</span></li><li><span class="dpr-home-dashboard-paper-title" title="BRIDGE: Bilevel Retrieval-Credit-Aware Agentic Reinforcement Learning">BRIDGE: Bilevel Retrieval-Credit-Aware Agentic Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="Explore-on-Graph: Hybrid Embedding-LLM Reasoning for Knowledge Graph Question Answering under Incompleteness">Explore-on-Graph: Hybrid Embedding-LLM Reasoning for Knowledge Graph Question Answering under Incompleteness</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ANTMAN: Adaptive Need Tracking for Multi-Agent Navigation in Large Information Spaces">ANTMAN: Adaptive Need Tracking for Multi-Agent Navigation in Large Information Spaces</span></li><li><span class="dpr-home-dashboard-paper-title" title="KVCMAS: Efficient KV cache Correction for Shared Context in Multi-Agent Systems">KVCMAS: Efficient KV cache Correction for Shared Context in Multi-Agent Systems</span></li><li><span class="dpr-home-dashboard-paper-title" title="MERGE: Multi-LLM Ensemble for Retrieval via Generative Enrichment">MERGE: Multi-LLM Ensemble for Retrieval via Generative Enrichment</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>9</strong></span><span class="dpr-home-dashboard-tag">agent <strong>4</strong></span></div>
 </section>
