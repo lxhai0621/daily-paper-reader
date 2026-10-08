@@ -1,0 +1,517 @@
+Title: CLIMB: Confidence-Guided Complementary Evidence for Multimodal Retrieval-Augmented Generation
+
+URL Source: https://arxiv.org/pdf/2610.03421v1
+
+Published Time: Mon, 05 Oct 2026 01:41:53 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# CLIMB: Confidence-Guided Complementary Evidence for Multimodal Retrieval-Augmented Generation 
+
+Hang Gao 1 Wujiang Xu 1 Zhixing Zhang 2 Kai Mei 1
+
+Jingyi Yang 2 Dimitris N. Metaxas 11Rutgers University 2Google 
+
+Correspondence: h.gao@rutgers.edu, dnm@cs.rutgers.edu 
+
+Abstract 
+
+Multimodal large language models (MLLMs) have shown strong visual reasoning abilities, but knowledge-intensive visual question an-swering often requires external textual evidence beyond the image and the model’s parametric knowledge. Existing multimodal RAG systems commonly rely on Top-K retrieval or rerank-ing, which may return redundant passages and provide limited control over whether an answer update is sufficiently supported by the retrieved evidence. We propose CLIMB , a training-free inference-time framework for multimodal RAG. CLIMB first constructs a compact com-plementary evidence pool using an MMR-style objective that balances query relevance and passage-level redundancy. It then performs confidence-controlled refinement within this fixed pool: an R/E/C critic scores passages by relevance, evidence specificity, and cross-modal alignment, while an evidence-grounded confidence estimator accepts an updated an-swer only when the estimated confidence in-creases. This design provides a simple stopping criterion and reduces unnecessary refinement without modifying the underlying retriever or MLLM. Experiments on Encyclopedic-VQA and InfoSeek show that CLIMB consistently improves over retrieval-augmented multimodal baselines. Ablations further indicate that com-plementary pooling, critic-based scoring, and iterative confidence-controlled refinement each contribute to the final performance. 
+
+1 Introduction 
+
+Multimodal large language models (MLLMs) (Liu et al., 2024; Li et al., 2024; Abdin et al., 2024) have made rapid progress in visual reasoning and grounded dialogue, yet knowledge-intensive visual question answering remains challenging (Caffagni et al., 2024a; Wu et al., 2023; Yin et al., 2024). In these tasks, the image provides important ground-ing cues, but the answer often depends on external Query : Where  did  de       
+
+> waghemakere model
+> the new Antwerp City
+> Hall after?
+> Embedding Model
+> Image External Database
+
+𝑓(·)    
+
+> Similarity
+> Diversity
+> MLLM
+> Text
+> Answer Answer
+> MLLM MLLM MLLM
+> （a）Other Methods （b）Ours
+
+Figure 1: Comparison of multimodal RAG approaches. (a) Standard methods (Cocchi et al., 2025; Caffagni et al., 2024b; Yan and Xie, 2024) rely on Top-K similar-ity selection, which often produces redundant evidence with limited coverage and lacks explicit quality control for answer generation. (b) Our CLIMB framework ad-dresses these limitations through two key innovations: diversity-aware evidence construction that balances rel-evance and complementarity to build a non-redundant passage pool, and confidence-controlled decoding that uses multi-faceted scoring and monotonic confidence constraints to ensure reliable answer updates. 
+
+facts such as entity attributes, historical details, ge-ographic information, or fine-grained taxonomy. Such information is difficult to cover fully through parametric knowledge alone, especially for long-tail entities and time-sensitive facts (Ye et al., 2024; Liu et al., 2024; Li et al., 2023; Chen et al., 2023; Mensink et al., 2023). Retrieval-augmented generation (RAG) ad-dresses this limitation by providing external textual evidence at inference time (Lewis et al., 2020; Zhao arXiv:2610.03421v1 [cs.CL] 2 Oct 2026 et al., 2023; Gao et al., 2024; Liu et al., 2025). In multimodal RAG, however, performance depends not only on retrieving relevant passages, but also on assembling a compact evidence set that is comple-mentary, non-redundant, and sufficiently reliable for answer generation. A retrieval set that contains several near-duplicate passages may have high sim-ilarity scores but still fail to cover the specific facets needed to answer the question. Despite steady advances, common multimodal RAG pipelines exhibit limitations rooted in design choices. The prevailing practice ranks passages by image-text similarity and conditions the MLLM on the top-ranked set. Such Top-K assembly con-centrates scores on near-duplicates (Yan and Xie, 2024), producing redundant contexts with limited semantic coverage, reflecting the core challenge of evidence complementarity . Enhancements in retrievers and hierarchical search reduce the can-didate space (Caffagni et al., 2024b), yet the final assembly step rarely suppresses pairwise redun-dancy in a principled way. Iterative RAG variants (Arefeen et al., 2024) attempt to address insufficient evidence through multiple retrieval-and-rewrite cy-cles, but face the challenges of quality control and 
+
+termination criteria : these systems increase latency and variance while offering limited transparency about when updates should be trusted or when to stop refinement. Most architectures also lack ex-plicit mechanisms for reliability assessment, leav-ing systems unable to determine when evidence is sufficient. These issues motivate an inference-time mechanism that jointly considers evidence comple-mentarity and answer-level verifiability. To tackle these challenges, we propose CLIMB ,a framework that treats multimodal RAG as two coupled decisions: which evidence should be as-sembled, and when an answer update should be accepted. CLIMB first builds a fixed complemen-tary micro-pool using an MMR-style objective that balances query relevance with redundancy suppres-sion. This pool provides a compact set of candidate passages that are individually relevant while cov-ering different aspects of the question. Within this fixed pool, CLIMB performs confidence-controlled refinement. A passage-level R/E/C critic scores each candidate by relevance, evidence specificity, and cross-modal alignment. The model then gener-ates an answer from the selected subset, estimates an evidence-grounded confidence score, and ac-cepts a revised answer only if the estimated confi-dence improves. Because all refinement steps oper-ate inside the fixed pool, CLIMB avoids repeated external retrieval and provides a bounded, inter-pretable stopping rule. Empirically, CLIMB deliv-ers consistent gains on knowledge-intensive VQA benchmarks. Across datasets such as Encyclopedic-VQA(Mensink et al., 2023) and InfoSeek(Chen et al., 2023), the framework improves over Top-K
+
+retrieval and iterative RAG variants, and it pre-serves performance on instances where additional evidence is unnecessary. Ablations indicate that critic is a primary driver of coverage and answer quality, while confidence-controlled acceptance contributes to stability, calibration, and early stop-ping. Our contributions are summarized as follows: 1. We present CLIMB, which constructs a com-plementary evidence pool via an MMR-style objective that promotes relevance while sup-pressing redundancy. 2. Building on this pool, we introduce confidence-controlled decoding with an R/E/C scoring interface and an accep-tance rule that updates only when a scalar confidence increases, enabling monotone improvement and natural early stopping. 3. We systematize multimodal RAG as acomplementarity-aware problem, providing a modular pipeline that integrates with stan-dard encoders and retrievers and aligns with hierarchical retrieval and reflective-control de-signs. 
+
+2 Related Work 
+
+Multimodal large language models (MLLMs) ex-tend text-only LLMs by coupling a vision encoder with a language backbone, enabling grounded ques-tion answering, visual dialogue, and open-ended multimodal generation (Radford et al., 2021; Liu et al., 2023; McKinzie et al., 2024; Sun et al., 2024). Architecturally, systems differ in how they bridge modalities, from query-former style adap-tors and projection layers to end-to-end finetuning, and in how they leverage instruction tuning and conversational data for alignment (Radford et al., 2021; Liu et al., 2024; Lerner et al., 2024; Qi et al., 2024). Subsequent work improves robustness and utility through better pretraining corpora, mixed-format curricula, and task-oriented instruction sets, yielding models that can act as general-purpose perceptual reasoners under open-world conditions (Alayrac et al., 2022; Changpinyo et al., 2021; Gadre et al., 2023; Deitke et al., 2025). Another line of research showed great potential of Retrieval-augmented generation (RAG), which injects non-parametric evidence into the context to expand coverage and mitigate hallucination, first established in text settings by combining sparse or dense retrievers with sequence generators (Lewis et al., 2020; Guu et al., 2020; Izacard et al., 2023; Borgeaud et al., 2022; Gao and Metaxas, 2026). Early systems such as Fusion-in-Decoder and subsequent large-scale variants demonstrated that learned retrieval over web-scale corpora, to-gether with retrieval-conditioned decoding, sub-stantially improves knowledge-intensive QA (Gao et al., 2023; Arslan et al., 2024; Fan et al., 2024; Gao et al., 2026). As instruction-tuned LLMs be-came the default interface, RAG shifted toward inference-time augmentation: passages are format-ted into input sequences, sometimes routed or fil-tered by reflection and verifier modules that de-cide whether to retrieve, how much to use, and when to revise, with attention to calibration and re-producibility of the retrieval–decoding loop (Asai et al., 2024; Yang et al., 2025). Extending RAG to multimodal LLMs introduces image-conditioned retrieval and multimodal context assembly. Recent pipelines structure candidates hierarchically, coarse selection guided by image or title cues followed by question- and text-level refinement, while keep-ing the MLLM backbone intact (Caffagni et al., 2024b; Yan and Xie, 2024). Other approaches in-tegrate reflective signals into decoding to regulate access to external knowledge for knowledge-based VQA (Cocchi et al., 2025). These developments collectively move from simply “finding relevant text” toward assembling an image- and question-aware context that a multimodal decoder can reli-ably condition on. However, assembling a compact, complementary context and governing acceptance by answer reliability remain under-specified at in-ference time. Our CLIMB framework targets this gap by pairing an explicitly complementary, fixed evidence pool with confidence-governed decoding, providing a protocol for both diversity-aware as-sembly and monotone, reliability-driven refinement on top of standard multimodal RAG pipelines. 
+
+3 Method 
+
+CLIMB is an inference-time framework for mul-timodal RAG with two stages: complementarity-aware evidence assembly and confidence-controlled decoding. Given an image, a question, and an external corpus, CLIMB first builds a compact fixed-size evidence pool. It then iteratively selects evidence subsets and accepts an updated answer only when the estimated evidence-grounded confidence improves. The base MLLM is kept frozen and treated as a black-box generator. Figure 2 provides an overview. 
+
+3.1 Problem Formulation 
+
+We consider knowledge-intensive visual question answering. Each example consists of an image I,a question q, and an external text corpus D. The goal is to generate an answer a supported by a subset of passages S ⊂ D , and a scalar confidence 
+
+U ∈ [0 , 1] indicating how well the answer can be verified. CLIMB treats the MLLM as a frozen generator and focuses on inference-time evidence selection. Instead of repeatedly querying the full corpus during refinement, CLIMB first constructs a fixed complementary micro-pool P ⊂ D of size 
+
+K. All subsequent scoring, facet diagnosis, and answer refinement operate within P.
+
+3.2 Complementary Evidence Pool 
+
+Vision–text retrieval typically ranks passages by similarity to the image or the query, often surfacing a cluster of near-duplicates at the top. Such redun-dancy limits semantic coverage and leaves later rea-soning steps without the diverse evidence needed for knowledge-intensive VQA. CLIMB therefore constructs a compact micro-pool of size K whose members are individually relevant yet mutually non-overlapping. Given an image I and question q, a stan-dard CLIP-based search retrieves a candidate set 
+
+CN ⊂ D . We reuse the retriever’s similarity as a query–passage relevance score rel( I, q, t ) for each 
+
+t ∈ C N . From the screened candidates, we as-semble a micro-pool P using a Maximal Marginal Relevance (MMR) (Carbonell and Goldstein, 1998) objective. Let S denote the set of already admit-ted items, and let sim( t, u ) be cosine similarity between the text embeddings of t and u. Starting from the most relevant passage, each subsequent passage is chosen by 
+
+t⋆ = arg max  
+
+> t∈C N\S
+
+{λ rel( I, q, t )
+
+− (1 − λ) max  
+
+> u∈S
+
+sim( t, u )}. (1) where λ ∈ [0 , 1] balances query fit and redundancy Vision   
+
+> Encoder
+> R/E/C Judge
+> Complementary Pool
+> Confidence Controlled Decoding
+> What country does this building belong to?
+> Vision
+> Encoder ......
+> Similarity&Diversity
+> Search Mapping
+> Answer
+> Ukraine
+> Knowledge Base
+
+Figure 2: Overview of CLIMB . Given an image and a question, CLIMB retrieve a small candidate set from the knowledge base and build a complementary evidence pool via similarity–diversity selection. An R/E/C critic scores passages, and a frozen MLLM generates answers from the top-M evidence while a confidence estimator and gap diagnosis drive an iterative refinement loop, accepting updates only when confidence increases. 
+
+(default λ = 0 .6). Penalizing the maximum simi-larity discourages the strongest duplication, so that each admitted passage is encouraged to contribute a distinct facet of the question. With cached embeddings, this one-pass selec-tion costs O(N K ) for a candidate set of size N
+
+and a pool of size K. The resulting micro-pool is fixed for the remaining refinement steps. This design keeps the evidence search space bounded and reduces variation caused by repeated external retrieval. We set K = 5 by default and analyze its effect in the sensitivity study. 
+
+3.3 Evidence Judge and Confidence Control 
+
+Once the micro-pool P is fixed, CLIMB evaluates evidence at the passage level and answer level. 
+
+R/E/C evidence judge. For each passage t ∈ P ,CLIMB assigns three interpretable scores. The rele-vance score R ∈ { 1, . . . , 5} measures how directly 
+
+t addresses the question. The evidence specificity score E ∈ { 1, . . . , 5} measures whether t con-tains concrete and verifiable details, such as named entities, dates, numbers, or definitions. The cross-modal alignment score C ∈ { 1, . . . , 5} measures whether t is consistent with the visual content of 
+
+I. These scores are produced by a constrained judgment prompt to the frozen MLLM. After nor-malization to [0 , 1] , they are combined as 
+
+ϕ(t) = αR ˜R(t) + αE ˜E(t) + αC ˜C(t), (2) where αR, αE , and αC are non-negative weights that sum to one. We use equal weights by default. The initial evidence subset is selected as 
+
+S0 = arg topM 
+
+> t∈P
+
+ϕ(t), M = ⌈√K⌉. (3) 
+
+Verifiability-oriented confidence. Given an an-swer a generated from an evidence subset S,CLIMB estimates a scalar confidence score U ∈
+
+[0 , 1] based on three bounded signals: coverage, consistency, and specificity. Coverage measures whether the main factual claims in a are supported by passages in S. Consistency penalizes conflicts among the selected passages or between the pas-sages and the image. Specificity rewards answers that contain concrete and verifiable information. The three scores are averaged to obtain U . In the it-erative refinement procedure that follows, this con-fidence is used relatively: a new answer is accepted only if its confidence strictly increases, and refine-ment stops early once U exceeds a target threshold 
+
+USTAR or a maximum number of rounds is reached. This confidence score is not interpreted as a cali-brated probability of correctness, nor do we treat the critic as an independent external oracle. Instead, confidence is used as a relative, evidence-grounded control signal within the fixed micro-pool. The esti-mator is constrained to evaluate whether the factual claims in the answer are covered by the selected passages, whether the answer is consistent with the image and retrieved evidence, and whether the answer is sufficiently specific to be verified. 3.4 Facet Diagnosis and Pool-Internal Refresh 
+
+Some errors arise when the current subset St misses a key facet of the question. Rather than performing another external retrieval, CLIMB diagnoses under-covered facets and refreshes evidence within the fixed micro-pool P.Given the current state (I, q, St, a t), we elicit at most two short facet phrases 
+
+Gt = {g1, g 2},
+
+each describing a missing aspect that prevents full support (we constrain each gi to be a short phrase). If no meaningful facet can be identified, refinement terminates. For every passage u ∈ P , we then compute a lightweight facet–text match score ψ(u |Gt) using a combination of lexical overlap (e.g., BM25) and sentence-level embedding similarity. The original evidence scores ϕ(u) are updated as 
+
+ϕ′(u) = ϕ(u) + γ ψ (u | G t), γ ∈ [0 , 1] , (4) and the next working subset St+1 is chosen as the top-M passages under ϕ′.
+
+CLIMB then queries the frozen MLLM once with (I, q, St+1 ) to obtain a new answer at+1 and compute its confidence Ut+1 . The update is ac-cepted only if Ut+1 > U t; otherwise the proce-dure stops and returns (at, U t, St). In practice we also cap the number of refinement rounds by a small constant Tmax (we use Tmax = 3 ) and stop early once Ut ≥ USTAR . Because all operations remain inside the fixed micro-pool, CLIMB avoids re-retrieval, keeps latency predictable, and enforces a monotone improvement in verifiability across ac-cepted updates. 
+
+3.5 Algorithm 
+
+The end-to-end procedure of CLIMB is summarized in Algorithm 1. The algorithm take (I, q, D) as the input and output the answer, confidence and sup-porting set. Lines 2-3 perform a small vision–text retrieval followed by lightweight relevance filter-ing to obtain a candidate set CN . Lines 4-5 con-struct a complementary micro-pool P of size K
+
+via B UILD MICRO POOL , which implements the MMR objective in Eq. 1 to balance query relevance against pairwise redundancy. In lines 7-9, passages in P are scored by the R/E/C critic to produce 
+
+ϕ, the top-M passages form the initial subset S0,and a single call to the frozen MLLM yields the initial answer and confidence (a0, U 0). Lines 11-16 implement the confidence-guided refinement. 
+
+Algorithm 1: CLIMB 
+
+Input: Image I, Question q, Corpus D
+
+Output: Answer a, Confidence U ,Supporting S 
+
+> 1
+
+Candidate Retrieval ; 
+
+> 2
+
+CN ← RETRIEVE (I, q, D); 
+
+> 3
+
+CN ← FILTER BYREL (CN , τ ); 
+
+> 4
+
+Complementary Pool ; 
+
+> 5
+
+P ← BUILD MICRO POOL (I, q, CN , K ); 
+
+> 6
+
+Initial Scoring and Answer ; 
+
+> 7
+
+ϕ ← SCORE REC (I, q, P); 
+
+> 8
+
+S0 ← TOP M(P, ϕ, M ); 
+
+> 9
+
+(a0, U 0) ←
+
+GENERATE AND SCORE (I, q, S0); 
+
+> 10
+
+Iterative Confidence Climb ; 
+
+> 11
+
+for t = 0 to Tmax − 1 do  
+
+> 12
+
+if Ut ≥ USTAR then  
+
+> 13
+
+break ; 
+
+> 14
+
+Gt ← DIAGNOSE FACETS (I, q, St, a t); 
+
+> 15
+
+if Gt = ∅ then  
+
+> 16
+
+break ; 
+
+> 17
+
+ϕ′ ← REFRESH SCORES (P, ϕ, Gt, γ ); 
+
+> 18
+
+St+1 ← TOP M(P, ϕ ′, M ); 
+
+> 19
+
+(at+1 , U t+1 ) ←
+
+GENERATE AND SCORE (I, q, St+1 ); 
+
+> 20
+
+if Ut+1 ≤ Ut then  
+
+> 21
+
+break ; 
+
+> 22
+
+return at, U t, St;At each iteration, CLIMB first checks whether the current confidence has already exceeded the tar-get threshold USTAR ; if so, the procedure termi-nates. It then diagnoses up to two under-supported facets Gt from the current state (I, q, St, a t); if no facet is found, refinement stops. Otherwise, lines 17-19 refresh the evidence scores inside the fixed pool using R EFRESH SCORES , select a new subset 
+
+St+1 , and obtain an updated answer and confidence 
+
+(at+1 , U t+1 ). The update is accepted only when 
+
+Ut+1 > U t; if confidence fails to increase, the loop exits and returns the last accepted (at, U t, St).This fixed-pool, monotone confidence climb avoids retrieval drift, stabilizes behavior across runs. Model LLM Retrieval Mode E-VQA InfoSeek Single-Hop All Unseen-Q Unseen-E All                                                                             
+
+> Zero-shot LLMs
+> Vanilla Vicuna-7B -2.1 2.0 0.3 0.0 0.0 Vanilla LLaMA-3.1-8B -16.5 16.6 2.1 0.0 0.0
+> Zero-shot Multimodal LLMs
+> LLaVA-v1.5 Vicuna-7B -16.3 16.9 9.6 9.4 9.5 LLaVA-v1.5 LLaMA-3.1-8B -16.0 16.9 8.3 8.9 7.8
+> Retrieval-Augmented Models
+> DPR V+T [ECIR24(Lerner et al., 2024)] Multi-passage BERT CLIP ViT-B/32 29.1 ---12.4 RORA-VLM [arXiv24(Qi et al., 2024)] Vicuna-7B CLIP+Google Search -20.3 25.1 27.3 -Wiki-LLaVA [CVPRW24(Caffagni et al., 2024b)] LLaMA-3.1-8B CLIP ViT-L/14 18.3 19.6 28.6 25.7 27.1 EchoSight [EMNLP24(Yan and Xie, 2024)] LLaMA-3.1-8B EVA-CLIP-8B 22.4 21.7 30.0 30.7 30.4 ReflectiVA [CVPR25(Cocchi et al., 2025)] LLaMA-3.1-8B CLIP ViT-L/14 24.9 26.7 34.5 32.9 33.7
+> ▶CLIMB LLaMA-3.1-8B CLIP ViT-L/14 31.3 34.8 39.7 38.5 39.1
+
+Table 1: Accuracy on the Encyclopedic-VQA test set and the InfoSeek validation set. 
+
+4 Experiments 
+
+4.1 Datasets 
+
+We evaluate CLIMB on two knowledge-intensive VQA benchmarks that require combining image understanding with external Wikipedia knowledge. 
+
+Encyclopedic-VQA. Encyclopedic-VQA con-tains image–question pairs grounded in Wikipedia entities. Questions target fine-grained factual prop-erties such as species attributes, geographic infor-mation, and historical facts. Following prior work, we use the standard single-hop setting and report the BERT matching score (BEM). 
+
+InfoSeek. InfoSeek contains fact-seeking visual questions over Wikipedia entities, including both automatically generated and human-authored ex-amples. Compared with Encyclopedic-VQA, it covers broader entity types and question templates. We follow the official split and evaluation protocol, restrict retrieval to the provided knowledge base, and report VQA accuracy and relaxed accuracy when applicable. 
+
+4.2 Baselines 
+
+We compare CLIMB with three groups of base-lines. First, we include text-only LLMs, Vicuna-7B (Zheng et al., 2023) and LLaMA-3.1-8B (Grattafiori et al., 2024), which receive only the question and have no access to the image or exter-nal corpus. Second, we evaluate zero-shot multi-modal LLMs, including LLaVA-v1.5 (Liu et al., 2024) with Vicuna-7B and LLaMA-3.1-8B back-bones, which use the image but do not retrieve external knowledge. Third, we compare with retrieval-augmented multimodal systems, including DPRV+T (Lerner et al., 2024), RORA-VLM (Qi et al., 2024), Wiki-LLaVA (Caffagni et al., 2024b), EchoSight (Yan and Xie, 2024), and ReflectiVA (Cocchi et al., 2025). These baselines use exter-nal knowledge through retrieval or filtering and therefore provide the most relevant comparison for evaluating CLIMB’s complementary evidence as-sembly and confidence-controlled refinement. 
+
+4.3 Implementation Details 
+
+We use CLIP ViT-L/14@336px as the visual en-coder to obtain image embeddings and image–text similarity scores for retrieval, and LLaMA-3.1-8B model as the answer generator. For each query, we first retrieve N =64 candidate passages from the dataset-specific Wikipedia collection using cosine similarity in the CLIP embedding space, and then construct a complementary evidence pool of size 
+
+K=5 with the similarity&diversity objective. On top of this pool, we compute relevance, evidence specificity, and cross-modal alignment scores for all passages and calibrate them on a held-out de-velopment split to obtain a unified ranking signal. During decoding, the generator is conditioned on the top passages via a fixed structured instruction template, and our confidence module evaluates each candidate answer using coverage complete-ness, inter-evidence and image consistency, and an-swer specificity. Facet diagnosis and pool-internal refresh are applied for at most Tmax =3 rounds, and an updated answer is accepted only when it yields a strictly higher calibrated confidence score. All results are obtained under the knowledge-base-restricted protocol of each benchmark. 
+
+4.4 Overall Effectiveness Main results. Table 1 reports accuracy on Encyclopedic-VQA and InfoSeek. Text-only LLMs provide a very weak baseline, and zero-shot multimodal LLMs improve mainly by grounding the question in the image, but still stay around 17% on Encyclopedic-VQA and below 10% on InfoS-eek. This shows that visual grounding and paramet-ric knowledge alone are insufficient for encyclope-dic VQA over large knowledge bases. Retrieval-augmented systems narrow this gap: Wiki-LLaVA, EchoSight, and ReflectiVA all benefit from access to Wikipedia, lifting accuracy into the 20–30% range and confirming the importance of explicit evidence retrieval. EchoSight uses a stronger re-triever (EVA-CLIP-8B) than Wiki-LLaVA but does not consistently outperform ReflectiVA, suggesting that retrieval strength alone is not enough when the assembled contexts remain redundant. CLIMB 
+
+achieves the best performance across all evaluation splits and consistently improves over the strongest retrieval baseline. On Encyclopedic-VQA, it yields absolute gains of 6.4 on the Single-Hop subset and 8.1 on the All setting. The gains on Unseen-Q and Unseen-E are 5.2 and 5.6, respectively, indicating that CLIMB not only retrieves useful passages but also regulates how they are selected. On InfoSeek, 
+
+CLIMB further improves accuracy by 5.4 over the best baseline, despite the different knowledge base and question style. These results suggest that com-plementary evidence construction and confidence-controlled decoding provide benefits beyond those obtained by stronger retrievers alone. 
+
+4.5 Ablation Study Method E-VQA InfoSeek Full 34.8 39.1         
+
+> w/o Facet Diagnosis 33.7 38.7 w/o Complementary Evidence Pool 32.4 38.1 w/o Critic 26.9 33.4 w/o Iteration 25.8 33.0
+> Table 2: Ablation study results on InfoSeek and E-VQA.
+
+Table 2 reports the contribution of each com-ponent in CLIMB .Removing the facet diagnosis step produces a small but consistent drop on both datasets, indicating that explicitly identify-ing under-supported facets helps the model redi-rect attention within the fixed pool. Eliminating the complementary pool (MMR) leads to a larger degradation, showing that suppressing redundancy is important for assembling evidence that covers multiple attributes of the queried entity. The critic, responsible for R/E/C scoring and confidence esti-mation, is the most influential component: without it, accuracy decreases sharply on both benchmarks, confirming that a notion of verifiability is important for filtering misleading passages and stabilizing decoding. Finally, disabling iterative refinement yields the lowest performance among all ablations, demonstrating that many queries require progres-sively incorporating additional facets that are not captured in a single pass. Together, these results highlight that complementary evidence construc-tion and confidence-guided refinement jointly en-able the robustness of CLIMB .
+
+4.6 Confidence Binning Analysis Confidence bin Accuracy 
+
+U < 0.70 32.1 
+
+0.70 ≤ U < 0.80 34.3 
+
+0.80 ≤ U < 0.90 38.7 
+
+U ≥ 0.90 40.2 
+
+> Table 3: Confidence-binned accuracy on InfoSeek under the default CLIMB setting.
+
+Since CLIMB relies on an MLLM-based confi-dence estimator to control answer refinement, we further analyze whether the estimated confidence is informative about answer correctness. We stress that CLIMB does not use confidence as an absolute probability of correctness. Instead, the confidence score is used only as a relative, evidence-grounded acceptance signal: an updated answer is accepted only when its estimated verifiability under the se-lected evidence improves. Table 3 reports a confidence-binned analysis on InfoSeek under the default CLIMB setting. Higher-confidence predictions are consistently associated with higher empirical accuracy, increasing from 32.1% for U < 0.70 to 40.2% for U ≥ 0.90 .This trend does not imply perfect calibration, but it suggests that the confidence estimator provides a useful reliability ranking signal for controlling refinement. The result is also consistent with the threshold sensitivity in Figure 3(a), where overly low thresholds accept less reliable updates, while overly strict thresholds can become conservative. 
+
+4.7 Sensitivity Analysis 
+
+We further investigate how CLIMB behaves under variations of its main hyperparameters by using the dataset InfoSeek: the micro-pool size K, the MMR trade-off λ, the confidence threshold USTAR ,and the maximum number of refinement rounds 
+
+Tmax . Figure 3 and Figure 4(a) summarizes re-sults on InfoSeek. Varying the pool size K reveals (b) Answer accuracy across different       
+
+> micro-pool sizes K ∈{3, 5, 7, 9}
+> (c) Answer accuracy across different MMR
+> lambda values λ ∈{0.2, 0.4, 0.6, 0.8}.
+> (a) Answer accuracy across different confidence
+> thresholds U_STAR ∈{0.70, 0.80, 0.85, 0.90}.
+
+Figure 3: Sensitivity scores for hyperparameters UST AR , K, λ, measured as the accuracy range across different parameter settings.  
+
+> (a) (b)
+
+Figure 4: Hyperparameter sensitivity of CLIMB . (a) Ac-curacy across different maximum iteration Tmax . (b) Aggregated sensitivity scores across key hyperparam-eters, indicating that the framework is stable within a broad range of settings. 
+
+the expected coverage–noise trade-off. Very small pools lead to noticeable degradation, as the evi-dence set cannot cover all facets of the query. As 
+
+K increases, accuracy improves and then remains stable once a small complementary set is formed. Pushing K further brings little or no gain and can slightly hurt performance, reflecting the fact that additional passages are often redundant or weakly relevant. The trade-off parameter λ shows a similar pattern: accuracy is highest in a broad middle range where relevance and redundancy suppression are balanced, and deteriorates when λ approaches ex-tremes that either ignore diversity or over-penalize similar but useful passages. These trends are con-sistent across dataset, and the default configuration 
+
+(K=5 , λ =0 .6) lies well inside the stable region. The confidence threshold USTAR primarily con-trols when the refinement loop accepts an updated answer. Lower thresholds allow less updates, while higher thresholds enforce more conservative behav-ior; in practice, accuracy remains stable across a wide interval around the default choice, indicating that the verifiability signal is reasonably calibrated and does not require precise tuning. The maxi-mum number of refinement rounds Tmax has a lim-ited effect beyond moving from a single pass to a small number of iterations: performance improves when allowing more than one round, then saturates, and additional iterations bring negligible changes, which matches the observation that most queries require at most two or three refinement steps. To summarize the overall stability, we also report a sensitivity score that measures the accuracy range induced by sweeping each hyperparameter within the tested bounds in Figure 4(b). The variations are modest on InfoSeek, with slightly larger effects for 
+
+K and λ and smaller effects for USTAR and Tmax .This pattern supports the view that CLIMB ’s gains are driven by its structural design, complementary pooling and confidence-guided refinement, rather than by delicate hyperparameter tuning. 
+
+4.8 Qualitative Results 
+
+In addition to the quantitative results, we also in-clude qualitative comparison using GPT-5.2 as a reference model in Figure 5. Showing side-by-side outputs from GPT-5.2 and CLIMB helps illus-trate how complementary evidence and confidence-guided refinement affect the final answers beyond what is visible from aggregate metrics alone. 
+
+5 Conclusion 
+
+We introduced CLIMB , a training-free framework for multimodal retrieval-augmented generation that strengthens knowledge-intensive visual question answering by building a complementary evidence pool and refining answers under a confidence ac-ceptance rule. Rather than scaling model size or retrieval depth, CLIMB focuses on which passages (b) What is the conservation status of this animal?        
+
+> GPT 5.2:
+> Least Concern
+> CLIMB:
+> Near Threatened
+> (c) What is the length of the wingspan
+> in millimetre of this insect?
+> GPT 5.2:
+> 30
+> CLIMB:
+> 25
+> (d) What is the closest parent
+> taxonomy of this plant?
+> GPT 5.2:
+> Fagaceae
+> CLIMB:
+> Dysoxylum
+> (f) What is the length in kilometre is the
+> mountain in the image?
+> GPT 5.2:
+> Can't answer
+> CLIMB:
+> 18
+> (a) What is this bird named after?
+> GPT 5.2:
+> Prothonotaries
+> CLIMB:
+> Oriolidae
+> (e) In which year was this building first
+> mentioned in writing?
+> GPT 5.2:
+> 1905
+> CLIMB:
+> 1902
+> (g) What place inflows lake?
+> GPT 5.2:
+> Can't answer
+> CLIMB:
+> River Derwent
+> (h) Which body of water is this island
+> located in or next to?
+> GPT 5.2:
+> Southern California
+> CLIMB:
+> Nakashima
+> (i) What is the maximum capacity of
+> this park?
+> GPT 5.2:
+> 41339
+> CLIMB:
+> 41888
+
+Figure 5: Question–Image pairs from the InfoSeek, shown with answers produced by GPT-5.2 and CLIMB .
+
+to trust and when to update. On both datasets, it steadily surpasses the baselines, with ablations and sensitivity studies indicating that the gains come from this structural design. We hope this view encourages further work on verifiability-aware, complementarity-driven multimodal RAG. 
+
+Limitations 
+
+This work focuses on knowledge-intensive visual question answering with external Wikipedia-style textual evidence. While this setting is widely used for evaluating multimodal RAG, it does not ex-haust all multimodal retrieval scenarios. Extend-ing CLIMB to video, multi-image reasoning, or domain-specific corpora may require adapting the retrieval interface and evidence scoring prompts. The confidence score in CLIMB is used as a relative signal for accepting or rejecting answer updates. It should therefore be interpreted as an evidence-grounded refinement criterion rather than as a cal-ibrated probability of correctness. Future work could investigate more specialized confidence esti-mators while keeping the framework training-free. 
+
+Acknowledgments 
+
+This work was supported in part by NSF grants 2212302, 2212301, 2212303, AFOSR 23RT0630, and NIH 2R01HL127661. 
+
+References 
+
+Marah Abdin, Jyoti Aneja, Harkirat Behl, Sébastien Bubeck, Ronen Eldan, Suriya Gunasekar, Michael Harrison, Russell J. Hewett, Mojan Javaheripi, Piero Kauffmann, James R. Lee, Yin Tat Lee, Yuanzhi Li, Weishung Liu, Caio C. T. Mendes, Anh Nguyen, Eric Price, Gustavo de Rosa, Olli Saarikivi, and 8 others. 2024. Phi-4 technical report. arXiv preprint arXiv:2412.08905 .Jean-Baptiste Alayrac, Jeff Donahue, Pauline Luc, An-toine Miech, Iain Barr, Yana Hasson, Karel Lenc, Arthur Mensch, Katie Millican, Malcolm Reynolds, Roman Ring, Eliza Rutherford, Serkan Cabi, Tengda Han, Zhitao Gong, Sina Samangooei, Marianne Mon-teiro, Jacob Menick, Sebastian Borgeaud, and 8 oth-ers. 2022. Flamingo: a visual language model for few-shot learning. Advances in neural information processing systems , 35:23716–23736. Md Adnan Arefeen, Biplob Debnath, Md Yusuf Sarwar Uddin, and Srimat Chakradhar. 2024. irag: Advanc-ing rag for videos with an incremental approach. In 
+
+Proceedings of the 33rd ACM International Confer-ence on Information and Knowledge Management ,pages 4341–4348. Muhammad Arslan, Hussam Ghanem, Saba Munawar, and Christophe Cruz. 2024. A survey on rag with llms. Procedia computer science , 246:3781–3790. Akari Asai, Zeqiu Wu, Yizhong Wang, Avirup Sil, and Hannaneh Hajishirzi. 2024. Self-rag: Learning to re-trieve, generate, and critique through self-reflection. In International conference on learning representa-tions , volume 2024, pages 9112–9141. Sebastian Borgeaud, Arthur Mensch, Jordan Hoff-mann, Trevor Cai, Eliza Rutherford, Katie Milli-can, George Bm Van Den Driessche, Jean-Baptiste Lespiau, Bogdan Damoc, Aidan Clark, Diego De Las Casas, Aurelia Guy, Jacob Menick, Roman Ring, Tom Hennigan, Saffron Huang, Loren Mag-giore, Chris Jones, Albin Cassirer, and 9 others. 2022. Improving language models by retrieving from tril-lions of tokens. In Proceedings of the 39th Interna-tional Conference on Machine Learning , volume 162 of Proceedings of Machine Learning Research , pages 2206–2240. PMLR. Davide Caffagni, Federico Cocchi, Luca Barsellotti, Nicholas Moratelli, Sara Sarto, Lorenzo Baraldi, Lorenzo Baraldi, Marcella Cornia, and Rita Cuc-chiara. 2024a. The revolution of multimodal large language models: A survey. In Findings of the As-sociation for Computational Linguistics: ACL 2024 ,pages 13590–13618, Bangkok, Thailand. Association for Computational Linguistics. Davide Caffagni, Federico Cocchi, Nicholas Moratelli, Sara Sarto, Marcella Cornia, Lorenzo Baraldi, and Rita Cucchiara. 2024b. Wiki-llava: Hierarchical retrieval-augmented generation for multimodal llms. In 2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition Workshops (CVPRW) , pages 1818–1826. IEEE. Jaime G Carbonell and Jade Goldstein. 1998. The use of mmr, diversity-based reranking for reordering doc-uments and producing summaries. In SIGIR , pages 290941–291025. Soravit Changpinyo, Piyush Sharma, Nan Ding, and Radu Soricut. 2021. Conceptual 12m: Pushing web-scale image-text pre-training to recognize long-tail visual concepts. In 2021 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) ,pages 3557–3567. IEEE. Yang Chen, Hexiang Hu, Yi Luan, Haitian Sun, Soravit Changpinyo, Alan Ritter, and Ming-Wei Chang. 2023. Can pre-trained vision and language models answer visual information-seeking questions? In Proceed-ings of the 2023 Conference on Empirical Methods in Natural Language Processing , pages 14948–14968, Singapore. Association for Computational Linguis-tics. Federico Cocchi, Nicholas Moratelli, Marcella Cornia, Lorenzo Baraldi, and Rita Cucchiara. 2025. Aug-menting multimodal llms with self-reflective tokens for knowledge-based visual question answering. In 
+
+2025 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 9199–9209. IEEE. Matt Deitke, Christopher Clark, Sangho Lee, Rohun Tripathi, Yue Yang, Jae Sung Park, Mohammadreza Salehi, Niklas Muennighoff, Kyle Lo, Luca Soldaini, Jiasen Lu, Taira Anderson, Erin Bransom, Kiana Ehsani, Huong Ngo, YenSung Chen, Ajay Patel, Mark Yatskar, Chris Callison-Burch, and 31 others. 2025. Molmo and pixmo: Open weights and open data for state-of-the-art vision-language models. In 
+
+2025 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 91–104. IEEE. Wenqi Fan, Yujuan Ding, Liangbo Ning, Shijie Wang, Hengyun Li, Dawei Yin, Tat-Seng Chua, and Qing Li. 2024. A survey on rag meeting llms: Towards retrieval-augmented large language models. In Pro-ceedings of the 30th ACM SIGKDD conference on knowledge discovery and data mining , pages 6491– 6501. Samir Yitzhak Gadre, Gabriel Ilharco, Alex Fang, Jonathan Hayase, Georgios Smyrnis, Thao Nguyen, Ryan Marten, Mitchell Wortsman, Dhruba Ghosh, Jieyu Zhang, Eyal Orgad, Rahim Entezari, Giannis Daras, Sarah Pratt, Vivek Ramanujan, Yonatan Bit-ton, Kalyani Marathe, Stephen Mussmann, Richard Vencu, and 15 others. 2023. Datacomp: In search of the next generation of multimodal datasets. Ad-vances in Neural Information Processing Systems ,36:27092–27112. Hang Gao, Dong Deng, and Yongfeng Zhang. 2024. Vector retrieval with similarity and diversity: How hard is it? arXiv preprint arXiv:2407.04573 .Hang Gao and Dimitris N. Metaxas. 2026. Beyond ex-plicit edges: Robust reasoning over noisy and sparse knowledge graphs. In Forty-third International Con-ference on Machine Learning .Hang Gao, Wujiang Xu, Kai Mei, and Dimitris N Metaxas. 2026. Pooling and semantic shift: The fundamental challenges in long text embedding and retrieval. arXiv preprint arXiv:2603.21437 .Yunfan Gao, Yun Xiong, Xinyu Gao, Kangxiang Jia, Jinliu Pan, Yuxi Bi, Yi Dai, Jiawei Sun, Meng Wang, and Haofen Wang. 2023. Retrieval-augmented gen-eration for large language models: A survey. arXiv preprint arXiv:2312.10997 .Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schel-ten, Alex Vaughan, Amy Yang, Angela Fan, Anirudh Goyal, Anthony Hartshorn, Aobo Yang, Archi Mi-tra, Archie Sravankumar, Artem Korenev, Arthur Hinsvark, and 542 others. 2024. The llama 3 herd of models. arXiv preprint arXiv:2407.21783 .Kelvin Guu, Kenton Lee, Zora Tung, Panupong Pasu-pat, and Mingwei Chang. 2020. Retrieval augmented language model pre-training. In International confer-ence on machine learning , pages 3929–3938. PMLR. Gautier Izacard, Patrick Lewis, Maria Lomeli, Lucas Hosseini, Fabio Petroni, Timo Schick, Jane Dwivedi-Yu, Armand Joulin, Sebastian Riedel, and Edouard Grave. 2023. Atlas: Few-shot learning with retrieval augmented language models. Journal of Machine Learning Research , 24(251):1–43. Paul Lerner, Olivier Ferret, and Camille Guinaudeau. 2024. Cross-modal retrieval for knowledge-based visual question answering. In European Conference on Information Retrieval , pages 421–438. Springer. Patrick Lewis, Ethan Perez, Aleksandra Piktus, Fabio Petroni, Vladimir Karpukhin, Naman Goyal, Hein-rich Küttler, Mike Lewis, Wen tau Yih, Tim Rock-täschel, Sebastian Riedel, and Douwe Kiela. 2020. Retrieval-augmented generation for knowledge-intensive nlp tasks. Advances in neural information processing systems , 33:9459–9474. Bo Li, Yuanhan Zhang, Dong Guo, Renrui Zhang, Feng Li, Hao Zhang, Kaichen Zhang, Peiyuan Zhang, Yan-wei Li, Ziwei Liu, and Chunyuan Li. 2024. Llava-onevision: Easy visual task transfer. arXiv preprint arXiv:2408.03326 .Junnan Li, Dongxu Li, Silvio Savarese, and Steven Hoi. 2023. Blip-2: Bootstrapping language-image pre-training with frozen image encoders and large lan-guage models. In International conference on ma-chine learning , pages 19730–19742. PmLR. Haotian Liu, Chunyuan Li, Yuheng Li, and Yong Jae Lee. 2024. Improved baselines with visual instruc-tion tuning. In 2024 IEEE/CVF Conference on Com-puter Vision and Pattern Recognition (CVPR) , pages 26286–26296. IEEE. Haotian Liu, Chunyuan Li, Qingyang Wu, and Yong Jae Lee. 2023. Visual instruction tuning. Advances in neural information processing systems , 36:34892– 34916. Pei Liu, Xin Liu, Ruoyu Yao, Junming Liu, Siyuan Meng, Ding Wang, and Jun Ma. 2025. Hm-rag: Hier-archical multi-agent multimodal retrieval augmented generation. In Proceedings of the 33rd ACM interna-tional conference on multimedia , pages 2781–2790. Brandon McKinzie, Zhe Gan, Jean-Philippe Fauconnier, Sam Dodge, Bowen Zhang, Philipp Dufter, Dhruti Shah, Xianzhi Du, Futang Peng, Floris Weers, An-ton Belyi, Haotian Zhang, Karanjeet Singh, Doug Kang, Ankur Jain, Hongyu Hè, Max Schwarzer, Tom Gunter, Xiang Kong, and 13 others. 2024. Mm1: methods, analysis and insights from multimodal llm pre-training. In European Conference on Computer Vision , pages 304–323. Springer. Thomas Mensink, Jasper Uijlings, Lluis Castrejon, Arushi Goel, Felipe Cadar, Howard Zhou, Fei Sha, André Araujo, and Vittorio Ferrari. 2023. Encyclope-dic vqa: Visual questions about detailed properties of fine-grained categories. In 2023 IEEE/CVF Interna-tional Conference on Computer Vision (ICCV) , pages 3090–3101. IEEE. Jingyuan Qi, Zhiyang Xu, Rulin Shao, Yang Chen, Jin Di, Yu Cheng, Qifan Wang, and Lifu Huang. 2024. Rora-vlm: Robust retrieval-augmented vision lan-guage models. arXiv preprint arXiv:2410.08876 .Alec Radford, Jong Wook Kim, Chris Hallacy, Aditya Ramesh, Gabriel Goh, Sandhini Agarwal, Girish Sas-try, Amanda Askell, Pamela Mishkin, Jack Clark, Gretchen Krueger, and Ilya Sutskever. 2021. Learn-ing transferable visual models from natural language supervision. In International conference on machine learning , pages 8748–8763. PmLR. Quan Sun, Qiying Yu, Yufeng Cui, Fan Zhang, Xiaosong Zhang, Yueze Wang, Hongcheng Gao, Jingjing Liu, Tiejun Huang, and Xinlong Wang. 2024. Emu: Generative pretraining in multimodality. In In-ternational conference on learning representations ,volume 2024, pages 12352–12380. Jiayang Wu, Wensheng Gan, Zefeng Chen, Shicheng Wan, and Philip S Yu. 2023. Multimodal large lan-guage models: A survey. In 2023 IEEE Interna-tional Conference on Big Data (BigData) , pages 2247–2256. IEEE. Yibin Yan and Weidi Xie. 2024. EchoSight: Advancing visual-language models with Wiki knowledge. In 
+
+Findings of the Association for Computational Lin-guistics: EMNLP 2024 , pages 1538–1551, Miami, Florida, USA. Association for Computational Lin-guistics. Diji Yang, Linda Zeng, Jinmeng Rao, and Yi Zhang. 2025. Knowing you don’t know: Learning when to continue search in multi-round rag through self-practicing. In Proceedings of the 48th International ACM SIGIR Conference on Research and Develop-ment in Information Retrieval , pages 1305–1315. Qinghao Ye, Haiyang Xu, Jiabo Ye, Ming Yan, Anwen Hu, Haowei Liu, Qi Qian, Ji Zhang, and Fei Huang. 2024. Mplug-owi2: Revolutionizing multi-modal large language model with modality collaboration. In 
+
+2024 IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , pages 13040–13051. IEEE. Shukang Yin, Chaoyou Fu, Sirui Zhao, Ke Li, Xing Sun, Tong Xu, and Enhong Chen. 2024. A survey on multimodal large language models. National Science Review , 11(12). Ruochen Zhao, Hailin Chen, Weishi Wang, Fangkai Jiao, Xuan Long Do, Chengwei Qin, Bosheng Ding, Xiaobao Guo, Minzhi Li, Xingxuan Li, and Shafiq Joty. 2023. Retrieving multimodal information for augmented generation: A survey. In Findings of the Association for Computational Linguistics: EMNLP 2023 , pages 4736–4756, Singapore. Association for Computational Linguistics. Lianmin Zheng, Wei-Lin Chiang, Ying Sheng, Siyuan Zhuang, Zhanghao Wu, Yonghao Zhuang, Zi Lin, Zhuohan Li, Dacheng Li, Eric Xing, Hao Zhang, Joseph E. Gonzalez, and Ion Stoica. 2023. Judging LLM-as-a-judge with MT-bench and chatbot arena. In Thirty-seventh Conference on Neural Information Processing Systems Datasets and Benchmarks Track .APPENDIX A Implementation and Metric Details 
+
+This section provides additional details on how we instantiate CLIMB in practice. The system is decomposed into five deterministic modules: (i) corpus indexing and micro-pool construction, (ii) R/E/C evidence scoring, (iii) answer gener-ation with explicit evidence conditioning, (iv) a verifiability-oriented confidence function, and (v) facet diagnosis with an iterative confidence climb. All components operate purely at inference time; no finetuning or gradient-based updates are used. 
+
+System Overview. Given an input image I, ques-tion q, and a text-only corpus D, the pipeline pro-ceeds as follows: 1. Encode all corpus passages with CLIP ViT-L/14 and build a FAISS index using inner-product similarity. 2. For a query image I, retrieve an initial candi-date set and construct a complementary micro-pool of size K=5 using a Maximal Marginal Relevance (MMR) objective. 3. For each passage in the pool, compute three interpretable scores: relevance R, evidence specificity E, and cross-modal consistency 
+
+C, and aggregate them into a single ranking signal ϕ.4. Select the top-M passages under ϕ, generate a short textual answer a, and compute a scalar confidence U ∈ [0 , 1] based on verifiability criteria. 5. If U is below a target threshold U⋆, diag-nose under-supported facets, refresh scores inside the fixed micro-pool, and repeat the generation–confidence step. An update is ac-cepted only if it strictly increases U , yielding a monotone confidence climb with at most 
+
+Tmax =3 rounds. 
+
+Complementary Micro-pool Construction. We first embed all corpus passages using CLIP ViT-L/14 and store the vectors in a FAISS index. At query time, the image I is encoded into a normal-ized embedding, and we compute cosine similarity against all passage embeddings. Let rel( t) denote the similarity between the image embedding and passage t, and let sim( t, u ) denote the cosine sim-ilarity between two passages t and u in the text-embedding space. To avoid redundancy in the evidence context, we construct a micro-pool P with an MMR-style ob-jective. Starting from the most relevant passage, we iteratively add one passage at a time by maximizing 
+
+MMR( t) = λ rel( t) − (1 − λ) max  
+
+> u∈S
+
+sim( t, u ),
+
+(5) where S is the set of already selected passages, and 
+
+λ ∈ [0 , 1] balances query fit and redundancy. In our implementation we use K=5 and set λ in the range 
+
+[0 .5, 0.6] . With cached embeddings, the overall complexity is O(N K ) for N initial candidates. 
+
+R/E/C Evidence Scoring. Once the micro-pool P
+
+is fixed, we assign each passage t ∈ P three scores in [1 , 5] :• Relevance R(t): how directly and compre-hensively the passage addresses the question 
+
+q.• Evidence Specificity E(t): how rich the pas-sage is in concrete, verifiable details (named entities, dates, numeric values, etc.). • Cross-modal Consistency C(t): how well the passage aligns with visual cues in I (cate-gory, attributes, location, or other scene con-straints). These scores are produced by a structured evaluator that returns a JSON object with fields R, E, C, and a brief textual rationale. All calls use temperature 0,which makes the scoring highly stable across runs. We then normalize the scores to [0 , 1] and compute a unified ranking signal 
+
+ϕ(t) = αR R(t) + αE E(t) + αC C(t), (6) with fixed weights αR, α E , α C chosen on a small development split. The top-M passages under ϕ
+
+form the initial working subset S0.
+
+Answer Generation and Confidence Estimation. 
+
+For a given working subset S, we generate an an-swer in two explicit steps: 1. Key information extraction: the system first identifies key facts in the concatenated evi-dence that directly address the question (e.g., entity names, dates, numeric values). The out-put is a short, structured summary of only the relevant facts. 2. Short answer decoding: conditioned on the extracted key information (and optionally the image), the system produces the shortest possible answer (typically a single word or short phrase) without explanations or hedging phrases. We then compute a scalar confidence U ∈ [0 , 1] 
+
+for the tuple (I, q, S, a ). The confidence function is implemented as a verifier that returns a JSON object with fields such as: • confidence : overall confidence score in 
+
+[0 , 1] ,• completeness : coverage of the question by the evidence, • reliability : quality and specificity of the supporting evidence, • reasoning : a short explanation of the assess-ment. If JSON parsing fails, we fall back to a conservative default. In all reported experiments, we use the 
+
+confidence field as the scalar U that drives the confidence-climb decision. 
+
+Facet Diagnosis and Iterative Confidence Climb 
+
+Many errors arise when the current subset St
+
+misses a key facet of the question. Instead of issu-ing new retrieval calls, we perform facet diagnosis within the fixed pool P. Given (I, q, St, a t), we extract at most two short facet phrases 
+
+Gt = {g1, g 2}, (7) each constrained to be no longer than a few tokens, describing missing aspects that prevent full support. A relaxed mode is used by default: if the answer already roughly addresses the question, the diag-noser returns “no significant gaps” and the loop terminates. When non-empty Gt is returned, we re-score passages inside P by combining the original score 
+
+ϕ(t) with a facet–text match score ψ(t | G t), which mixes lexical overlap (BM25-style) and embedding similarity: 
+
+ϕ′(t) = ϕ(t) + γ ψ (t | G t), (8) where γ is a small positive constant. The next sub-set St+1 is obtained by taking the top-M passages under ϕ′, and we regenerate an answer at+1 with an updated confidence Ut+1 . We enforce a monotone acceptance rule: 
+
+Ut+1 > U t ⇒ accept and continue ,Ut+1 ≤ Ut ⇒ stop . (9) In practice, we set U⋆=0 .85 as a target confi-dence and cap the number of refinement rounds by Tmax =3 .
+
+B Datasets 
+
+This section provides additional details about the datasets used in our experiments. We describe the construction process, data sources, and annotation characteristics of Encyclopedic-VQA and InfoS-eek, with an emphasis on the types of visual ground-ing and factual reasoning they require. These de-tails are included to clarify the benchmark-specific assumptions and to ensure the experimental setup can be fully reproduced. 
+
+Encyclopedic-VQA. Encyclopedic-VQA is alarge-scale, entity-centric benchmark designed to test fine-grained factual reasoning in multimodal settings. Each instance consists of (i) an image de-picting a real-world entity, (ii) a question targeting a specific factual attribute, and (iii) a short answer extracted verbatim from a Wikipedia article. Im-ages are sourced from several curated recognition datasets, including iNaturalist 2021, Google Land-marks, and other domain-specific corpora, ensuring substantial variation in species, landmarks, geolog-ical formations, artworks, and historical objects. Each image is linked to a corresponding Wikipedia entity page, and the dataset constructs its retrieval corpus by segmenting roughly two million pages into paragraph-level units. These segments constitute the complete evidence pool for all ex-periments, and retrieval is strictly restricted to this controlled corpus. The question design emphasizes factual speci-ficity. Many questions require identifying fine-grained attributes such as biological taxonomy (e.g., “Order?”, “Genus?”), geographical informa-tion (“Which river flows through this site?”), histor-ical metadata (“Who inaugurated this building?”), physical measurements, or conservation status. Im-portantly, most questions require combining visual grounding (e.g., identifying the depicted species) with factual lookup (e.g., locating the required line in the Wikipedia entry). The official evaluation fo-cuses on the single-hop setting, where answers are supported by a single paragraph from the article, allowing controlled analysis of evidence retrieval. 
+
+InfoSeek. InfoSeek serves as a complemen-tary benchmark emphasizing broader question styles and larger-scale variability. It contains ap-proximately 1.3M automatically generated image– question–answer triplets, augmented with a curated set of human-authored questions for quality as-surance. Entities span more than ten thousand Wikipedia pages, including species, buildings, art-works, geographic regions, public figures, and arti-facts. Each example is paired with a textual corpus consisting of around one hundred thousand aligned Wikipedia pages. Compared to Encyclopedic-VQA, the InfoSeek knowledge base is smaller but covers a wider breadth of topics. The dataset in-tentionally introduces greater lexical and structural diversity in question templates—for example, de-scribing the same fact using different surface forms, or mixing attribute, relational, temporal, and de-scriptive queries. InfoSeek is especially challenging because the model must (i) correctly recognize the visual entity from the image (fine-grained categories such as subspecies, architectural variants, instrument mod-els), (ii) identify the relevant page among many visually similar candidates, and (iii) pinpoint the correct fact within the retrieved document. The evaluation protocol follows the official validation split and restricts retrieval to the provided corpus to ensure comparability. 
+
+Comparison and Usage. Together, the two datasets provide complementary perspectives on multimodal knowledge-intensive reasoning. Encyclopedic-VQA emphasizes controlled factual grounding with a very large retrieval corpus and fine-grained entity alignment, while InfoSeek em-phasizes large-scale variability, surface diversity in questions, and robustness to paraphrases and distributional shifts. 
+
+C Prompts 
+
+The templates used to instantiate the R/E/C scoring, confidence estimation, and facet-diagnosis inter-faces. 
+
+C.1 R/E/C Evidence Judge Prompt 
+
+You are given an image, a question, and one retrieved passage. Score the passage for answering the question. Question: {question} Passage: {passage} Evaluate the retrieved content on the fol-lowing dimensions (1–5 scale): 1. Relevance (R): How directly and com-prehensively does the content address the evaluation question? - 5: Directly and fully answers the question - 4: Mostly relevant with minor gaps - 3: Partially relevant but missing key aspects - 2: Loosely related, limited useful-ness - 1: Not relevant or tangential 2. Evidence Specificity (E): How precise, detailed, and factual is the information? - 5: Highly specific facts, dates, names, or concrete details - 4: Specific information with some details - 3: Moderately specific, some gener-alizations - 2: Vague or general statements - 1: Very vague or lacks substantive information 3. Cross-modal Consistency (C): Is the passage consistent with the visual con-tent of the image? - 5: Perfectly consistent and comple-mentary - 4: Mostly consistent with minor dis-crepancies - 3: Generally consistent but some in-consistencies - 2: Some contradictions or inconsis-tencies - 1: Contradictory or clearly inconsis-tent Return only a JSON object in the follow-ing format: 
+
+{"R": integer from 1 to 5, "E": integer from 1 to 5, "C": integer from 1 to 5} 
+
+C.2 Confidence Estimation Prompt 
+
+You are given an image, a question, a set of selected evidence passages, and a candidate answer. Estimate how well the answer is supported by the image and evidence. Question: {question} Selected evidence: {selected_evidence} Candidate answer: {answer} Evaluation Criteria: 1. Completeness: Do the evidences con-tain sufficient information to fully an-swer the question? 2. Relevance: How directly related are the evidences to the question? 3. Reliability: Are the evidences specific, factual, and trustworthy? 4. Consistency: Do the evidences sup-port each other, or are there contradic-tions? 5. Answer Quality: Does the answer correctly interpret and synthesize the ev-idences? Evaluate the answer using three output scores: 1. Coverage: Are the factual claims in the answer supported by the selected evi-dence? 2. Consistency: Is the answer consistent with the image and with the selected evi-dence? 3. Specificity: Is the answer concrete enough to be verified, rather than vague or evasive? Assign each output score a value between 0 and 1. Return only a JSON object in the following format: 
+
+{"coverage": float from 0 to 1, "consistency": float from 0 to 1, "specificity": float from 0 to 1} 
+
+C.3 Facet Diagnosis Prompt 
+
+You are given an image, a question, the currently selected evidence passages, and the current answer. Identify which aspect of the answer is missing, weakly supported, or needs additional evidence. Question: {question} Current selected evidence: {se-lected_evidence} Current answer: {answer} List at most two short facet phrases that describe missing or under-supported in-formation needed to better answer the question. A facet should be a concise phrase, such as an entity attribute, date, location, measurement, taxonomy, con-servation status, or historical fact. If the current answer is already suffi-ciently supported, or if no meaningful missing facet can be identified, return an empty list. Return only a JSON object in the follow-ing format: 
+
+{"facets": ["short facet phrase 1", "short facet phrase 2"]} 
+
+D Failure Case Step Evidence focus Diagnosis / action Model answer Failure signal Question: “What is the closest parent taxonomy of this animal?” Gold answer: Loriinae .Initial genera-tion Evidence mentions Loriini 
+
+as a tribe and emphasizes the broader parrot family Psitta-culidae .Generate an answer from the initial selected subset. 
+
+Psittaculidae The answer is related and specific, but it is a broader ancestor rather than the closest parent. Facet diagnosis Current evidence supports taxonomy but does not clearly resolve the nearest parent. Diagnose the missing facet as “taxonomic parentage”. – The diagnosis is reason-able, so the error is not sim-ply a failed facet proposal. Pool-internal refresh Additional passages contain adjacent taxonomy levels: family Psittaculidae , sub-family Loriinae , and tribe 
+
+Loriini .Refresh evidence inside the fixed pool and regen-erate. 
+
+Psittaculidae Evidence is more complete and internally consistent, but still permits the wrong granularity. Acceptance The refined answer appears supported by concrete taxon-omy terms. Accept the update be-cause estimated confi-dence increases. Final: Psittaculidae . Confidence can increase despite incorrectness be-cause specificity and con-sistency do not guarantee closest-parent resolution. 
+
+Table 4: A failure analysis from InfoSeek.

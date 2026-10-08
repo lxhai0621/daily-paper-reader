@@ -51,14 +51,14 @@
       <span class="dpr-home-dashboard-kicker">2026-10-08</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 29 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>13</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>16</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-08 00:28:18 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-08 23:56:40 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-08 日报精选21篇Agent与RAG前沿论文，8篇精读、13篇速读。最值得关注的是Agent记忆的自我进化与长程Web任务能力（两篇9.0分），以及RAG在知识库退化场景下的评测基准。建议普通读者优先从Agent记忆与长程任务方向入手，再结合RAG鲁棒性评测理解落地风险。</p>
+<p>今天筛读29篇AI论文，精读13篇、速读16篇，重点锁定LLM Agent长期记忆失效与复杂任务检索成本两条主线。最值得看的是9.0分的PACMI用溯源感知级联记忆失效机制解决长期LLM Agent记忆过期问题，以及同分《Beyond Semantic Similarity》系统评估复杂任务中Agentic Retrieval的性能与成本权衡。普通读者可先读这两篇精读，再结合速读中的RAGStress和CLIMB，了解RAG在知识库退化与多模态场景下的可靠性边界。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Capability-Driven Self-Evolution of Agent Memory">Capability-Driven Self-Evolution of Agent Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="AMBER: Training Long-Horizon Web Agents through Append-Only Memory">AMBER: Training Long-Horizon Web Agents through Append-Only Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="DBRAG: Multi-Table Retrieval-Augmented Generation for Complex Database Queries">DBRAG: Multi-Table Retrieval-Augmented Generation for Complex Database Queries</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PACMI: Provenance-Aware Cascading Memory Invalidation for Long-Term LLM Agents">PACMI: Provenance-Aware Cascading Memory Invalidation for Long-Term LLM Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Beyond Semantic Similarity: Performance and Costs of Agentic Retrieval for Complex Tasks">Beyond Semantic Similarity: Performance and Costs of Agentic Retrieval for Complex Tasks</span></li><li><span class="dpr-home-dashboard-paper-title" title="AMBER: Training Long-Horizon Web Agents through Append-Only Memory">AMBER: Training Long-Horizon Web Agents through Append-Only Memory</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>3</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>9</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>4</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">13 篇</strong>
+    <strong class="dpr-home-dashboard-count">16 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RAGStress: A controlled benchmark for evaluating retrieval-augmented generation under knowledge-base degradation">RAGStress: A controlled benchmark for evaluating retrieval-augmented generation under knowledge-base degradation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Building LLM Agent Systems the Deep Learning Way: From Modular Design to Architecture Search">Building LLM Agent Systems the Deep Learning Way: From Modular Design to Architecture Search</span></li><li><span class="dpr-home-dashboard-paper-title" title="IREA: Intermediate Representation-based Embedding Alignment for Normative RAG">IREA: Intermediate Representation-based Embedding Alignment for Normative RAG</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="CLIMB: Confidence-Guided Complementary Evidence for Multimodal Retrieval-Augmented Generation">CLIMB: Confidence-Guided Complementary Evidence for Multimodal Retrieval-Augmented Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="RAGStress: A controlled benchmark for evaluating retrieval-augmented generation under knowledge-base degradation">RAGStress: A controlled benchmark for evaluating retrieval-augmented generation under knowledge-base degradation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Building LLM Agent Systems the Deep Learning Way: From Modular Design to Architecture Search">Building LLM Agent Systems the Deep Learning Way: From Modular Design to Architecture Search</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>12</strong></span><span class="dpr-home-dashboard-tag">agent <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>15</strong></span><span class="dpr-home-dashboard-tag">agent <strong>2</strong></span></div>
 </section>
 </div>
 
