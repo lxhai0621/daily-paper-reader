@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-06</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-08</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 32 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>13</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>19</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>13</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-06 23:08:13 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-08 00:28:18 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>10月6日日报从32篇中精读13篇、速读19篇，APDMem与Periscope以9.0分领跑。</p>
-<p>最值得看的是查询自适应长期记忆（APDMem）和冻结语言模型突破上下文窗口（Periscope）两个方向。</p>
-<p>普通读者可优先精读这两篇9分文章，再按兴趣浏览速读中的类型化决策、本体语义</p>
+<p>2026-10-08 日报精选21篇Agent与RAG前沿论文，8篇精读、13篇速读。最值得关注的是Agent记忆的自我进化与长程Web任务能力（两篇9.0分），以及RAG在知识库退化场景下的评测基准。建议普通读者优先从Agent记忆与长程任务方向入手，再结合RAG鲁棒性评测理解落地风险。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">13 篇</strong>
+    <strong class="dpr-home-dashboard-count">8 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="APDMem: Agent-Controlled Progressive Disclosure for Query-Adaptive Long-Term Memory">APDMem: Agent-Controlled Progressive Disclosure for Query-Adaptive Long-Term Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="Periscope: Extending Frozen Language Models Beyond Their Context Window">Periscope: Extending Frozen Language Models Beyond Their Context Window</span></li><li><span class="dpr-home-dashboard-paper-title" title="Understanding and Mitigating Hallucination Escape in Tool-Using LLM Agents">Understanding and Mitigating Hallucination Escape in Tool-Using LLM Agents</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Capability-Driven Self-Evolution of Agent Memory">Capability-Driven Self-Evolution of Agent Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="AMBER: Training Long-Horizon Web Agents through Append-Only Memory">AMBER: Training Long-Horizon Web Agents through Append-Only Memory</span></li><li><span class="dpr-home-dashboard-paper-title" title="DBRAG: Multi-Table Retrieval-Augmented Generation for Complex Database Queries">DBRAG: Multi-Table Retrieval-Augmented Generation for Complex Database Queries</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>9</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">agent <strong>5</strong></span><span class="dpr-home-dashboard-tag">ma-kf <strong>3</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">19 篇</strong>
+    <strong class="dpr-home-dashboard-count">13 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Dyad: Extending Large Language Models with Native Typed Decision-Making">Dyad: Extending Large Language Models with Native Typed Decision-Making</span></li><li><span class="dpr-home-dashboard-paper-title" title="LLM-Assisted Discovery of Typed Semantic Links for Ontology Network Construction">LLM-Assisted Discovery of Typed Semantic Links for Ontology Network Construction</span></li><li><span class="dpr-home-dashboard-paper-title" title="State Trace Rationale As Auxiliary Task in Reinforcement Learning">State Trace Rationale As Auxiliary Task in Reinforcement Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RAGStress: A controlled benchmark for evaluating retrieval-augmented generation under knowledge-base degradation">RAGStress: A controlled benchmark for evaluating retrieval-augmented generation under knowledge-base degradation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Building LLM Agent Systems the Deep Learning Way: From Modular Design to Architecture Search">Building LLM Agent Systems the Deep Learning Way: From Modular Design to Architecture Search</span></li><li><span class="dpr-home-dashboard-paper-title" title="IREA: Intermediate Representation-based Embedding Alignment for Normative RAG">IREA: Intermediate Representation-based Embedding Alignment for Normative RAG</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>15</strong></span><span class="dpr-home-dashboard-tag">agent <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ma-kf <strong>12</strong></span><span class="dpr-home-dashboard-tag">agent <strong>1</strong></span></div>
 </section>
 </div>
 
